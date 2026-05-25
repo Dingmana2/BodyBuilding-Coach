@@ -364,6 +364,153 @@ Fill in ALL fields with real, specific data for THIS athlete. Make the workout p
     return _extract_json(message.content[0].text)
 
 
+def estimate_meal_macros(description: str) -> dict:
+    """Haiku estimates calories/protein/carbs/fat from a plain-text food description."""
+    message = _client().messages.create(
+        model=SUMMARY_MODEL,
+        max_tokens=200,
+        messages=[{
+            "role": "user",
+            "content": (
+                f'Estimate the macros for this meal: "{description}"\n\n'
+                "Return ONLY valid JSON — no other text:\n"
+                '{"calories": 520, "protein_g": 45.0, "carbs_g": 48.0, "fat_g": 10.0, '
+                '"source": "estimated"}'
+            ),
+        }],
+    )
+    return _extract_json(message.content[0].text)
+
+
+def generate_recovery_insight(sleep: int, energy: int, soreness: int, stress: int, profile: dict | None = None) -> tuple[int, str]:
+    """Returns (recovery_score 0-100, one-sentence coaching tip) using Haiku."""
+    profile_ctx = ""
+    if profile:
+        profile_ctx = (
+            f"Athlete: {profile.get('age', '?')}yo, goal={profile.get('goal', '?')}, "
+            f"experience={profile.get('experience', '?')}. "
+        )
+
+    message = _client().messages.create(
+        model=SUMMARY_MODEL,
+        max_tokens=150,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"{profile_ctx}Daily check-in scores (1-10): "
+                f"Sleep={sleep}, Energy={energy}, Soreness={soreness}, Stress={stress}.\n\n"
+                "Return ONLY valid JSON:\n"
+                '{"recovery_score": 74, "tip": "One specific, actionable sentence for today."}'
+            ),
+        }],
+    )
+    data = _extract_json(message.content[0].text)
+    return int(data.get("recovery_score", 50)), data.get("tip", "Listen to your body today.")
+
+
+def generate_progressive_overload_suggestion(exercise: str, set_history: list, profile: dict | None = None) -> str:
+    """Analyzes recent sets for an exercise and recommends the next session's target."""
+    if not set_history:
+        return f"No history yet for {exercise}. Start logging sets with /logset."
+
+    recent = set_history[-10:]
+    history_text = "\n".join(
+        f"  {s.get('date', '?')}: {s['weight_kg']}kg × {s['reps']} reps (1RM ~{s.get('estimated_1rm', '?')}kg)"
+        for s in recent
+    )
+    profile_ctx = f"Experience: {profile.get('experience', 'intermediate')}. " if profile else ""
+
+    message = _client().messages.create(
+        model=SUMMARY_MODEL,
+        max_tokens=120,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"{profile_ctx}Recent {exercise} history:\n{history_text}\n\n"
+                "Give one specific, actionable recommendation for the next session — "
+                "exact weight and reps to target. One sentence only."
+            ),
+        }],
+    )
+    return message.content[0].text.strip()
+
+
+def generate_weekly_report(sessions: list, checkins: list, meals: list, prs: list, profile: dict | None = None) -> dict:
+    """Sonnet synthesizes a week of data into 3 coaching insights + next-week focus."""
+    profile_ctx = ""
+    if profile:
+        profile_ctx = f"Athlete: goal={profile.get('goal', '?')}, experience={profile.get('experience', '?')}. "
+
+    avg_recovery = round(sum(c.get("recovery_score", 0) for c in checkins) / len(checkins), 1) if checkins else None
+    avg_protein = round(sum(m.get("protein_g", 0) for m in meals) / len(meals), 1) if meals else None
+    pr_names = [p.get("exercise_name", "") for p in prs]
+
+    summary = (
+        f"{profile_ctx}"
+        f"Sessions this week: {len(sessions)}. "
+        f"Avg recovery score: {avg_recovery or 'N/A'}/100. "
+        f"Avg daily protein: {avg_protein or 'N/A'}g. "
+        f"New PRs: {', '.join(pr_names) if pr_names else 'none'}."
+    )
+
+    message = _client().messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=500,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Weekly training data: {summary}\n\n"
+                "Write a brief weekly coaching report. Return ONLY valid JSON:\n"
+                '{"insights": ["insight 1", "insight 2", "insight 3"], '
+                '"next_week_focus": "The single most important focus for next week.", '
+                '"adherence_rating": "Good"}'
+            ),
+        }],
+    )
+    data = _extract_json(message.content[0].text)
+    data["avg_recovery"] = avg_recovery
+    data["avg_protein_g"] = avg_protein
+    data["sessions_count"] = len(sessions)
+    data["prs_count"] = len(prs)
+    return data
+
+
+def analyze_weak_points(analyses: list, set_logs: list, profile: dict | None = None) -> dict:
+    """Cross-references photo weak points with logged volume to find training imbalances."""
+    if not analyses:
+        return {"error": "No photo analyses available. Send a photo first."}
+
+    latest = analyses[-1]
+    weak_from_photos = latest.get("areas_to_improve", [])
+    muscle_scores = latest.get("muscle_development", {})
+
+    volume_by_muscle: dict[str, int] = {}
+    for s in set_logs:
+        name = (s.get("exercise_name") or "").lower()
+        for muscle in ["chest", "back", "shoulders", "arms", "legs", "core"]:
+            if muscle in name or (muscle == "legs" and any(k in name for k in ["squat", "leg press", "lunge", "deadlift"])):
+                volume_by_muscle[muscle] = volume_by_muscle.get(muscle, 0) + 1
+
+    message = _client().messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=400,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Photo weak points: {weak_from_photos}\n"
+                f"Muscle scores from photo: {json.dumps(muscle_scores)}\n"
+                f"Sets logged per muscle (last 30 days): {json.dumps(volume_by_muscle)}\n\n"
+                "Identify the biggest training imbalances and give specific volume recommendations. "
+                "Return ONLY valid JSON:\n"
+                '{"weak_points": ["point 1", "point 2"], '
+                '"volume_recommendations": {"chest": "Add 4 sets/week", "legs": "Double current volume"}, '
+                '"priority_fix": "The single most impactful change."}'
+            ),
+        }],
+    )
+    return _extract_json(message.content[0].text)
+
+
 def summarize_research(topic: str, papers: list) -> str:
     client = _client()
 

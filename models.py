@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Text, DateTime
+from sqlalchemy import Column, ForeignKey, Integer, String, Float, Text, DateTime
 from sqlalchemy.sql import func
 from database import Base
 
@@ -64,3 +64,96 @@ class ResearchCache(Base):
     papers = Column(Text)   # JSON array
     summary = Column(Text)  # Claude-generated summary
     last_updated = Column(DateTime, server_default=func.now())
+
+
+class WorkoutSession(Base):
+    __tablename__ = "workout_sessions"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)   # Telegram chat_id; 0 for web app
+    started_at = Column(DateTime, server_default=func.now())
+    ended_at = Column(DateTime, nullable=True)
+    notes = Column(Text, nullable=True)
+
+
+class SetLog(Base):
+    __tablename__ = "set_logs"
+    id = Column(Integer, primary_key=True)
+    session_id = Column(Integer, ForeignKey("workout_sessions.id"), index=True)
+    exercise_name = Column(String, index=True)
+    weight_kg = Column(Float)
+    reps = Column(Integer)
+    estimated_1rm = Column(Float)   # Epley: weight * (1 + reps/30)
+    logged_at = Column(DateTime, server_default=func.now())
+
+
+class PersonalRecord(Base):
+    __tablename__ = "personal_records"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    exercise_name = Column(String, index=True)
+    weight_kg = Column(Float)
+    reps = Column(Integer)
+    estimated_1rm = Column(Float)
+    set_log_id = Column(Integer, ForeignKey("set_logs.id"), nullable=True)
+    achieved_at = Column(DateTime, server_default=func.now())
+
+
+class DailyCheckIn(Base):
+    __tablename__ = "daily_checkins"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    date = Column(String, index=True)       # "2026-05-25"
+    sleep_score = Column(Integer)           # 1-10
+    energy_score = Column(Integer)          # 1-10
+    soreness_score = Column(Integer)        # 1-10
+    stress_score = Column(Integer)          # 1-10
+    recovery_score = Column(Integer)        # 0-100, Claude-generated
+    coaching_tip = Column(Text)
+    hrv_ms = Column(Float, nullable=True)
+    resting_hr_bpm = Column(Integer, nullable=True)
+    sleep_duration_hrs = Column(Float, nullable=True)
+    data_source = Column(String, default="manual")  # "manual" | "garmin" | "oura" etc.
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class BodyMeasurement(Base):
+    __tablename__ = "body_measurements"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    date = Column(String)
+    body_weight_kg = Column(Float, nullable=True)
+    waist_cm = Column(Float, nullable=True)
+    chest_cm = Column(Float, nullable=True)
+    hips_cm = Column(Float, nullable=True)
+    left_arm_cm = Column(Float, nullable=True)
+    right_arm_cm = Column(Float, nullable=True)
+    left_thigh_cm = Column(Float, nullable=True)
+    right_thigh_cm = Column(Float, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class MealLog(Base):
+    __tablename__ = "meal_logs"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    date = Column(String, index=True)       # "2026-05-25"
+    description = Column(Text)
+    calories = Column(Integer)
+    protein_g = Column(Float)
+    carbs_g = Column(Float)
+    fat_g = Column(Float)
+    macro_source = Column(String, default="estimated")  # "nutritionix" | "estimated"
+    logged_at = Column(DateTime, server_default=func.now())
+
+
+class WeeklyReport(Base):
+    __tablename__ = "weekly_reports"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    week_start = Column(String)             # "2026-05-19"
+    sessions_count = Column(Integer)
+    avg_recovery = Column(Float, nullable=True)
+    prs_count = Column(Integer, default=0)
+    avg_protein_g = Column(Float, nullable=True)
+    ai_insights = Column(Text)              # JSON array of insight strings
+    created_at = Column(DateTime, server_default=func.now())
