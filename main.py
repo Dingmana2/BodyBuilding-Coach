@@ -1,7 +1,8 @@
+import asyncio
 import json
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -77,7 +78,12 @@ async def save_profile(request: Request, db: Session = Depends(get_db)):
 # ── Body Analysis ─────────────────────────────────────────────────────────────
 
 @app.post("/api/analyze")
-async def analyze_photo(file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def analyze_photo(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    # Reject oversized uploads before reading the body into RAM.
+    content_length = request.headers.get("content-length")
+    if content_length and int(content_length) > 20 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
+
     ext = Path(file.filename or "photo.jpg").suffix.lower()
     if ext not in ALLOWED_EXTENSIONS:
         raise HTTPException(status_code=400, detail=f"File type {ext} not supported. Use JPG, PNG, or WebP.")
@@ -87,7 +93,7 @@ async def analyze_photo(file: UploadFile = File(...), db: Session = Depends(get_
 
     content = await file.read()
     if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large. Max 20MB.")
+        raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
 
     with open(filepath, "wb") as f:
         f.write(content)
@@ -154,7 +160,7 @@ def list_analyses(limit: int = 20, db: Session = Depends(get_db)):
 # ── Plans ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/plan/generate")
-def generate_plan(db: Session = Depends(get_db)):
+async def generate_plan(db: Session = Depends(get_db)):
     analysis = (
         db.query(models.BodyAnalysis)
         .order_by(models.BodyAnalysis.created_at.desc())
@@ -170,7 +176,11 @@ def generate_plan(db: Session = Depends(get_db)):
     research_cache = db.query(models.ResearchCache).all()
 
     try:
-        plan = generate_comprehensive_plan(analysis, research_cache, profile)
+        # Run the synchronous Claude call in a thread pool so it doesn't block
+        # the event loop while waiting for the ~30-60s API response.
+        plan = await asyncio.to_thread(
+            generate_comprehensive_plan, analysis, research_cache, profile
+        )
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
@@ -279,7 +289,7 @@ async def refresh_research(db: Session = Depends(get_db)):
         if existing:
             existing.papers = json.dumps(data["papers"])
             existing.summary = data["summary"]
-            existing.last_updated = datetime.utcnow()
+            existing.last_updated = datetime.now(timezone.utc)
         else:
             db.add(
                 models.ResearchCache(

@@ -4,8 +4,21 @@ import json
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
+from claude_service import summarize_research
+
 PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SEMANTIC_SCHOLAR_BASE = "https://api.semanticscholar.org/graph/v1"
+
+# Module-level HTTP client — reuses connections across requests.
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None:
+        _http_client = httpx.AsyncClient(timeout=20)
+    return _http_client
+
 
 # Core research topics — always kept up to date
 BASE_TOPICS = [
@@ -43,6 +56,7 @@ GOAL_TOPICS = {
 
 
 async def search_pubmed(query: str, max_results: int = 5, years_back: int = 3) -> list:
+    client = _get_http_client()
     min_date = (datetime.now() - timedelta(days=365 * years_back)).strftime("%Y/%m/%d")
 
     search_params = {
@@ -55,12 +69,11 @@ async def search_pubmed(query: str, max_results: int = 5, years_back: int = 3) -
         "retmode": "json",
     }
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            resp = await client.get(f"{PUBMED_BASE}/esearch.fcgi", params=search_params)
-            data = resp.json()
-        except Exception:
-            return []
+    try:
+        resp = await client.get(f"{PUBMED_BASE}/esearch.fcgi", params=search_params)
+        data = resp.json()
+    except Exception:
+        return []
 
     ids = data.get("esearchresult", {}).get("idlist", [])
     if not ids:
@@ -75,12 +88,11 @@ async def search_pubmed(query: str, max_results: int = 5, years_back: int = 3) -
         "retmode": "xml",
     }
 
-    async with httpx.AsyncClient(timeout=20) as client:
-        try:
-            resp = await client.get(f"{PUBMED_BASE}/efetch.fcgi", params=fetch_params)
-            return _parse_pubmed_xml(resp.text)
-        except Exception:
-            return []
+    try:
+        resp = await client.get(f"{PUBMED_BASE}/efetch.fcgi", params=fetch_params)
+        return _parse_pubmed_xml(resp.text)
+    except Exception:
+        return []
 
 
 def _parse_pubmed_xml(xml_text: str) -> list:
@@ -123,6 +135,7 @@ def _parse_pubmed_xml(xml_text: str) -> list:
 
 
 async def search_semantic_scholar(query: str, max_results: int = 4) -> list:
+    client = _get_http_client()
     params = {
         "query": query,
         "limit": max_results,
@@ -130,16 +143,15 @@ async def search_semantic_scholar(query: str, max_results: int = 4) -> list:
         "sort": "citationCount",
     }
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        try:
-            resp = await client.get(
-                f"{SEMANTIC_SCHOLAR_BASE}/paper/search", params=params
-            )
-            if resp.status_code != 200:
-                return []
-            data = resp.json()
-        except Exception:
+    try:
+        resp = await client.get(
+            f"{SEMANTIC_SCHOLAR_BASE}/paper/search", params=params
+        )
+        if resp.status_code != 200:
             return []
+        data = resp.json()
+    except Exception:
+        return []
 
     papers = []
     for paper in data.get("data", []):
@@ -175,23 +187,36 @@ async def get_papers_for_topic(topic: str) -> list:
     return unique
 
 
-async def refresh_all_research(profile=None) -> dict:
-    from claude_service import summarize_research
+async def _process_topic(topic: str) -> tuple[str, dict] | None:
+    try:
+        papers = await get_papers_for_topic(topic)
+        if not papers:
+            return None
+        # summarize_research is a synchronous Claude call — run in thread pool
+        # so it doesn't block the event loop during batch processing.
+        summary = await asyncio.to_thread(summarize_research, topic, papers)
+        return topic, {"papers": papers, "summary": summary}
+    except Exception as e:
+        print(f"Research fetch failed for '{topic}': {e}")
+        return None
 
+
+async def refresh_all_research(profile=None) -> dict:
     topics = BASE_TOPICS.copy()
     if profile and profile.goal and profile.goal in GOAL_TOPICS:
         topics.extend(GOAL_TOPICS[profile.goal])
 
     results = {}
-    for topic in topics[:10]:  # Cap at 10 topics per refresh
-        try:
-            papers = await get_papers_for_topic(topic)
-            if papers:
-                summary = summarize_research(topic, papers)
-                results[topic] = {"papers": papers, "summary": summary}
-            await asyncio.sleep(0.5)  # Gentle rate limiting
-        except Exception as e:
-            print(f"Research fetch failed for '{topic}': {e}")
-            continue
+    # Process in batches of 3 to respect NCBI rate limits while still parallelising.
+    batch_size = 3
+    for i in range(0, min(len(topics), 10), batch_size):
+        batch = topics[i:i + batch_size]
+        batch_results = await asyncio.gather(*[_process_topic(t) for t in batch])
+        for result in batch_results:
+            if result:
+                topic, data = result
+                results[topic] = data
+        if i + batch_size < min(len(topics), 10):
+            await asyncio.sleep(1.0)  # pause between batches for NCBI rate limit
 
     return results

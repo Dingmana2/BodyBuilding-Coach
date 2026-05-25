@@ -1,3 +1,31 @@
+/* ── XSS guard ── */
+function esc(str) {
+    if (str == null) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+/* ── Simple TTL cache for GET requests (30 s) ── */
+const _cache = {};
+const CACHE_TTL_MS = 30_000;
+
+async function cachedApi(method, path) {
+    const key = `${method}:${path}`;
+    const hit = _cache[key];
+    if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.data;
+    const data = await api(method, path);
+    _cache[key] = { data, ts: Date.now() };
+    return data;
+}
+
+function invalidateCache(...paths) {
+    paths.forEach(p => delete _cache[`GET:${p}`]);
+}
+
 /* ── State ── */
 const state = {
     activeTab: 'dashboard',
@@ -45,11 +73,11 @@ function showTab(tab) {
     if (loaders[tab]) loaders[tab]();
 }
 
-function showPlanTab(tab) {
+function showPlanTab(tab, el) {
     state.activePlanTab = tab;
-    document.querySelectorAll('.plan-tab').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.plan-section').forEach(el => el.style.display = 'none');
-    event.currentTarget.classList.add('active');
+    document.querySelectorAll('.plan-tab').forEach(e => e.classList.remove('active'));
+    document.querySelectorAll('.plan-section').forEach(e => e.style.display = 'none');
+    el.classList.add('active');
     document.getElementById(`plan-${tab}`).style.display = 'block';
 }
 
@@ -73,11 +101,14 @@ function showToast(msg, type = 'success') {
 
 /* ── Dashboard ── */
 async function loadDashboard() {
-    const health = await api('GET', '/health').catch(() => ({ api_key_configured: false }));
+    const [health, plan] = await Promise.all([
+        cachedApi('GET', '/health').catch(() => ({ api_key_configured: false })),
+        cachedApi('GET', '/plan/current').catch(() => null),
+    ]);
+
     document.getElementById('setup-banner').style.display =
         health.api_key_configured ? 'none' : 'block';
 
-    const plan = await api('GET', '/plan/current').catch(() => null);
     state.currentPlan = plan;
 
     if (plan) {
@@ -97,12 +128,12 @@ async function loadDashboard() {
             card.style.display = 'block';
             document.getElementById('latest-analysis-content').innerHTML = `
                 <div style="display:flex;gap:16px;align-items:flex-start;flex-wrap:wrap">
-                    <img src="${plan.latest_analysis.photo_url}" style="height:120px;border-radius:8px;object-fit:cover" />
+                    <img src="${esc(plan.latest_analysis.photo_url)}" style="height:120px;border-radius:8px;object-fit:cover" />
                     <div>
                         <div class="stat-label">Last Analyzed</div>
-                        <div>${formatDate(plan.latest_analysis.created_at)}</div>
+                        <div>${esc(formatDate(plan.latest_analysis.created_at))}</div>
                         <div class="stat-label" style="margin-top:8px">Body Fat</div>
-                        <div style="font-size:20px;font-weight:700;color:var(--gold)">${plan.latest_analysis.body_fat_estimate}</div>
+                        <div style="font-size:20px;font-weight:700;color:var(--gold)">${esc(plan.latest_analysis.body_fat_estimate)}</div>
                     </div>
                 </div>
             `;
@@ -142,12 +173,24 @@ function clearUpload() {
 async function submitAnalysis() {
     if (!state.pendingFile) return;
 
+    const file = state.pendingFile;
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!allowed.includes(file.type)) {
+        showToast('Please use a JPG, PNG, or WebP image.', 'error');
+        return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+        showToast('File too large. Max 20MB.', 'error');
+        return;
+    }
+
     const formData = new FormData();
-    formData.append('file', state.pendingFile);
+    formData.append('file', file);
 
     showLoading('Analyzing your physique with AI… This takes 20-40 seconds.');
     try {
         const result = await api('POST', '/analyze', formData, true);
+        invalidateCache('/plan/current', '/progress', '/analyses');
         hideLoading();
         clearUpload();
         renderAnalysisResult(result.analysis, result.created_at);
@@ -173,19 +216,19 @@ function renderAnalysisResult(analysis, createdAt) {
         const score = m.score || 0;
         return `
             <div class="muscle-item">
-                <div class="muscle-name">${key}</div>
-                <div class="muscle-score">${score}/10</div>
+                <div class="muscle-name">${esc(key)}</div>
+                <div class="muscle-score">${esc(score)}/10</div>
                 <div class="score-bar"><div class="score-fill" style="width:${score * 10}%"></div></div>
-                <div class="muscle-notes">${m.notes || ''}</div>
+                <div class="muscle-notes">${esc(m.notes)}</div>
             </div>
         `;
     }).join('');
 
     const strengthsHtml = (analysis.strengths || [])
-        .map(s => `<span class="tag tag-green">${s}</span>`).join('');
+        .map(s => `<span class="tag tag-green">${esc(s)}</span>`).join('');
 
     const improvementsHtml = (analysis.areas_to_improve || [])
-        .map(i => `<span class="tag tag-orange">${i}</span>`).join('');
+        .map(i => `<span class="tag tag-orange">${esc(i)}</span>`).join('');
 
     document.getElementById('analysis-content').innerHTML = `
         <div class="analysis-grid">
@@ -194,12 +237,12 @@ function renderAnalysisResult(analysis, createdAt) {
                 <div style="display:flex;gap:24px;margin-bottom:16px">
                     <div>
                         <div class="stat-label">Body Fat Estimate</div>
-                        <div style="font-size:24px;font-weight:700;color:var(--gold)">${analysis.body_fat_estimate}</div>
-                        <div style="font-size:12px;color:var(--text-muted)">Confidence: ${analysis.body_fat_confidence}</div>
+                        <div style="font-size:24px;font-weight:700;color:var(--gold)">${esc(analysis.body_fat_estimate)}</div>
+                        <div style="font-size:12px;color:var(--text-muted)">Confidence: ${esc(analysis.body_fat_confidence)}</div>
                     </div>
                     <div>
                         <div class="stat-label">Physique Score</div>
-                        <div style="font-size:24px;font-weight:700;color:var(--gold)">${analysis.overall_physique_score}/10</div>
+                        <div style="font-size:24px;font-weight:700;color:var(--gold)">${esc(analysis.overall_physique_score)}/10</div>
                     </div>
                 </div>
 
@@ -211,19 +254,19 @@ function renderAnalysisResult(analysis, createdAt) {
 
                 ${analysis.symmetry_notes ? `
                     <div class="section-label">Symmetry</div>
-                    <p style="font-size:14px;color:var(--text-muted);margin-bottom:12px">${analysis.symmetry_notes}</p>
+                    <p style="font-size:14px;color:var(--text-muted);margin-bottom:12px">${esc(analysis.symmetry_notes)}</p>
                 ` : ''}
 
                 ${analysis.posture_notes ? `
                     <div class="section-label">Posture</div>
-                    <p style="font-size:14px;color:var(--text-muted);margin-bottom:12px">${analysis.posture_notes}</p>
+                    <p style="font-size:14px;color:var(--text-muted);margin-bottom:12px">${esc(analysis.posture_notes)}</p>
                 ` : ''}
 
                 ${analysis.coach_message ? `
-                    <div class="coach-message">${analysis.coach_message}</div>
+                    <div class="coach-message">${esc(analysis.coach_message)}</div>
                 ` : ''}
 
-                <p style="font-size:11px;color:var(--text-muted);margin-top:12px">${analysis.disclaimer || ''}</p>
+                <p style="font-size:11px;color:var(--text-muted);margin-top:12px">${esc(analysis.disclaimer)}</p>
             </div>
             <div>
                 <div class="section-label">Muscle Development</div>
@@ -234,7 +277,7 @@ function renderAnalysisResult(analysis, createdAt) {
 }
 
 async function loadAnalyses() {
-    const analyses = await api('GET', '/analyses').catch(() => []);
+    const analyses = await cachedApi('GET', '/analyses').catch(() => []);
     state.analyses = analyses;
     const container = document.getElementById('analyses-list');
 
@@ -246,13 +289,13 @@ async function loadAnalyses() {
     container.innerHTML = `<ul class="analyses-history">${
         analyses.map(a => `
             <li class="history-item" onclick="showHistoryAnalysis(${a.id})">
-                <img class="history-thumb" src="${a.photo_url}" alt="Photo" />
+                <img class="history-thumb" src="${esc(a.photo_url)}" alt="Photo" />
                 <div class="history-info">
-                    <div class="history-bf">${a.body_fat_estimate || '—'}</div>
-                    <div style="font-size:13px">Score: ${a.overall_physique_score || '—'}/10</div>
-                    <div class="history-date">${formatDate(a.created_at)}</div>
+                    <div class="history-bf">${esc(a.body_fat_estimate) || '—'}</div>
+                    <div style="font-size:13px">Score: ${esc(a.overall_physique_score) || '—'}/10</div>
+                    <div class="history-date">${esc(formatDate(a.created_at))}</div>
                 </div>
-                ${a.coach_message ? `<div style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${a.coach_message}</div>` : ''}
+                ${a.coach_message ? `<div style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.coach_message)}</div>` : ''}
             </li>
         `).join('')
     }</ul>`;
@@ -271,7 +314,13 @@ async function generatePlan() {
     showLoading('Generating your personalized plan based on analysis + latest research… (30-60 seconds)');
     try {
         const plan = await api('POST', '/plan/generate');
-        state.currentPlan = { workout_plan: plan.workout_plan, diet_plan: plan.diet_plan, supplement_plan: plan.supplement_plan, coaching_notes: plan.coaching_notes };
+        state.currentPlan = {
+            workout_plan: plan.workout_plan,
+            diet_plan: plan.diet_plan,
+            supplement_plan: plan.supplement_plan,
+            coaching_notes: plan.coaching_notes,
+        };
+        invalidateCache('/plan/current');
         hideLoading();
         showToast('Plan generated!');
         showTab('plans');
@@ -283,7 +332,7 @@ async function generatePlan() {
 }
 
 async function loadCurrentPlan() {
-    const data = await api('GET', '/plan/current').catch(() => null);
+    const data = await cachedApi('GET', '/plan/current').catch(() => null);
     if (!data || (!data.workout_plan && !data.diet_plan)) {
         document.getElementById('no-plan-message').style.display = 'block';
         document.getElementById('plan-tabs').style.display = 'none';
@@ -311,19 +360,19 @@ function renderWorkoutPlan(workout) {
     const days = (workout.days || []).map(day => {
         const exerciseRows = (day.exercises || []).map(ex => `
             <tr>
-                <td><strong>${ex.name}</strong><br><small style="color:var(--text-muted)">${ex.why || ''}</small></td>
-                <td>${ex.sets}</td>
-                <td>${ex.reps}</td>
-                <td>${ex.rest_seconds ? `${ex.rest_seconds}s` : '—'}</td>
-                <td style="color:var(--text-muted);font-size:13px">${ex.notes || ''}</td>
+                <td><strong>${esc(ex.name)}</strong><br><small style="color:var(--text-muted)">${esc(ex.why)}</small></td>
+                <td>${esc(ex.sets)}</td>
+                <td>${esc(ex.reps)}</td>
+                <td>${ex.rest_seconds ? `${esc(ex.rest_seconds)}s` : '—'}</td>
+                <td style="color:var(--text-muted);font-size:13px">${esc(ex.notes)}</td>
             </tr>
         `).join('');
 
         return `
             <div class="day-section">
                 <div class="day-header">
-                    <span>${day.day}</span>
-                    <span class="day-focus">${day.focus || ''}</span>
+                    <span>${esc(day.day)}</span>
+                    <span class="day-focus">${esc(day.focus)}</span>
                 </div>
                 <table>
                     <thead><tr>
@@ -331,25 +380,25 @@ function renderWorkoutPlan(workout) {
                     </tr></thead>
                     <tbody>${exerciseRows}</tbody>
                 </table>
-                ${day.volume_note ? `<p style="font-size:12px;color:var(--text-muted);margin-top:8px">${day.volume_note}</p>` : ''}
+                ${day.volume_note ? `<p style="font-size:12px;color:var(--text-muted);margin-top:8px">${esc(day.volume_note)}</p>` : ''}
             </div>
         `;
     }).join('');
 
     const citations = (workout.research_citations || [])
-        .map(c => `<div class="citation">${c}</div>`).join('');
+        .map(c => `<div class="citation">${esc(c)}</div>`).join('');
 
     document.getElementById('plan-workout').innerHTML = `
-        <h3>Training Program — ${workout.weekly_split || ''}</h3>
-        <p style="color:var(--text-muted);margin-bottom:20px;font-size:14px">${workout.split_rationale || ''}</p>
+        <h3>Training Program — ${esc(workout.weekly_split)}</h3>
+        <p style="color:var(--text-muted);margin-bottom:20px;font-size:14px">${esc(workout.split_rationale)}</p>
         ${days}
         ${workout.progression_strategy ? `
             <div class="section-label">Progression Strategy</div>
-            <p style="font-size:14px;margin-bottom:12px">${workout.progression_strategy}</p>
+            <p style="font-size:14px;margin-bottom:12px">${esc(workout.progression_strategy)}</p>
         ` : ''}
         ${workout.deload_protocol ? `
             <div class="section-label">Deload Protocol</div>
-            <p style="font-size:14px;margin-bottom:12px">${workout.deload_protocol}</p>
+            <p style="font-size:14px;margin-bottom:12px">${esc(workout.deload_protocol)}</p>
         ` : ''}
         ${citations ? `<div class="section-label">Research Citations</div>${citations}` : ''}
     `;
@@ -359,57 +408,57 @@ function renderDietPlan(diet) {
     const macros = diet.macros || {};
     const meals = (diet.sample_day || []).map(meal => `
         <div style="margin-bottom:16px;padding:14px;background:var(--surface-2);border-radius:8px">
-            <strong style="font-size:14px">${meal.meal}</strong>
+            <strong style="font-size:14px">${esc(meal.meal)}</strong>
             <ul style="margin:8px 0 8px 16px;color:var(--text-muted);font-size:13px">
-                ${(meal.foods || []).map(f => `<li>${f}</li>`).join('')}
+                ${(meal.foods || []).map(f => `<li>${esc(f)}</li>`).join('')}
             </ul>
             ${meal.approx_macros ? `
                 <div style="display:flex;gap:16px;font-size:12px;color:var(--text-muted)">
-                    <span>${meal.approx_macros.calories} kcal</span>
-                    <span>P: ${meal.approx_macros.protein}g</span>
-                    <span>C: ${meal.approx_macros.carbs}g</span>
-                    <span>F: ${meal.approx_macros.fat}g</span>
+                    <span>${esc(meal.approx_macros.calories)} kcal</span>
+                    <span>P: ${esc(meal.approx_macros.protein)}g</span>
+                    <span>C: ${esc(meal.approx_macros.carbs)}g</span>
+                    <span>F: ${esc(meal.approx_macros.fat)}g</span>
                 </div>
             ` : ''}
         </div>
     `).join('');
 
     const citations = (diet.research_citations || [])
-        .map(c => `<div class="citation">${c}</div>`).join('');
+        .map(c => `<div class="citation">${esc(c)}</div>`).join('');
 
     const timing = diet.meal_timing || {};
 
     document.getElementById('plan-diet').innerHTML = `
         <h3>Nutrition Plan</h3>
-        <p style="color:var(--text-muted);margin-bottom:20px;font-size:14px">${diet.goal_phase || ''}</p>
+        <p style="color:var(--text-muted);margin-bottom:20px;font-size:14px">${esc(diet.goal_phase)}</p>
 
         <div class="macro-row">
             <div class="macro-card">
-                <div class="macro-value">${diet.daily_calories || '—'}</div>
+                <div class="macro-value">${esc(diet.daily_calories) || '—'}</div>
                 <div class="macro-label">Daily Calories</div>
             </div>
             <div class="macro-card">
-                <div class="macro-value">${macros.protein_g || '—'}g</div>
+                <div class="macro-value">${esc(macros.protein_g) || '—'}g</div>
                 <div class="macro-label">Protein</div>
             </div>
             <div class="macro-card">
-                <div class="macro-value">${macros.carbs_g || '—'}g</div>
+                <div class="macro-value">${esc(macros.carbs_g) || '—'}g</div>
                 <div class="macro-label">Carbohydrates</div>
             </div>
             <div class="macro-card">
-                <div class="macro-value">${macros.fat_g || '—'}g</div>
+                <div class="macro-value">${esc(macros.fat_g) || '—'}g</div>
                 <div class="macro-label">Fat</div>
             </div>
         </div>
 
-        ${macros.macro_rationale ? `<p style="font-size:13px;color:var(--text-muted);margin-bottom:20px">${macros.macro_rationale}</p>` : ''}
+        ${macros.macro_rationale ? `<p style="font-size:13px;color:var(--text-muted);margin-bottom:20px">${esc(macros.macro_rationale)}</p>` : ''}
 
         ${Object.keys(timing).length ? `
             <div class="section-label">Meal Timing</div>
             <div style="display:grid;gap:10px;margin-bottom:20px">
-                ${timing.pre_workout ? `<div style="padding:12px;background:var(--surface-2);border-radius:8px"><strong style="font-size:13px">Pre-Workout</strong><p style="font-size:13px;color:var(--text-muted);margin-top:4px">${timing.pre_workout}</p></div>` : ''}
-                ${timing.post_workout ? `<div style="padding:12px;background:var(--surface-2);border-radius:8px"><strong style="font-size:13px">Post-Workout</strong><p style="font-size:13px;color:var(--text-muted);margin-top:4px">${timing.post_workout}</p></div>` : ''}
-                ${timing.before_bed ? `<div style="padding:12px;background:var(--surface-2);border-radius:8px"><strong style="font-size:13px">Before Bed</strong><p style="font-size:13px;color:var(--text-muted);margin-top:4px">${timing.before_bed}</p></div>` : ''}
+                ${timing.pre_workout ? `<div style="padding:12px;background:var(--surface-2);border-radius:8px"><strong style="font-size:13px">Pre-Workout</strong><p style="font-size:13px;color:var(--text-muted);margin-top:4px">${esc(timing.pre_workout)}</p></div>` : ''}
+                ${timing.post_workout ? `<div style="padding:12px;background:var(--surface-2);border-radius:8px"><strong style="font-size:13px">Post-Workout</strong><p style="font-size:13px;color:var(--text-muted);margin-top:4px">${esc(timing.post_workout)}</p></div>` : ''}
+                ${timing.before_bed ? `<div style="padding:12px;background:var(--surface-2);border-radius:8px"><strong style="font-size:13px">Before Bed</strong><p style="font-size:13px;color:var(--text-muted);margin-top:4px">${esc(timing.before_bed)}</p></div>` : ''}
             </div>
         ` : ''}
 
@@ -418,20 +467,20 @@ function renderDietPlan(diet) {
         ${diet.foods_to_prioritize?.length ? `
             <div class="section-label">Foods to Prioritize</div>
             <ul style="color:var(--text-muted);font-size:14px;margin-left:16px;margin-bottom:16px">
-                ${diet.foods_to_prioritize.map(f => `<li>${f}</li>`).join('')}
+                ${diet.foods_to_prioritize.map(f => `<li>${esc(f)}</li>`).join('')}
             </ul>
         ` : ''}
 
         ${diet.foods_to_limit?.length ? `
             <div class="section-label">Foods to Limit</div>
             <ul style="color:var(--text-muted);font-size:14px;margin-left:16px;margin-bottom:16px">
-                ${diet.foods_to_limit.map(f => `<li>${f}</li>`).join('')}
+                ${diet.foods_to_limit.map(f => `<li>${esc(f)}</li>`).join('')}
             </ul>
         ` : ''}
 
         ${diet.hydration ? `
             <div class="section-label">Hydration</div>
-            <p style="font-size:14px;color:var(--text-muted);margin-bottom:16px">${diet.hydration}</p>
+            <p style="font-size:14px;color:var(--text-muted);margin-bottom:16px">${esc(diet.hydration)}</p>
         ` : ''}
 
         ${citations ? `<div class="section-label">Research Citations</div>${citations}` : ''}
@@ -447,14 +496,14 @@ function renderSupplementPlan(supplements) {
     const rows = supplements.map(s => `
         <tr>
             <td>
-                <span class="priority-badge">#${s.priority || '?'}</span>
-                <strong style="margin-left:8px">${s.name}</strong>
+                <span class="priority-badge">#${esc(s.priority) || '?'}</span>
+                <strong style="margin-left:8px">${esc(s.name)}</strong>
             </td>
-            <td>${s.dose || '—'}</td>
-            <td>${s.timing || '—'}</td>
-            <td class="grade-${(s.evidence_grade || 'c').toLowerCase()}">${s.evidence_grade || '?'}</td>
-            <td style="font-size:13px;color:var(--text-muted)">${s.benefit || ''}</td>
-            <td style="font-size:12px;color:var(--text-muted)">${s.cost_per_month || ''}</td>
+            <td>${esc(s.dose) || '—'}</td>
+            <td>${esc(s.timing) || '—'}</td>
+            <td class="grade-${esc((s.evidence_grade || 'c').toLowerCase())}">${esc(s.evidence_grade) || '?'}</td>
+            <td style="font-size:13px;color:var(--text-muted)">${esc(s.benefit)}</td>
+            <td style="font-size:12px;color:var(--text-muted)">${esc(s.cost_per_month)}</td>
         </tr>
     `).join('');
 
@@ -475,14 +524,14 @@ function renderSupplementPlan(supplements) {
 
 function renderCoachingNotes(notes) {
     if (!notes) return;
-    const lifestyle = (notes.lifestyle_factors || []).map(f => `<li style="margin-bottom:6px">${f}</li>`).join('');
+    const lifestyle = (notes.lifestyle_factors || []).map(f => `<li style="margin-bottom:6px">${esc(f)}</li>`).join('');
 
     document.getElementById('plan-coaching').innerHTML = `
         <h3>Coaching Notes</h3>
         ${notes.biggest_priority ? `
             <div style="background:rgba(240,165,0,0.08);border:1px solid rgba(240,165,0,0.3);border-radius:8px;padding:16px;margin-bottom:20px">
                 <div class="section-label" style="margin-top:0">Biggest Priority Right Now</div>
-                <p>${notes.biggest_priority}</p>
+                <p>${esc(notes.biggest_priority)}</p>
             </div>
         ` : ''}
         ${lifestyle ? `
@@ -491,13 +540,13 @@ function renderCoachingNotes(notes) {
         ` : ''}
         ${notes['12_week_expectations'] ? `
             <div class="section-label">12-Week Expectations</div>
-            <p style="font-size:14px;color:var(--text-muted);margin-bottom:16px">${notes['12_week_expectations']}</p>
+            <p style="font-size:14px;color:var(--text-muted);margin-bottom:16px">${esc(notes['12_week_expectations'])}</p>
         ` : ''}
         ${notes.check_in_schedule ? `
             <div class="section-label">Check-In Schedule</div>
-            <p style="font-size:14px;color:var(--text-muted);margin-bottom:16px">${notes.check_in_schedule}</p>
+            <p style="font-size:14px;color:var(--text-muted);margin-bottom:16px">${esc(notes.check_in_schedule)}</p>
         ` : ''}
-        ${notes.motivation ? `<div class="coach-message">${notes.motivation}</div>` : ''}
+        ${notes.motivation ? `<div class="coach-message">${esc(notes.motivation)}</div>` : ''}
     `;
 }
 
@@ -506,6 +555,7 @@ async function refreshResearch() {
     showLoading('Fetching latest papers from PubMed & Semantic Scholar… This may take 1-2 minutes.');
     try {
         const result = await api('POST', '/research/refresh');
+        invalidateCache('/research');
         hideLoading();
         showToast(`Research updated: ${result.count} topics refreshed`);
         if (state.activeTab === 'research') await loadResearch();
@@ -516,7 +566,7 @@ async function refreshResearch() {
 }
 
 async function loadResearch() {
-    const data = await api('GET', '/research').catch(() => []);
+    const data = await cachedApi('GET', '/research').catch(() => []);
     const container = document.getElementById('research-list');
 
     if (!data.length) {
@@ -527,15 +577,15 @@ async function loadResearch() {
     container.innerHTML = data.map(topic => {
         const papersHtml = (topic.papers || []).slice(0, 8).map(p => `
             <li class="paper-item">
-                <div class="paper-title">${p.title}</div>
+                <div class="paper-title">${esc(p.title)}</div>
                 <div class="paper-meta">
-                    ${p.authors?.length ? p.authors.slice(0, 2).join(', ') : ''}
-                    ${p.year ? `• ${p.year}` : ''}
-                    ${p.journal ? `• <em>${p.journal}</em>` : ''}
-                    ${p.citation_count ? `• ${p.citation_count} citations` : ''}
-                    ${p.source ? `• ${p.source}` : ''}
+                    ${p.authors?.length ? esc(p.authors.slice(0, 2).join(', ')) : ''}
+                    ${p.year ? `• ${esc(p.year)}` : ''}
+                    ${p.journal ? `• <em>${esc(p.journal)}</em>` : ''}
+                    ${p.citation_count ? `• ${esc(p.citation_count)} citations` : ''}
+                    ${p.source ? `• ${esc(p.source)}` : ''}
                 </div>
-                ${p.url ? `<a class="paper-link" href="${p.url}" target="_blank">Read paper →</a>` : ''}
+                ${p.url ? `<a class="paper-link" href="${esc(p.url)}" target="_blank" rel="noopener noreferrer">Read paper →</a>` : ''}
             </li>
         `).join('');
 
@@ -544,12 +594,12 @@ async function loadResearch() {
             <div class="research-topic">
                 <div class="research-topic-header" onclick="togglePapers(${topicId})">
                     <div>
-                        <div class="research-topic-title">${topic.topic}</div>
-                        <div style="font-size:12px;color:var(--text-muted)">${topic.papers?.length || 0} papers • Updated ${formatDate(topic.last_updated)}</div>
+                        <div class="research-topic-title">${esc(topic.topic)}</div>
+                        <div style="font-size:12px;color:var(--text-muted)">${esc(topic.papers?.length || 0)} papers • Updated ${esc(formatDate(topic.last_updated))}</div>
                     </div>
                     <span class="toggle-papers" id="toggle-${topicId}">Show papers ▼</span>
                 </div>
-                ${topic.summary ? `<div class="research-summary">${topic.summary}</div>` : ''}
+                ${topic.summary ? `<div class="research-summary">${esc(topic.summary)}</div>` : ''}
                 <ul class="paper-list" id="papers-${topicId}" style="display:none">${papersHtml}</ul>
             </div>
         `;
@@ -570,7 +620,7 @@ function togglePapers(topicId) {
 
 /* ── Progress ── */
 async function loadProgress() {
-    const data = await api('GET', '/progress').catch(() => []);
+    const data = await cachedApi('GET', '/progress').catch(() => []);
     const container = document.getElementById('progress-content');
 
     if (data.length < 1) {
@@ -580,11 +630,11 @@ async function loadProgress() {
 
     const cards = data.map((entry, i) => `
         <div class="progress-card">
-            <img src="${entry.photo_url}" alt="Progress photo ${i + 1}" loading="lazy" />
+            <img src="${esc(entry.photo_url)}" alt="Progress photo ${i + 1}" loading="lazy" />
             <div class="progress-card-info">
-                <div class="progress-date">${formatDate(entry.created_at)}</div>
-                <div class="progress-bf">${entry.body_fat_estimate || '—'}</div>
-                <div style="font-size:13px;color:var(--text-muted)">Score: ${entry.overall_physique_score || '—'}/10</div>
+                <div class="progress-date">${esc(formatDate(entry.created_at))}</div>
+                <div class="progress-bf">${esc(entry.body_fat_estimate) || '—'}</div>
+                <div style="font-size:13px;color:var(--text-muted)">Score: ${esc(entry.overall_physique_score) || '—'}/10</div>
             </div>
         </div>
     `).join('');
@@ -594,7 +644,7 @@ async function loadProgress() {
 
 /* ── Profile ── */
 async function loadProfile() {
-    const profile = await api('GET', '/profile').catch(() => ({}));
+    const profile = await cachedApi('GET', '/profile').catch(() => ({}));
     if (!profile || !profile.age) return;
 
     const form = document.getElementById('profile-form');
@@ -621,6 +671,7 @@ async function saveProfile(event) {
 
     try {
         await api('POST', '/profile', data);
+        invalidateCache('/profile', '/plan/current');
         showToast('Profile saved!');
     } catch (err) {
         showToast(`Save failed: ${err.message}`, 'error');

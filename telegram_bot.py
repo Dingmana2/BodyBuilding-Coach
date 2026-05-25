@@ -9,8 +9,10 @@ import base64
 import json
 import os
 import re
+import time
 import xml.etree.ElementTree as ET
 from io import BytesIO
+from pathlib import Path
 
 import anthropic
 import httpx
@@ -33,9 +35,40 @@ CHAT_MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 MAX_HISTORY = 20
 
+# Cooldown in seconds between expensive per-user operations.
+PLAN_COOLDOWN = 300     # 5 minutes between /plan calls
+ANALYZE_COOLDOWN = 60   # 1 minute between photo analyses
+_plan_cooldowns: dict[int, float] = {}
+_analyze_cooldowns: dict[int, float] = {}
+
+# ── State persistence ─────────────────────────────────────────────────────────
+# User data is saved to a JSON file so it survives bot restarts / redeploys.
+# On Railway, mount a volume at /data and set DATA_DIR=/data in env vars.
+
+_STORE_PATH = Path(os.getenv("DATA_DIR", ".")) / "bot_state.json"
+
+
+def _load_store() -> dict[int, dict]:
+    if _STORE_PATH.exists():
+        try:
+            raw = json.loads(_STORE_PATH.read_text(encoding="utf-8"))
+            return {int(k): v for k, v in raw.items()}
+        except Exception as e:
+            print(f"Warning: could not load bot state: {e}")
+    return {}
+
+
+def _save_store() -> None:
+    try:
+        _STORE_PATH.write_text(
+            json.dumps(user_data, ensure_ascii=False), encoding="utf-8"
+        )
+    except Exception as e:
+        print(f"Warning: could not save bot state: {e}")
+
+
 # In-memory store: chat_id → {profile, last_analysis, last_plan, conversation_history}
-# Note: resets on bot restart. Set /profile again if needed.
-user_data: dict[int, dict] = {}
+user_data: dict[int, dict] = _load_store()
 
 RESEARCH_TOPICS = [
     "muscle hypertrophy resistance training 2024",
@@ -45,10 +78,25 @@ RESEARCH_TOPICS = [
 ]
 
 
+_anthropic_client: anthropic.Anthropic | None = None
+
+
 def claude() -> anthropic.Anthropic:
-    if not ANTHROPIC_KEY:
-        raise ValueError("ANTHROPIC_API_KEY not set in environment.")
-    return anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    global _anthropic_client
+    if _anthropic_client is None:
+        if not ANTHROPIC_KEY:
+            raise ValueError("ANTHROPIC_API_KEY not set in environment.")
+        _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    return _anthropic_client
+
+
+def _check_cooldown(cooldown_dict: dict[int, float], chat_id: int, seconds: int) -> int | None:
+    """Returns remaining seconds if on cooldown, None if clear (and records the call)."""
+    elapsed = time.monotonic() - cooldown_dict.get(chat_id, 0)
+    if elapsed < seconds:
+        return int(seconds - elapsed)
+    cooldown_dict[chat_id] = time.monotonic()
+    return None
 
 
 def get_user(chat_id: int) -> dict:
@@ -147,6 +195,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             profile[key] = value
 
     user["profile"] = profile
+    _save_store()
     await update.message.reply_text(
         "✅ Profile saved!\n\n"
         "Send a photo for physique analysis, or type /plan to get your plan now."
@@ -156,6 +205,13 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
+
+    remaining = _check_cooldown(_plan_cooldowns, chat_id, PLAN_COOLDOWN)
+    if remaining:
+        await update.message.reply_text(
+            f"⏳ Please wait {remaining}s before generating another plan."
+        )
+        return
 
     msg = await update.message.reply_text(
         "🧬 Generating your plan… (30-60 seconds)"
@@ -176,6 +232,7 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             plan = _generate_plan_from_profile(user["profile"])
 
         user["last_plan"] = plan
+        _save_store()
         await msg.delete()
         await _send_plan(update, plan)
         await update.message.reply_text(
@@ -202,6 +259,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
 
+    remaining = _check_cooldown(_analyze_cooldowns, chat_id, ANALYZE_COOLDOWN)
+    if remaining:
+        await update.message.reply_text(
+            f"⏳ Please wait {remaining}s before submitting another photo."
+        )
+        return
+
     msg = await update.message.reply_text(
         "📸 Analyzing your physique… (20-40 seconds)"
     )
@@ -214,6 +278,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         analysis = _analyze_photo(img_b64, user["profile"])
         user["last_analysis"] = analysis
+        _save_store()
 
         await msg.edit_text(_format_analysis(analysis), parse_mode="Markdown")
         await update.message.reply_text(
@@ -236,6 +301,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
         if plan_update and user["last_plan"]:
             _deep_merge(user["last_plan"], plan_update)
+            _save_store()
             reply += "\n\n✅ _Your plan has been updated. Type /plan to see the full updated version._"
 
         await msg.edit_text(reply, parse_mode="Markdown")

@@ -29,14 +29,14 @@ class BodyAnalysis(Base):
     symmetry_notes = Column(Text)
     coach_message = Column(Text)
     raw_analysis = Column(Text)     # Full JSON from Claude
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
 class WorkoutPlan(Base):
     __tablename__ = "workout_plans"
     id = Column(Integer, primary_key=True)
     raw_plan = Column(Text)  # Full JSON from Claude
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
 class DietPlan(Base):
@@ -47,14 +47,14 @@ class DietPlan(Base):
     carbs_g = Column(Integer)
     fat_g = Column(Integer)
     raw_plan = Column(Text)  # Full JSON from Claude
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
 class SupplementPlan(Base):
     __tablename__ = "supplement_plans"
     id = Column(Integer, primary_key=True)
     raw_plan = Column(Text)  # Full JSON from Claude
-    created_at = Column(DateTime, server_default=func.now())
+    created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
 class ResearchCache(Base):

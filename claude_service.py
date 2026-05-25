@@ -2,17 +2,24 @@ import anthropic
 import base64
 import json
 import os
+import re
 from pathlib import Path
 
 ANALYSIS_MODEL = "claude-opus-4-7"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 
+# Module-level singleton — one client, one connection pool for the process lifetime.
+_anthropic_client: anthropic.Anthropic | None = None
+
 
 def _client() -> anthropic.Anthropic:
-    key = os.getenv("ANTHROPIC_API_KEY")
-    if not key:
-        raise ValueError("ANTHROPIC_API_KEY is not set. Add it to your .env file.")
-    return anthropic.Anthropic(api_key=key)
+    global _anthropic_client
+    if _anthropic_client is None:
+        key = os.getenv("ANTHROPIC_API_KEY")
+        if not key:
+            raise ValueError("ANTHROPIC_API_KEY is not set. Add it to your .env file.")
+        _anthropic_client = anthropic.Anthropic(api_key=key)
+    return _anthropic_client
 
 
 def _encode_image(image_path: str) -> tuple[str, str]:
@@ -31,11 +38,21 @@ def _encode_image(image_path: str) -> tuple[str, str]:
 
 
 def _extract_json(text: str) -> dict:
-    if "```json" in text:
-        text = text.split("```json")[1].split("```")[0]
-    elif "```" in text:
-        text = text.split("```")[1].split("```")[0]
-    return json.loads(text.strip())
+    # Try fenced blocks first (```json ... ``` or ``` ... ```)
+    for pattern in [r"```json\s*([\s\S]*?)```", r"```\s*([\s\S]*?)```"]:
+        m = re.search(pattern, text)
+        if m:
+            try:
+                return json.loads(m.group(1).strip())
+            except json.JSONDecodeError:
+                pass
+    # Fall back to raw text
+    try:
+        return json.loads(text.strip())
+    except json.JSONDecodeError as e:
+        raise ValueError(
+            f"Could not parse Claude response as JSON: {e}\nRaw (first 300 chars): {text[:300]}"
+        )
 
 
 def analyze_body_photo(image_path: str, profile=None, previous_analysis=None) -> dict:
