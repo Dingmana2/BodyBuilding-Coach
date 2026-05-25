@@ -62,6 +62,27 @@ def get_user(chat_id: int) -> dict:
     return user_data[chat_id]
 
 
+# ── Unit helpers ─────────────────────────────────────────────────────────────
+
+def _parse_height(s: str) -> str:
+    s = s.strip().lower().replace('"', '').replace(' ', '')
+    m = re.match(r"(\d+)'(\d+)", s)
+    if m:
+        return str(round(int(m.group(1)) * 30.48 + int(m.group(2)) * 2.54))
+    m = re.match(r"(\d+(?:\.\d+)?)in$", s)
+    if m:
+        return str(round(float(m.group(1)) * 2.54))
+    return re.sub(r"cm$", "", s)
+
+
+def _parse_weight(s: str) -> str:
+    s = s.strip().lower().replace(' ', '')
+    m = re.match(r"(\d+(?:\.\d+)?)(?:lbs?|pounds?)$", s)
+    if m:
+        return str(round(float(m.group(1)) * 0.453592))
+    return re.sub(r"kg$", "", s)
+
+
 # ── Commands ──────────────────────────────────────────────────────────────────
 
 WELCOME = (
@@ -103,11 +124,13 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         await update.message.reply_text(
             f"*Your Profile:*\n{current}\n\n"
-            "To update, send:\n"
-            "`/profile age=28 gender=male height=178 weight=85 goal=cut experience=intermediate days=4`\n\n"
-            "Goals: `bulk` `cut` `recomp` `maintain` `health` `performance`\n"
-            "Experience: `beginner` `intermediate` `advanced`\n"
-            "Gender: anything — male, female, non-binary, prefer not to say, etc.",
+            "Copy this line, fill in your info, and send it:\n"
+            "`/profile age=25 gender=male height=5'6\" weight=165lbs goal=bulk experience=beginner days=4`\n\n"
+            "Height: feet/inches *or* cm — `5'6\"` or `178cm`\n"
+            "Weight: lbs *or* kg — `165lbs` or `75kg`\n"
+            "Goals: `bulk` · `cut` · `recomp` · `maintain` · `health` · `performance`\n"
+            "Experience: `beginner` · `intermediate` · `advanced`\n"
+            "Gender: anything — male, female, non-binary, etc.",
             parse_mode="Markdown",
         )
         return
@@ -115,7 +138,13 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     for arg in context.args:
         if "=" in arg:
             key, _, value = arg.partition("=")
-            profile[key.strip().lower()] = value.strip()
+            key = key.strip().lower()
+            value = value.strip()
+            if key == "height":
+                value = _parse_height(value)
+            elif key == "weight":
+                value = _parse_weight(value)
+            profile[key] = value
 
     user["profile"] = profile
     await update.message.reply_text(
