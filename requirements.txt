@@ -7,3 +7,6 @@ httpx>=0.28.0
 python-dotenv>=1.0.0
 python-telegram-bot>=21.0
 apscheduler>=3.10.0
+garminconnect>=0.2.0
+cryptography>=42.0.0
+myfitnesspal>=2.0

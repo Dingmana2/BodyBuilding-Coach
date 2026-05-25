@@ -108,7 +108,7 @@ def get_user(chat_id: int) -> dict:
             "last_analysis": None,
             "last_plan": None,
             "conversation_history": [],
-            "active_command": None,   # "checkin" | "workout" | None
+            "active_command": None,   # "checkin" | "workout" | "connect_garmin" | None
             "command_state": {},      # step data for multi-step commands
             "active_session_id": None,  # open WorkoutSession id
             "reminders": {},          # {"workout": {"hour": 7, "minute": 0}, ...}
@@ -118,6 +118,10 @@ def get_user(chat_id: int) -> dict:
             "meal_logs": [],          # list of MealLog dicts (local cache)
             "measurements": [],       # list of BodyMeasurement dicts (local cache)
             "session_counter": 0,     # total sessions completed
+            "garmin_email": None,
+            "garmin_pass_enc": None,
+            "mfp_username": None,
+            "mfp_pass_enc": None,
         }
     else:
         # Back-fill fields added in later versions
@@ -126,6 +130,8 @@ def get_user(chat_id: int) -> dict:
             "active_command": None, "command_state": {}, "active_session_id": None,
             "reminders": {}, "checkins": [], "set_logs": [], "prs": {},
             "meal_logs": [], "measurements": [], "session_counter": 0,
+            "garmin_email": None, "garmin_pass_enc": None,
+            "mfp_username": None, "mfp_pass_enc": None,
         }
         for k, v in defaults.items():
             u.setdefault(k, v)
@@ -222,6 +228,8 @@ WELCOME = (
     "/stats — Personal records + volume by muscle\n"
     "/measurements — Log body measurements\n\n"
     "*Other:*\n"
+    "/connect — Link Garmin or MyFitnessPal\n"
+    "/mfp sync — Sync today's MFP diary\n"
     "/reminders — Set daily workout/check-in reminders\n"
     "/research — Latest PubMed research highlights\n"
     "/help — Show this message\n\n"
@@ -339,9 +347,60 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await _finish_checkin(update, user, data)
             return
 
-    # Multi-step flow
+    # Check for Garmin pre-fill (yesterday's cached data)
+    garmin_data = None
+    if user.get("garmin_email"):
+        try:
+            import garmin_service
+            garmin_data = garmin_service.get_cached(chat_id)
+        except Exception:
+            pass
+
+    if garmin_data and garmin_data.get("sleep_score_1_10"):
+        sleep_score = garmin_data["sleep_score_1_10"]
+        hrs = garmin_data.get("sleep_duration_hrs", "?")
+        hrv = garmin_data.get("hrv_ms")
+        stress_score = garmin_data.get("stress_score_1_10")
+
+        hrv_text = f" | HRV: {int(hrv)}ms" if hrv else ""
+        stress_note = f"\n_Stress pre-filled: {stress_score}/10 from Garmin_" if stress_score else ""
+        pre_filled: dict[str, int] = {"sleep": sleep_score}
+        if stress_score:
+            pre_filled["stress"] = stress_score
+
+        await update.message.reply_text(
+            f"📡 *Garmin data pulled:*\n"
+            f"😴 Sleep: {hrs}hrs → score {sleep_score}/10{hrv_text}{stress_note}\n\n"
+            "I just need a couple more scores from you:",
+            parse_mode="Markdown",
+        )
+
+        all_steps = ["sleep", "energy", "soreness", "stress"]
+        remaining = [s for s in all_steps if s not in pre_filled]
+
+        user["active_command"] = "checkin"
+        user["command_state"] = {
+            "step": 0,
+            "data": pre_filled,
+            "remaining_steps": remaining,
+            "garmin_data": garmin_data,
+        }
+
+        _step_prompts = {
+            "energy": "⚡ *Energy levels?* Rate 1-10",
+            "soreness": "🤕 *Muscle soreness?* Rate 1-10\n_(1 = very sore, 10 = fresh)_",
+            "stress": "🧠 *Stress level?* Rate 1-10\n_(1 = very stressed, 10 = calm)_",
+        }
+        await update.message.reply_text(_step_prompts[remaining[0]], parse_mode="Markdown")
+        return
+
+    # Normal multi-step flow
     user["active_command"] = "checkin"
-    user["command_state"] = {"step": 0, "data": {}}
+    user["command_state"] = {
+        "step": 0,
+        "data": {},
+        "remaining_steps": ["sleep", "energy", "soreness", "stress"],
+    }
     await update.message.reply_text(
         "😴 *Sleep quality?* Rate 1-10\n_(1 = terrible, 10 = perfect)_",
         parse_mode="Markdown",
@@ -350,12 +409,13 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
 async def _handle_checkin_step(update: Update, user: dict, text: str) -> None:
     state = user["command_state"]
-    steps = ["sleep", "energy", "soreness", "stress"]
-    prompts = [
-        "⚡ *Energy levels?* Rate 1-10",
-        "🤕 *Muscle soreness?* Rate 1-10\n_(1 = very sore, 10 = fresh)_",
-        "🧠 *Stress level?* Rate 1-10\n_(1 = very stressed, 10 = calm)_",
-    ]
+    remaining = state.get("remaining_steps", ["sleep", "energy", "soreness", "stress"])
+
+    _step_prompts = {
+        "energy": "⚡ *Energy levels?* Rate 1-10",
+        "soreness": "🤕 *Muscle soreness?* Rate 1-10\n_(1 = very sore, 10 = fresh)_",
+        "stress": "🧠 *Stress level?* Rate 1-10\n_(1 = very stressed, 10 = calm)_",
+    }
 
     try:
         score = max(1, min(10, int(text.strip())))
@@ -363,18 +423,21 @@ async def _handle_checkin_step(update: Update, user: dict, text: str) -> None:
         await update.message.reply_text("Please enter a number from 1 to 10.")
         return
 
-    key = steps[state["step"]]
+    step = state["step"]
+    key = remaining[step]
     state["data"][key] = score
-    state["step"] += 1
+    state["step"] = step + 1
 
-    if state["step"] < len(steps):
-        await update.message.reply_text(prompts[state["step"] - 1], parse_mode="Markdown")
+    if state["step"] < len(remaining):
+        next_key = remaining[state["step"]]
+        await update.message.reply_text(_step_prompts[next_key], parse_mode="Markdown")
     else:
         user["active_command"] = None
-        await _finish_checkin(update, user, state["data"])
+        garmin_data = state.get("garmin_data")
+        await _finish_checkin(update, user, state["data"], garmin_data)
 
 
-async def _finish_checkin(update: Update, user: dict, data: dict) -> None:
+async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: dict | None = None) -> None:
     msg = await update.message.reply_text("Scoring your recovery…")
     try:
         from claude_service import generate_recovery_insight
@@ -394,7 +457,10 @@ async def _finish_checkin(update: Update, user: dict, data: dict) -> None:
         "stress_score": data["stress"],
         "recovery_score": score,
         "coaching_tip": tip,
-        "data_source": "manual",
+        "hrv_ms": garmin_data.get("hrv_ms") if garmin_data else None,
+        "resting_hr_bpm": garmin_data.get("resting_hr_bpm") if garmin_data else None,
+        "sleep_duration_hrs": garmin_data.get("sleep_duration_hrs") if garmin_data else None,
+        "data_source": "garmin" if garmin_data else "manual",
     }
     user["checkins"].append(entry)
     # Keep only last 90 days
@@ -402,11 +468,22 @@ async def _finish_checkin(update: Update, user: dict, data: dict) -> None:
     _save_store()
 
     bar = "🟢" if score >= 75 else ("🟡" if score >= 50 else "🔴")
+    garmin_line = ""
+    if garmin_data:
+        hrv = garmin_data.get("hrv_ms")
+        rhr = garmin_data.get("resting_hr_bpm")
+        parts = []
+        if hrv:
+            parts.append(f"HRV {int(hrv)}ms")
+        if rhr:
+            parts.append(f"RHR {rhr}bpm")
+        if parts:
+            garmin_line = f"\n📡 Garmin: {' | '.join(parts)}"
     await msg.edit_text(
         f"✅ *Check-in saved!*\n\n"
         f"{bar} Recovery Score: *{score}/100*\n\n"
         f"😴 Sleep: {data['sleep']}/10  ⚡ Energy: {data['energy']}/10\n"
-        f"🤕 Soreness: {data['soreness']}/10  🧠 Stress: {data['stress']}/10\n\n"
+        f"🤕 Soreness: {data['soreness']}/10  🧠 Stress: {data['stress']}/10{garmin_line}\n\n"
         f"_{tip}_",
         parse_mode="Markdown",
     )
@@ -699,7 +776,58 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         await update.message.reply_text(
-            "Log a meal:\n`/meal 2 eggs, 1 cup oatmeal, banana`\n`/meal 200g chicken breast 1 cup rice broccoli`",
+            "Log a meal:\n`/meal 2 eggs, 1 cup oatmeal, banana`\n`/meal 200g chicken breast 1 cup rice broccoli`\n\n"
+            "Log MFP daily totals:\n`/meal total calories=1750 protein=140 carbs=205 fat=43`",
+            parse_mode="Markdown",
+        )
+        return
+
+    # /meal total calories=1750 protein=140 carbs=205 fat=43
+    if context.args[0].lower() == "total":
+        aliases = {
+            "cal": "calories", "kcal": "calories",
+            "p": "protein", "prot": "protein",
+            "c": "carbs", "carb": "carbohydrates", "carbohydrates": "carbs",
+            "f": "fat", "fats": "fat",
+        }
+        totals: dict[str, float] = {}
+        for arg in context.args[1:]:
+            if "=" not in arg:
+                continue
+            k, _, v = arg.partition("=")
+            k = k.strip().lower()
+            k = aliases.get(k, k)
+            try:
+                totals[k] = float(v.strip())
+            except ValueError:
+                pass
+        if not totals:
+            await update.message.reply_text(
+                "Usage: `/meal total calories=1750 protein=140 carbs=205 fat=43`\n"
+                "Shortcuts: `cal=`, `p=`, `c=`, `f=` also work.",
+                parse_mode="Markdown",
+            )
+            return
+        entry = {
+            "date": _today(),
+            "description": "Daily totals (MFP)",
+            "calories": round(totals.get("calories", 0)),
+            "protein_g": round(totals.get("protein", 0), 1),
+            "carbs_g": round(totals.get("carbs", 0), 1),
+            "fat_g": round(totals.get("fat", 0), 1),
+            "macro_source": "manual_total",
+        }
+        user["meal_logs"].append(entry)
+        user["meal_logs"] = user["meal_logs"][-200:]
+        _save_store()
+        today_meals = [m for m in user["meal_logs"] if m["date"] == _today()]
+        day_cals = sum(m["calories"] for m in today_meals)
+        day_protein = round(sum(m["protein_g"] for m in today_meals), 1)
+        await update.message.reply_text(
+            f"✅ *Daily totals logged!*\n"
+            f"{entry['calories']} kcal | P: {entry['protein_g']}g | C: {entry['carbs_g']}g | F: {entry['fat_g']}g\n\n"
+            f"Today so far: *{day_cals} kcal* | Protein: *{day_protein}g*\n"
+            "Run /macros to see full targets vs. logged.",
             parse_mode="Markdown",
         )
         return
@@ -943,6 +1071,168 @@ async def _send_reminder(chat_id: int, message: str) -> None:
         print(f"Reminder failed for {chat_id}: {e}")
 
 
+async def cmd_connect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    if not context.args:
+        garmin_status = "✅ Connected" if user.get("garmin_email") else "❌ Not connected"
+        mfp_status = "✅ Connected" if user.get("mfp_username") else "❌ Not connected"
+        await update.message.reply_text(
+            "*Connected Services:*\n"
+            f"• Garmin: {garmin_status}\n"
+            f"• MyFitnessPal: {mfp_status}\n\n"
+            "Connect:\n"
+            "`/connect garmin` — auto-fills sleep & HRV in /checkin\n"
+            "`/connect mfp` — enables `/mfp sync` to import your diary",
+            parse_mode="Markdown",
+        )
+        return
+
+    service = context.args[0].lower()
+    if service not in ("garmin", "mfp"):
+        await update.message.reply_text(
+            "Unknown service. Use: `/connect garmin` or `/connect mfp`",
+            parse_mode="Markdown",
+        )
+        return
+
+    user["active_command"] = f"connect_{service}"
+    user["command_state"] = {"step": 0}
+
+    if service == "garmin":
+        await update.message.reply_text(
+            "Enter your *Garmin Connect email:*\n_(stored encrypted — only used to fetch your sleep & HRV)_",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "Enter your *MyFitnessPal username:*\n_(stored encrypted — only used to fetch your diary)_",
+            parse_mode="Markdown",
+        )
+
+
+async def _handle_connect_step(update: Update, user: dict, text: str) -> None:
+    active = user["active_command"]   # "connect_garmin" or "connect_mfp"
+    state = user["command_state"]
+    chat_id = update.effective_chat.id
+    text = text.strip()
+
+    if active == "connect_garmin":
+        if state["step"] == 0:
+            state["garmin_email_pending"] = text
+            state["step"] = 1
+            await update.message.reply_text(
+                "Enter your *Garmin Connect password:*\n_(will be stored encrypted)_",
+                parse_mode="Markdown",
+            )
+        elif state["step"] == 1:
+            email = state.get("garmin_email_pending", "")
+            msg = await update.message.reply_text("Testing Garmin connection…")
+            try:
+                import garmin_service
+                from crypto_utils import encrypt
+                garmin_service.test_login(email, text)
+                enc_pass = encrypt(text)
+                user["garmin_email"] = email
+                user["garmin_pass_enc"] = enc_pass
+                user["active_command"] = None
+                _save_store()
+                await msg.edit_text("✅ *Garmin connected!* Fetching your latest data…", parse_mode="Markdown")
+                try:
+                    garmin_service.fetch_and_cache(chat_id, email, enc_pass)
+                    await update.message.reply_text(
+                        "Data synced! Sleep & HRV will now auto-fill /checkin each morning."
+                    )
+                except Exception as sync_err:
+                    await update.message.reply_text(
+                        f"Connected, but couldn't fetch data yet: {sync_err}\n"
+                        "This will retry automatically at 6am."
+                    )
+            except Exception as e:
+                user["active_command"] = None
+                await msg.edit_text(
+                    f"❌ Couldn't connect to Garmin: {e}\n"
+                    "Check your credentials and try `/connect garmin` again.",
+                    parse_mode="Markdown",
+                )
+
+    elif active == "connect_mfp":
+        if state["step"] == 0:
+            state["mfp_username_pending"] = text
+            state["step"] = 1
+            await update.message.reply_text(
+                "Enter your *MyFitnessPal password:*\n_(will be stored encrypted)_",
+                parse_mode="Markdown",
+            )
+        elif state["step"] == 1:
+            username = state.get("mfp_username_pending", "")
+            msg = await update.message.reply_text("Testing MFP connection…")
+            try:
+                import mfp_service
+                from crypto_utils import encrypt
+                mfp_service.test_login(username, text)
+                enc_pass = encrypt(text)
+                user["mfp_username"] = username
+                user["mfp_pass_enc"] = enc_pass
+                user["active_command"] = None
+                _save_store()
+                await msg.edit_text(
+                    "✅ *MyFitnessPal connected!* Use `/mfp sync` to import today's diary.",
+                    parse_mode="Markdown",
+                )
+            except Exception as e:
+                user["active_command"] = None
+                await msg.edit_text(
+                    f"❌ Couldn't connect to MFP: {e}\n"
+                    "Check your credentials and try `/connect mfp` again.",
+                    parse_mode="Markdown",
+                )
+
+
+async def cmd_mfp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    sub = context.args[0].lower() if context.args else "sync"
+
+    if sub == "sync":
+        if not user.get("mfp_username"):
+            await update.message.reply_text(
+                "MyFitnessPal not connected. Run `/connect mfp` first.",
+                parse_mode="Markdown",
+            )
+            return
+        msg = await update.message.reply_text("Syncing MFP diary…")
+        try:
+            import mfp_service
+            meals = mfp_service.fetch_today(user["mfp_username"], user["mfp_pass_enc"])
+            for m in meals:
+                m["date"] = _today()
+            user["meal_logs"].extend(meals)
+            user["meal_logs"] = user["meal_logs"][-200:]
+            _save_store()
+            today_cals = sum(m["calories"] for m in user["meal_logs"] if m["date"] == _today())
+            today_protein = round(sum(m["protein_g"] for m in user["meal_logs"] if m["date"] == _today()), 1)
+            await msg.edit_text(
+                f"✅ *MFP synced!* {len(meals)} meal(s) imported.\n"
+                f"Today: {today_cals} kcal | Protein: {today_protein}g\n"
+                "Run /macros for the full breakdown.",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            await msg.edit_text(
+                f"❌ MFP sync failed: {e}\n"
+                "You can still log manually with `/meal total calories=1750 protein=140 carbs=205 fat=43`",
+                parse_mode="Markdown",
+            )
+    else:
+        await update.message.reply_text(
+            "Usage: `/mfp sync` — import today's MFP diary\n\nNot connected? Run `/connect mfp`",
+            parse_mode="Markdown",
+        )
+
+
 async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     msg = await update.message.reply_text("🔬 Fetching latest PubMed research…")
     try:
@@ -999,6 +1289,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     active = user.get("active_command")
     if active == "checkin":
         await _handle_checkin_step(update, user, text)
+        return
+    if active in ("connect_garmin", "connect_mfp"):
+        await _handle_connect_step(update, user, text)
         return
 
     msg = await update.message.reply_text("💬 Thinking…")
@@ -1429,6 +1722,18 @@ async def _send_plan(update: Update, plan: dict) -> None:
     )
 
 
+async def _daily_garmin_sync() -> None:
+    """Scheduled 6am job: refresh Garmin data for all connected users."""
+    import garmin_service
+    for chat_id, u in list(user_data.items()):
+        if u.get("garmin_email") and u.get("garmin_pass_enc"):
+            try:
+                garmin_service.fetch_and_cache(chat_id, u["garmin_email"], u["garmin_pass_enc"])
+                print(f"Garmin synced for chat_id={chat_id}")
+            except Exception as e:
+                print(f"Garmin sync failed for chat_id={chat_id}: {e}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -1454,6 +1759,8 @@ def main() -> None:
     app.add_handler(CommandHandler("macros", cmd_macros))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("reminders", cmd_reminders))
+    app.add_handler(CommandHandler("connect", cmd_connect))
+    app.add_handler(CommandHandler("mfp", cmd_mfp))
     app.add_handler(CommandHandler("research", cmd_research))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -1463,6 +1770,15 @@ def main() -> None:
         global _app
         _app = app_ref
         _scheduler.start()  # must start within a running event loop
+
+        _scheduler.add_job(
+            _daily_garmin_sync,
+            trigger="cron",
+            hour=6,
+            minute=0,
+            id="daily_garmin_sync",
+            replace_existing=True,
+        )
 
         REMINDER_MSGS = {
             "workout": "🏋️ Time to train! Type /workout to see today's session.",
