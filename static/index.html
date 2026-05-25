@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BodyBuilding Coach AI</title>
+    <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+    <header>
+        <div class="header-inner">
+            <div class="logo">
+                <span class="logo-icon">⚡</span>
+                <span class="logo-text">BodyBuilding Coach AI</span>
+            </div>
+            <nav>
+                <button class="nav-tab active" data-tab="dashboard" onclick="showTab('dashboard')">Dashboard</button>
+                <button class="nav-tab" data-tab="analysis" onclick="showTab('analysis')">Analysis</button>
+                <button class="nav-tab" data-tab="plans" onclick="showTab('plans')">Plans</button>
+                <button class="nav-tab" data-tab="research" onclick="showTab('research')">Research</button>
+                <button class="nav-tab" data-tab="progress" onclick="showTab('progress')">Progress</button>
+                <button class="nav-tab" data-tab="profile" onclick="showTab('profile')">Profile</button>
+            </nav>
+        </div>
+    </header>
+
+    <main>
+        <!-- DASHBOARD -->
+        <section id="tab-dashboard" class="tab-content active">
+            <div class="page-header">
+                <h1>Dashboard</h1>
+                <p class="subtitle">Your AI-powered fitness command center</p>
+            </div>
+            <div id="setup-banner" class="banner banner-warn" style="display:none">
+                <strong>Setup required:</strong> Add your <code>ANTHROPIC_API_KEY</code> to the <code>.env</code> file, then restart the server.
+                Get your key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
+            </div>
+            <div class="stats-grid" id="dashboard-stats">
+                <div class="stat-card">
+                    <div class="stat-label">Body Fat</div>
+                    <div class="stat-value" id="stat-bf">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Physique Score</div>
+                    <div class="stat-value" id="stat-score">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Daily Calories</div>
+                    <div class="stat-value" id="stat-cal">—</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">Daily Protein</div>
+                    <div class="stat-value" id="stat-protein">—</div>
+                </div>
+            </div>
+
+            <div class="action-grid">
+                <div class="action-card" onclick="showTab('analysis')">
+                    <div class="action-icon">📸</div>
+                    <div class="action-title">Analyze Physique</div>
+                    <div class="action-desc">Upload a photo for AI body composition analysis</div>
+                </div>
+                <div class="action-card" onclick="generatePlan()">
+                    <div class="action-icon">🏋️</div>
+                    <div class="action-title">Generate Plan</div>
+                    <div class="action-desc">Build a science-backed workout + diet + supplement plan</div>
+                </div>
+                <div class="action-card" onclick="refreshResearch()">
+                    <div class="action-icon">🔬</div>
+                    <div class="action-title">Refresh Research</div>
+                    <div class="action-desc">Fetch latest papers from PubMed & Semantic Scholar</div>
+                </div>
+                <div class="action-card" onclick="showTab('progress')">
+                    <div class="action-icon">📈</div>
+                    <div class="action-title">View Progress</div>
+                    <div class="action-desc">Compare body photos and track your improvements</div>
+                </div>
+            </div>
+
+            <div id="latest-analysis-card" style="display:none" class="card">
+                <h3>Latest Analysis</h3>
+                <div id="latest-analysis-content"></div>
+            </div>
+        </section>
+
+        <!-- ANALYSIS -->
+        <section id="tab-analysis" class="tab-content">
+            <div class="page-header">
+                <h1>Body Analysis</h1>
+                <p class="subtitle">Upload a photo and get an AI-powered physique assessment</p>
+            </div>
+
+            <div class="card">
+                <div
+                    id="drop-zone"
+                    class="drop-zone"
+                    ondragover="event.preventDefault()"
+                    ondrop="handleDrop(event)"
+                    onclick="document.getElementById('photo-input').click()"
+                >
+                    <div class="drop-icon">📸</div>
+                    <div class="drop-text">Drop a photo here or click to select</div>
+                    <div class="drop-subtext">JPG, PNG, WebP • Max 20MB • Front or side pose recommended</div>
+                    <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" style="display:none" onchange="handleFileSelect(this)" />
+                </div>
+                <div id="upload-preview" style="display:none">
+                    <img id="preview-img" class="preview-img" alt="Preview" />
+                    <button class="btn btn-primary" onclick="submitAnalysis()">Analyze This Photo</button>
+                    <button class="btn btn-ghost" onclick="clearUpload()">Cancel</button>
+                </div>
+            </div>
+
+            <div id="analysis-result" style="display:none" class="card">
+                <h3>Analysis Result <span id="analysis-date" class="date-badge"></span></h3>
+                <div id="analysis-content"></div>
+            </div>
+
+            <div class="card">
+                <h3>Analysis History</h3>
+                <div id="analyses-list"><p class="empty-state">No analyses yet. Upload your first photo above.</p></div>
+            </div>
+        </section>
+
+        <!-- PLANS -->
+        <section id="tab-plans" class="tab-content">
+            <div class="page-header">
+                <h1>Your Plans</h1>
+                <p class="subtitle">Science-backed workout, diet & supplement programs</p>
+                <button class="btn btn-primary" onclick="generatePlan()">Generate New Plan</button>
+            </div>
+
+            <div id="no-plan-message" class="card" style="display:none">
+                <p class="empty-state">No plan generated yet. Upload a body photo, then click "Generate New Plan."</p>
+            </div>
+
+            <div id="plan-tabs" style="display:none">
+                <div class="plan-nav">
+                    <button class="plan-tab active" onclick="showPlanTab('workout')">🏋️ Workout</button>
+                    <button class="plan-tab" onclick="showPlanTab('diet')">🥗 Diet</button>
+                    <button class="plan-tab" onclick="showPlanTab('supplements')">💊 Supplements</button>
+                    <button class="plan-tab" onclick="showPlanTab('coaching')">💬 Coaching Notes</button>
+                </div>
+
+                <div id="plan-workout" class="plan-section active card"></div>
+                <div id="plan-diet" class="plan-section card" style="display:none"></div>
+                <div id="plan-supplements" class="plan-section card" style="display:none"></div>
+                <div id="plan-coaching" class="plan-section card" style="display:none"></div>
+            </div>
+        </section>
+
+        <!-- RESEARCH -->
+        <section id="tab-research" class="tab-content">
+            <div class="page-header">
+                <h1>Research Library</h1>
+                <p class="subtitle">Latest peer-reviewed findings from PubMed & Semantic Scholar</p>
+                <button class="btn btn-primary" onclick="refreshResearch()">Refresh Research</button>
+            </div>
+            <div id="research-list"><p class="empty-state">No research loaded. Click "Refresh Research" to fetch the latest papers.</p></div>
+        </section>
+
+        <!-- PROGRESS -->
+        <section id="tab-progress" class="tab-content">
+            <div class="page-header">
+                <h1>Progress Tracker</h1>
+                <p class="subtitle">Visual progress over time</p>
+            </div>
+            <div id="progress-content"><p class="empty-state">No progress data yet. Upload at least two body photos to see your progress.</p></div>
+        </section>
+
+        <!-- PROFILE -->
+        <section id="tab-profile" class="tab-content">
+            <div class="page-header">
+                <h1>Profile</h1>
+                <p class="subtitle">Your details power every recommendation</p>
+            </div>
+            <div class="card">
+                <form id="profile-form" onsubmit="saveProfile(event)">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Age</label>
+                            <input type="number" name="age" min="16" max="80" placeholder="25" />
+                        </div>
+                        <div class="form-group">
+                            <label>Gender</label>
+                            <select name="gender">
+                                <option value="">Select…</option>
+                                <option value="male">Male</option>
+                                <option value="female">Female</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Height (cm)</label>
+                            <input type="number" name="height_cm" min="100" max="250" placeholder="178" />
+                        </div>
+                        <div class="form-group">
+                            <label>Weight (kg)</label>
+                            <input type="number" name="weight_kg" min="30" max="300" step="0.1" placeholder="85" />
+                        </div>
+                        <div class="form-group">
+                            <label>Primary Goal</label>
+                            <select name="goal">
+                                <option value="">Select…</option>
+                                <option value="bulk">Bulk (muscle gain)</option>
+                                <option value="cut">Cut (fat loss)</option>
+                                <option value="recomp">Recomp (muscle gain + fat loss)</option>
+                                <option value="maintain">Maintain</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Training Experience</label>
+                            <select name="training_experience">
+                                <option value="">Select…</option>
+                                <option value="beginner">Beginner (0-1 year)</option>
+                                <option value="intermediate">Intermediate (1-3 years)</option>
+                                <option value="advanced">Advanced (3+ years)</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Training Days / Week</label>
+                            <input type="number" name="training_days_per_week" min="2" max="7" placeholder="4" />
+                        </div>
+                        <div class="form-group full-width">
+                            <label>Dietary Restrictions</label>
+                            <input type="text" name="dietary_restrictions" placeholder="e.g. vegetarian, lactose intolerant, no shellfish…" />
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary">Save Profile</button>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <!-- Loading overlay -->
+    <div id="loading-overlay" style="display:none">
+        <div class="loading-box">
+            <div class="spinner"></div>
+            <div id="loading-message">Working…</div>
+        </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast" style="display:none"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
