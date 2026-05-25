@@ -135,6 +135,7 @@ def get_user(chat_id: int) -> dict:
 # ── Scheduler ────────────────────────────────────────────────────────────────
 
 _scheduler = AsyncIOScheduler()
+_app: "Application | None" = None   # set in main(); used by scheduler jobs to send messages
 
 
 def _today() -> str:
@@ -919,7 +920,7 @@ async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         trigger="cron",
         hour=hour,
         minute=minute,
-        args=[None, chat_id, message_text],
+        args=[chat_id, message_text],
         id=job_id,
         replace_existing=True,
     )
@@ -932,13 +933,12 @@ async def cmd_reminders(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     )
 
 
-async def _send_reminder(bot, chat_id: int, message: str) -> None:
+async def _send_reminder(chat_id: int, message: str) -> None:
+    global _app
+    if _app is None:
+        return
     try:
-        # bot is injected at runtime via partial; fall back to global app bot
-        from telegram import Bot
-        if bot is None:
-            return
-        await bot.send_message(chat_id=chat_id, text=message)
+        await _app.bot.send_message(chat_id=chat_id, text=message)
     except Exception as e:
         print(f"Reminder failed for {chat_id}: {e}")
 
@@ -1458,29 +1458,31 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    # Restore scheduled reminders from persisted state
-    async def _restore_reminders(app_ref) -> None:
+    # post_init runs inside the event loop — the right place to start AsyncIOScheduler
+    async def _post_init(app_ref) -> None:
+        global _app
+        _app = app_ref
+        _scheduler.start()  # must start within a running event loop
+
+        REMINDER_MSGS = {
+            "workout": "🏋️ Time to train! Type /workout to see today's session.",
+            "checkin": "📋 Daily check-in time! /checkin",
+            "meal": "🥗 Don't forget to log your last meal! /meal",
+        }
         for chat_id, udata in user_data.items():
             for kind, r in udata.get("reminders", {}).items():
-                MESSAGES = {
-                    "workout": "🏋️ Time to train! Type /workout to see today's session.",
-                    "checkin": "📋 Daily check-in time! /checkin",
-                    "meal": "🥗 Don't forget to log your last meal! /meal",
-                }
-                msg_text = MESSAGES.get(kind, f"⏰ {kind.capitalize()} reminder!")
-                job_id = f"{kind}_{chat_id}"
+                msg_text = REMINDER_MSGS.get(kind, f"⏰ {kind.capitalize()} reminder!")
                 _scheduler.add_job(
                     _send_reminder,
                     trigger="cron",
                     hour=r["hour"],
                     minute=r["minute"],
-                    args=[app_ref.bot, chat_id, msg_text],
-                    id=job_id,
+                    args=[chat_id, msg_text],
+                    id=f"{kind}_{chat_id}",
                     replace_existing=True,
                 )
 
-    app.post_init = _restore_reminders
-    _scheduler.start()
+    app.post_init = _post_init
 
     print("✅ BodyBuilding Coach Bot is running…")
     app.run_polling(allowed_updates=Update.ALL_TYPES)
