@@ -292,6 +292,18 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
 
+    force_new = bool(context.args and context.args[0].lower() in ("new", "reset", "regenerate"))
+
+    # If plan exists and not forcing a regeneration, just display it
+    if user["last_plan"] and not force_new:
+        await _send_plan(update, user["last_plan"])
+        await update.message.reply_text(
+            "💬 Tell me to update it — e.g. 'remove leg day', 'I'm vegetarian', 'train only 3 days'.\n"
+            "Type `/plan new` to regenerate from scratch.",
+            parse_mode="Markdown",
+        )
+        return
+
     remaining = _check_cooldown(_plan_cooldowns, chat_id, PLAN_COOLDOWN)
     if remaining:
         await update.message.reply_text(
@@ -323,7 +335,9 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await _send_plan(update, plan)
         await update.message.reply_text(
             "💬 Not happy with something? Just tell me — "
-            "e.g. 'remove leg day', 'I'm vegetarian', 'train only 3 days' — and I'll update your plan."
+            "e.g. 'remove leg day', 'I'm vegetarian', 'train only 3 days' — and I'll update your plan.\n"
+            "Type `/plan new` anytime to regenerate from scratch.",
+            parse_mode="Markdown",
         )
     except Exception as e:
         await msg.edit_text(f"❌ Plan generation failed: {e}")
