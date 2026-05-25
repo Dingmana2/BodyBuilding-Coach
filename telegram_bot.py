@@ -1310,7 +1310,27 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     msg = await update.message.reply_text("💬 Thinking…")
     try:
-        reply, plan_update = _chat_with_coach(text, user)
+        reply, plan_update, plan_regen = _chat_with_coach(text, user)
+
+        if plan_regen:
+            for k, v in plan_regen.items():
+                user["profile"][k] = str(v)
+            regen_msg = await update.message.reply_text(
+                "🧬 Got it — rebuilding your full plan with the changes… (30-60 seconds)"
+            )
+            try:
+                if user["last_analysis"]:
+                    plan = _generate_plan(user["last_analysis"], user["profile"])
+                else:
+                    plan = _generate_plan_from_profile(user["profile"])
+                user["last_plan"] = plan
+                _save_store()
+                await regen_msg.delete()
+                await msg.edit_text(reply, parse_mode="Markdown")
+                await _send_plan(update, plan)
+            except Exception as e:
+                await regen_msg.edit_text(f"❌ Plan rebuild failed: {e}")
+            return
 
         if plan_update and user["last_plan"]:
             _deep_merge(user["last_plan"], plan_update)
@@ -1344,13 +1364,21 @@ def _chat_with_coach(text: str, user: dict) -> tuple[str, dict | None]:
         "Support every fitness level (complete beginner to advanced), any age, any gender, any goal. "
         "Be direct, warm, and practical. Keep replies concise — 3-5 sentences unless a detailed "
         "breakdown is genuinely needed.\n\n"
-        "If the user asks you to modify their plan (e.g. 'remove leg day', 'I'm vegetarian', "
-        "'change to 3 days a week', 'swap the creatine'), output the changes in a fenced code "
-        "block tagged `plan_update` containing ONLY the modified JSON fields. Example:\n"
+        "When the user asks to modify their plan, choose ONE of two paths:\n\n"
+        "MINOR changes (remove one exercise, swap a supplement, adjust a macro target, "
+        "change meal timing, add a note) — output ONLY the changed fields in a `plan_update` block:\n"
         "```plan_update\n"
-        '{{"workout": {{"split": "3-Day Full Body"}}}}\n'
+        '{{"supplements": [{{"name": "Beta-Alanine", "dose": "3.2g", "timing": "pre-workout", "benefit": "reduces fatigue", "grade": "B", "priority": 2}}]}}\n'
+        "```\n\n"
+        "MAJOR restructures (changing the NUMBER of training days, switching split type e.g. PPL↔Upper/Lower↔Full Body, "
+        "changing the user's primary goal) — output a `plan_regenerate` block with ONLY the profile "
+        "parameters that changed. The bot will generate a complete new plan automatically. Example:\n"
+        "```plan_regenerate\n"
+        '{{"days": 5}}\n'
         "```\n"
-        "Only include fields that actually change. If nothing needs to change, omit the block entirely."
+        "Valid keys for plan_regenerate: 'days' (int), 'goal' (string), 'experience' (string).\n"
+        "Do NOT try to write the full exercise list yourself in plan_update — use plan_regenerate for structural changes.\n"
+        "If nothing needs to change, omit both blocks entirely."
     )
 
     history.append({"role": "user", "content": text})
@@ -1375,9 +1403,18 @@ def _chat_with_coach(text: str, user: dict) -> tuple[str, dict | None]:
             pass
         full_reply = re.sub(r"```plan_update[\s\S]*?```", "", full_reply).strip()
 
+    plan_regen = None
+    match_regen = re.search(r"```plan_regenerate\s*([\s\S]*?)```", full_reply)
+    if match_regen:
+        try:
+            plan_regen = json.loads(match_regen.group(1).strip())
+        except json.JSONDecodeError:
+            pass
+        full_reply = re.sub(r"```plan_regenerate[\s\S]*?```", "", full_reply).strip()
+
     history.append({"role": "assistant", "content": full_reply})
 
-    return full_reply, plan_update
+    return full_reply, plan_update, plan_regen
 
 
 def _deep_merge(base: dict, updates: dict) -> None:
@@ -1682,9 +1719,13 @@ async def _send_plan(update: Update, plan: dict) -> None:
     # ── Workout ──
     days_text = ""
     for day in workout.get("days", []):
+        exercises = day.get("exercises", [])
+        if not exercises:
+            days_text += f"\n*{day['day']} — {day.get('focus', '')}*\n    _(No exercises — type `/plan new` to regenerate)_\n"
+            continue
         ex_lines = "\n".join(
             f"    • {e['name']}: {e['sets']}×{e['reps']} — rest {e.get('rest', '')} | {e.get('notes', '')}"
-            for e in day.get("exercises", [])
+            for e in exercises
         )
         days_text += f"\n*{day['day']} — {day.get('focus', '')}*\n{ex_lines}\n"
 
