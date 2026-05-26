@@ -404,6 +404,14 @@ def _rep_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(rows)
 
 
+def _plan_days_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard for choosing how many workout days/week before plan generation."""
+    return InlineKeyboardMarkup([[
+        InlineKeyboardButton(f"{n} day{'s' if n > 1 else ''}", callback_data=f"plan:days:{n}")
+        for n in (2, 3, 4, 5, 6)
+    ]])
+
+
 def _after_set_keyboard() -> InlineKeyboardMarkup:
     """Keyboard shown after a set is successfully logged."""
     return InlineKeyboardMarkup([
@@ -534,36 +542,23 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    msg = await update.message.reply_text(
-        "🧬 Generating your plan… (30-60 seconds)"
-    )
-    try:
-        if user["last_analysis"]:
-            plan = _generate_plan(user["last_analysis"], user["profile"])
-        else:
-            if not user["profile"]:
-                await msg.edit_text(
-                    "Set your stats first with /profile, then I can build your plan.\n\n"
-                    "Example:\n"
-                    "`/profile age=25 gender=female height=165 weight=65 goal=recomp experience=beginner days=3`\n\n"
-                    "Or send a photo and I'll analyze your physique directly 📸",
-                    parse_mode="Markdown",
-                )
-                return
-            plan = _generate_plan_from_profile(user["profile"])
-
-        user["last_plan"] = plan
-        _save_store()
-        await msg.delete()
-        await _send_plan(update, plan)
+    if not user["last_analysis"] and not user["profile"]:
         await update.message.reply_text(
-            "💬 Not happy with something? Just tell me — "
-            "e.g. 'remove leg day', 'I'm vegetarian', 'train only 3 days' — and I'll update your plan.\n"
-            "Type `/plan new` anytime to regenerate from scratch.",
+            "Set your stats first with /profile, then I can build your plan.\n\n"
+            "Example:\n"
+            "`/profile age=25 gender=female height=165 weight=65 goal=recomp experience=beginner days=3`\n\n"
+            "Or send a photo and I'll analyze your physique directly 📸",
             parse_mode="Markdown",
         )
-    except Exception as e:
-        await msg.edit_text(f"❌ Plan generation failed: {e}")
+        return
+
+    current_days = user["profile"].get("days", "4")
+    await update.message.reply_text(
+        f"How many days per week do you want to train? _(currently {current_days})_\n\n"
+        "Tap a number to generate your plan instantly:",
+        parse_mode="Markdown",
+        reply_markup=_plan_days_keyboard(),
+    )
 
 
 async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2225,11 +2220,46 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         _save_store()
 
         await msg.edit_text(_format_analysis(analysis), parse_mode="Markdown")
+        current_days = user["profile"].get("days", "4")
         await update.message.reply_text(
-            "Type /plan to generate your full workout + diet + supplement plan 💪"
+            f"How many days per week do you want to train? _(currently {current_days})_\n\n"
+            "Tap a number to generate your plan instantly:",
+            parse_mode="Markdown",
+            reply_markup=_plan_days_keyboard(),
         )
     except Exception as e:
         await msg.edit_text(f"❌ Analysis failed: {e}")
+
+
+async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles plan:days:{n} — stores chosen day count then generates the plan."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    days = int(query.data.split(":")[-1])
+    user["profile"]["days"] = str(days)
+    _save_store()
+
+    await query.edit_message_text(f"🧬 Building your {days}-day plan… (30-60 seconds)")
+    try:
+        if user["last_analysis"]:
+            plan = _generate_plan(user["last_analysis"], user["profile"])
+        else:
+            plan = _generate_plan_from_profile(user["profile"])
+        user["last_plan"] = plan
+        _save_store()
+        await query.delete_message()
+        await _send_plan(update, plan)
+        await update.effective_chat.send_message(
+            "💬 Not happy with something? Just tell me — "
+            "e.g. 'remove leg day', 'I'm vegetarian' — and I'll update it.\n"
+            "Type `/plan new` anytime to regenerate.",
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        await context.bot.send_message(chat_id, f"❌ Plan generation failed: {e}")
 
 
 # ── Text message handler (conversational coaching) ────────────────────────────
@@ -2700,6 +2730,15 @@ def _format_analysis(a: dict) -> str:
 
 
 async def _send_plan(update: Update, plan: dict) -> None:
+    """Send plan messages. Works from both command and callback-query contexts."""
+    # Build a send callable that works regardless of context type
+    if update.message:
+        send = update.message.reply_text
+    else:
+        # callback query context — update.effective_chat is always available
+        async def send(text, **kw):
+            return await update.effective_chat.send_message(text, **kw)
+
     workout = plan.get("workout", {})
     diet = plan.get("diet", {})
     supplements = plan.get("supplements", [])
@@ -2718,7 +2757,7 @@ async def _send_plan(update: Update, plan: dict) -> None:
         )
         days_text += f"\n*{day['day']} — {day.get('focus', '')}*\n{ex_lines}\n"
 
-    await update.message.reply_text(
+    await send(
         f"🏋️ *Workout — {workout.get('split', '')}*\n"
         f"{days_text}\n"
         f"📈 *Progression:* {workout.get('progression', '')}\n"
@@ -2728,7 +2767,7 @@ async def _send_plan(update: Update, plan: dict) -> None:
 
     # ── Diet ──
     meals = "\n".join(f"  • {m}" for m in diet.get("sample_meals", []))
-    await update.message.reply_text(
+    await send(
         f"🥗 *Diet Plan*\n\n"
         f"Calories: *{diet.get('calories', '?')} kcal*\n"
         f"Protein: *{diet.get('protein_g', '?')}g* | "
@@ -2748,13 +2787,13 @@ async def _send_plan(update: Update, plan: dict) -> None:
         f"  _{s.get('benefit', '')}_"
         for s in supplements
     )
-    await update.message.reply_text(
+    await send(
         f"💊 *Supplement Stack*\n\n{supp_lines}",
         parse_mode="Markdown",
     )
 
     # ── Coaching ──
-    await update.message.reply_text(
+    await send(
         f"💬 *Coaching Notes*\n\n"
         f"🎯 *Top Priority:* {coaching.get('top_priority', '')}\n\n"
         f"😴 *Sleep:* {coaching.get('sleep', '')}\n\n"
@@ -2891,6 +2930,7 @@ def main() -> None:
     app.add_handler(CommandHandler("link", cmd_link))
     app.add_handler(CommandHandler("link_status", cmd_link_status))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
+    app.add_handler(CallbackQueryHandler(handle_plan_days_callback, pattern=r"^plan:days:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
