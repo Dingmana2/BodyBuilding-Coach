@@ -19,7 +19,7 @@ import anthropic
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -2951,6 +2951,35 @@ def main() -> None:
         global _app
         _app = app_ref
         _scheduler.start()  # must start within a running event loop
+
+        await app_ref.bot.set_my_commands([
+            BotCommand("start",        "Welcome & quick-start"),
+            BotCommand("help",         "List all commands"),
+            BotCommand("profile",      "Set your stats (age, weight, goal…)"),
+            BotCommand("plan",         "Generate or view your workout & diet plan"),
+            BotCommand("log",          "Start logging a workout (tap-based)"),
+            BotCommand("workout",      "Start / end a workout session"),
+            BotCommand("logset",       "Log a set: /logset bench 100kg 8"),
+            BotCommand("checkin",      "Daily check-in (sleep, energy, soreness)"),
+            BotCommand("progress",     "View weight trend, PRs, recovery"),
+            BotCommand("stats",        "Personal records by exercise"),
+            BotCommand("measurements", "Log body measurements"),
+            BotCommand("weight",       "Quick body-weight log: /weight 84.5"),
+            BotCommand("meal",         "Log a meal and get macros"),
+            BotCommand("macros",       "Today's macro totals"),
+            BotCommand("goals",        "Set or view a target (weight, date…)"),
+            BotCommand("streak",       "Check-in & workout streak"),
+            BotCommand("weakpoints",   "AI weak-point analysis from your data"),
+            BotCommand("report",       "Generate weekly AI coaching report"),
+            BotCommand("research",     "Search fitness research papers"),
+            BotCommand("reminders",    "Set daily reminders"),
+            BotCommand("units",        "Switch between kg and lbs"),
+            BotCommand("connect",      "Connect Garmin account"),
+            BotCommand("mfp",          "Connect MyFitnessPal account"),
+            BotCommand("billing",      "Subscription & billing info"),
+            BotCommand("link",         "Link Telegram to the web app"),
+            BotCommand("link_status",  "Check web-app link status"),
+        ])
 
         _scheduler.add_job(
             _daily_garmin_sync,
