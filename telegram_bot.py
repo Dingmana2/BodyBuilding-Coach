@@ -2757,12 +2757,24 @@ async def _send_plan(update: Update, plan: dict) -> None:
         )
         days_text += f"\n*{day['day']} — {day.get('focus', '')}*\n{ex_lines}\n"
 
+    # Build one button per training day so the user can tap to start that day's workout
+    plan_days = workout.get("days", [])
+    day_buttons = [
+        [InlineKeyboardButton(
+            f"{d['day']} — {d.get('focus', '')}".strip(" —"),
+            callback_data=f"wk:day:{d['day']}",
+        )]
+        for d in plan_days if d.get("day")
+    ]
+    day_keyboard = InlineKeyboardMarkup(day_buttons) if day_buttons else None
+
     await send(
         f"🏋️ *Workout — {workout.get('split', '')}*\n"
         f"{days_text}\n"
         f"📈 *Progression:* {workout.get('progression', '')}\n"
         f"🔄 *Deload:* {workout.get('deload', '')}",
         parse_mode="Markdown",
+        reply_markup=day_keyboard,
     )
 
     # ── Diet ──
