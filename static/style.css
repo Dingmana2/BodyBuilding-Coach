@@ -598,6 +598,94 @@ input:focus, select:focus, textarea:focus {
 
 @keyframes slide-up { from { transform: translateY(10px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
+/* ── Workout Logger ── */
+.chip-list { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 4px; }
+
+.chip {
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: all 0.15s;
+    color: var(--text);
+    font-family: var(--font);
+}
+.chip:hover { border-color: var(--gold); color: var(--gold); }
+.chip.active { background: rgba(240,165,0,0.12); border-color: var(--gold); color: var(--gold); }
+
+.stepper {
+    display: flex;
+    align-items: center;
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+}
+
+.stepper-btn {
+    background: var(--surface-2);
+    border: none;
+    color: var(--text);
+    cursor: pointer;
+    font-size: 20px;
+    font-weight: 400;
+    padding: 10px 16px;
+    transition: background 0.1s;
+    line-height: 1;
+    flex-shrink: 0;
+}
+.stepper-btn:hover { background: var(--border); }
+
+.stepper-input {
+    flex: 1;
+    background: var(--surface-2);
+    border: none;
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+    border-radius: 0;
+    text-align: center;
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--gold);
+    padding: 10px 4px;
+    min-width: 0;
+    font-family: var(--font);
+}
+.stepper-input:focus { outline: none; }
+
+.set-log-list { list-style: none; }
+.set-log-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+}
+.set-log-item:last-child { border-bottom: none; }
+.set-exercise { font-weight: 600; font-size: 14px; flex: 1; min-width: 120px; }
+.set-detail { font-size: 14px; }
+.set-1rm { font-size: 12px; color: var(--text-muted); }
+
+.pr-badge {
+    background: rgba(240,165,0,0.12);
+    border: 1px solid var(--gold);
+    border-radius: 12px;
+    padding: 2px 10px;
+    font-size: 12px;
+    color: var(--gold);
+    font-weight: 600;
+}
+
+.session-history { list-style: none; }
+.session-history-item {
+    padding: 12px 0;
+    border-bottom: 1px solid var(--border);
+}
+.session-history-item:last-child { border-bottom: none; }
+
 /* ── Responsive ── */
 @media (max-width: 768px) {
     .header-inner { flex-direction: column; height: auto; padding: 12px 16px; gap: 12px; }

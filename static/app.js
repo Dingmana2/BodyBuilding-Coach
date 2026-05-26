@@ -33,6 +33,11 @@ const state = {
     pendingFile: null,
     currentPlan: null,
     analyses: [],
+    activeSessionId: null,
+    selectedExercise: null,
+    sessionTimerInterval: null,
+    sessionStartTime: null,
+    _workoutExercises: [],
 };
 
 /* ── API helpers ── */
@@ -66,6 +71,7 @@ function showTab(tab) {
         dashboard: loadDashboard,
         analysis: loadAnalyses,
         plans: loadCurrentPlan,
+        workout: loadWorkout,
         research: loadResearch,
         progress: loadProgress,
         profile: loadProfile,
@@ -676,6 +682,266 @@ async function saveProfile(event) {
     } catch (err) {
         showToast(`Save failed: ${err.message}`, 'error');
     }
+}
+
+/* ── Workout Logger ── */
+async function loadWorkout() {
+    const [active, history, prs, planData] = await Promise.all([
+        api('GET', '/sessions/active').catch(() => ({ session: null, sets: [] })),
+        api('GET', '/sessions/history').catch(() => []),
+        api('GET', '/prs').catch(() => []),
+        cachedApi('GET', '/plan/current').catch(() => null),
+    ]);
+
+    const exercises = [];
+    if (planData?.workout_plan?.days) {
+        for (const day of planData.workout_plan.days) {
+            for (const ex of (day.exercises || [])) {
+                if (ex.name && !exercises.includes(ex.name)) exercises.push(ex.name);
+            }
+        }
+    }
+    state._workoutExercises = exercises;
+
+    renderSessionHistory(history);
+    renderPRs(prs);
+
+    if (active.session) {
+        state.activeSessionId = active.session.id;
+        state.sessionStartTime = new Date(active.session.started_at);
+        showActiveSession();
+        renderSessionSets(active.sets);
+        startSessionTimer();
+    } else {
+        state.activeSessionId = null;
+        showNoSession();
+    }
+}
+
+function renderExerciseChips(exercises) {
+    const container = document.getElementById('exercise-chips');
+    if (!exercises.length) {
+        container.innerHTML = '<span style="color:var(--text-muted);font-size:13px">Generate a plan to get exercise suggestions, or type one below.</span>';
+        return;
+    }
+    container.innerHTML = exercises.map(name =>
+        `<button class="chip" onclick="selectExercise(${JSON.stringify(name)})">${esc(name)}</button>`
+    ).join('');
+}
+
+function selectExercise(name) {
+    state.selectedExercise = name;
+    document.getElementById('selected-exercise-name').textContent = name;
+    document.getElementById('log-set-card').style.display = 'block';
+    document.getElementById('log-set-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    document.querySelectorAll('.chip').forEach(c => {
+        c.classList.toggle('active', c.textContent === name);
+    });
+    updatePRHint(name);
+}
+
+function selectCustomExercise() {
+    const val = document.getElementById('custom-exercise-input').value.trim();
+    if (val) selectExercise(val);
+}
+
+function clearSelectedExercise() {
+    state.selectedExercise = null;
+    document.getElementById('log-set-card').style.display = 'none';
+    document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+}
+
+function adjustWeight(delta) {
+    const input = document.getElementById('weight-input');
+    input.value = Math.max(0, Math.round((parseFloat(input.value || 0) + delta) * 10) / 10);
+}
+
+function adjustReps(delta) {
+    const input = document.getElementById('reps-input');
+    input.value = Math.max(1, parseInt(input.value || 1) + delta);
+}
+
+function updatePRHint(name) {
+    const hint = document.getElementById('last-1rm-hint');
+    const prRow = document.querySelector(`.pr-row[data-exercise="${CSS.escape(name)}"]`);
+    if (prRow) {
+        hint.textContent = `Current PR: ${prRow.dataset.estimated1rm}kg est. 1RM`;
+    } else {
+        hint.textContent = '';
+    }
+}
+
+async function startSession() {
+    try {
+        const s = await api('POST', '/sessions/start', {});
+        state.activeSessionId = s.id;
+        state.sessionStartTime = new Date(s.started_at);
+        showActiveSession();
+        renderSessionSets([]);
+        startSessionTimer();
+        showToast('Session started!');
+    } catch (err) {
+        showToast(`Failed to start session: ${err.message}`, 'error');
+    }
+}
+
+async function endSession() {
+    if (!state.activeSessionId) return;
+    try {
+        const summary = await api('POST', `/sessions/${state.activeSessionId}/end`, {});
+        stopSessionTimer();
+        state.activeSessionId = null;
+        state.selectedExercise = null;
+        showNoSession();
+        const volStr = summary.total_volume_kg > 0 ? ` · ${summary.total_volume_kg}kg volume` : '';
+        showToast(`Session done! ${summary.set_count} sets${volStr}`);
+        invalidateCache('/sessions/history');
+        await loadWorkout();
+    } catch (err) {
+        showToast(`Failed to end session: ${err.message}`, 'error');
+    }
+}
+
+async function logSet() {
+    if (!state.activeSessionId || !state.selectedExercise) return;
+    const weight = parseFloat(document.getElementById('weight-input').value);
+    const reps = parseInt(document.getElementById('reps-input').value);
+    if (!weight || weight <= 0 || !reps || reps <= 0) {
+        showToast('Enter valid weight and reps.', 'error');
+        return;
+    }
+    try {
+        const result = await api('POST', `/sessions/${state.activeSessionId}/sets`, {
+            exercise_name: state.selectedExercise,
+            weight_kg: weight,
+            reps,
+        });
+        const container = document.getElementById('session-sets-list');
+        if (container.querySelector('.empty-state')) {
+            container.innerHTML = '<ul class="set-log-list"></ul>';
+        }
+        const ul = container.querySelector('ul');
+        const prBadge = result.is_pr ? '<span class="pr-badge">🏆 PR</span>' : '';
+        const li = document.createElement('li');
+        li.className = 'set-log-item';
+        li.innerHTML = `
+            <span class="set-exercise">${esc(result.exercise_name)}</span>
+            <span class="set-detail">${esc(result.weight_kg)}kg × ${esc(result.reps)}</span>
+            <span class="set-1rm">~${esc(result.estimated_1rm)}kg 1RM</span>
+            ${prBadge}
+        `;
+        ul.prepend(li);
+        if (result.is_pr) {
+            showToast(`🏆 New PR on ${result.exercise_name}! ${result.estimated_1rm}kg est. 1RM`);
+            invalidateCache('/prs');
+            await loadPRs();
+        }
+    } catch (err) {
+        showToast(`Log failed: ${err.message}`, 'error');
+    }
+}
+
+async function loadPRs() {
+    const prs = await api('GET', '/prs').catch(() => []);
+    renderPRs(prs);
+}
+
+function renderSessionSets(sets) {
+    const container = document.getElementById('session-sets-list');
+    if (!sets.length) {
+        container.innerHTML = '<p class="empty-state" style="padding:16px 0">No sets yet. Select an exercise above.</p>';
+        return;
+    }
+    const items = [...sets].reverse().map(s => `
+        <li class="set-log-item">
+            <span class="set-exercise">${esc(s.exercise_name)}</span>
+            <span class="set-detail">${esc(s.weight_kg)}kg × ${esc(s.reps)}</span>
+            <span class="set-1rm">~${esc(s.estimated_1rm)}kg 1RM</span>
+        </li>
+    `).join('');
+    container.innerHTML = `<ul class="set-log-list">${items}</ul>`;
+}
+
+function renderSessionHistory(history) {
+    const container = document.getElementById('session-history-list');
+    if (!history.length) {
+        container.innerHTML = '<p class="empty-state">No sessions yet.</p>';
+        return;
+    }
+    container.innerHTML = `<ul class="session-history">${
+        history.map(s => {
+            const dur = s.ended_at
+                ? Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 60000) + ' min'
+                : '';
+            const exStr = s.exercises.slice(0, 4).join(', ') + (s.exercises.length > 4 ? '…' : '');
+            return `
+                <li class="session-history-item">
+                    <div style="font-weight:600;font-size:14px">${esc(formatDate(s.started_at))}</div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
+                        ${esc(s.set_count)} sets · ${esc(s.total_volume_kg)}kg volume${dur ? ` · ${esc(dur)}` : ''}
+                    </div>
+                    ${exStr ? `<div style="font-size:12px;color:var(--text-muted)">${esc(exStr)}</div>` : ''}
+                </li>
+            `;
+        }).join('')
+    }</ul>`;
+}
+
+function renderPRs(prs) {
+    const container = document.getElementById('prs-list');
+    if (!prs.length) {
+        container.innerHTML = '<p class="empty-state">No personal records yet.</p>';
+        return;
+    }
+    container.innerHTML = `
+        <div style="overflow-x:auto">
+            <table style="width:100%">
+                <thead><tr>
+                    <th>Exercise</th><th>Weight</th><th>Reps</th><th>Est. 1RM</th><th>Date</th>
+                </tr></thead>
+                <tbody>
+                    ${prs.map(r => `
+                        <tr class="pr-row" data-exercise="${esc(r.exercise_name)}" data-estimated1rm="${esc(r.estimated_1rm)}">
+                            <td><strong>${esc(r.exercise_name)}</strong></td>
+                            <td>${esc(r.weight_kg)}kg</td>
+                            <td>${esc(r.reps)}</td>
+                            <td style="color:var(--gold);font-weight:600">${esc(r.estimated_1rm)}kg</td>
+                            <td style="color:var(--text-muted);font-size:13px">${esc(formatDate(r.achieved_at))}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function showActiveSession() {
+    document.getElementById('workout-no-session').style.display = 'none';
+    document.getElementById('workout-active-session').style.display = 'block';
+    renderExerciseChips(state._workoutExercises);
+}
+
+function showNoSession() {
+    document.getElementById('workout-no-session').style.display = 'block';
+    document.getElementById('workout-active-session').style.display = 'none';
+    clearInterval(state.sessionTimerInterval);
+}
+
+function startSessionTimer() {
+    clearInterval(state.sessionTimerInterval);
+    state.sessionTimerInterval = setInterval(() => {
+        if (!state.sessionStartTime) return;
+        const elapsed = Math.floor((Date.now() - state.sessionStartTime) / 1000);
+        const m = String(Math.floor(elapsed / 60)).padStart(2, '0');
+        const s = String(elapsed % 60).padStart(2, '0');
+        const el = document.getElementById('session-timer');
+        if (el) el.textContent = `${m}:${s}`;
+    }, 1000);
+}
+
+function stopSessionTimer() {
+    clearInterval(state.sessionTimerInterval);
+    state.sessionTimerInterval = null;
 }
 
 /* ── Utilities ── */

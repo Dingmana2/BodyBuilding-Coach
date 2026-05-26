@@ -17,6 +17,7 @@
                 <button class="nav-tab active" data-tab="dashboard" onclick="showTab('dashboard')">Dashboard</button>
                 <button class="nav-tab" data-tab="analysis" onclick="showTab('analysis')">Analysis</button>
                 <button class="nav-tab" data-tab="plans" onclick="showTab('plans')">Plans</button>
+                <button class="nav-tab" data-tab="workout" onclick="showTab('workout')">Workout</button>
                 <button class="nav-tab" data-tab="research" onclick="showTab('research')">Research</button>
                 <button class="nav-tab" data-tab="progress" onclick="showTab('progress')">Progress</button>
                 <button class="nav-tab" data-tab="profile" onclick="showTab('profile')">Profile</button>
@@ -145,6 +146,87 @@
                 <div id="plan-diet" class="plan-section card" style="display:none"></div>
                 <div id="plan-supplements" class="plan-section card" style="display:none"></div>
                 <div id="plan-coaching" class="plan-section card" style="display:none"></div>
+            </div>
+        </section>
+
+        <!-- WORKOUT LOGGER -->
+        <section id="tab-workout" class="tab-content">
+            <div class="page-header">
+                <h1>Workout Logger</h1>
+                <p class="subtitle">Tap an exercise, dial weight and reps, log the set</p>
+            </div>
+
+            <div id="workout-no-session" class="card">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+                    <div>
+                        <div style="font-size:16px;font-weight:600">Start a session to log sets</div>
+                        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Exercises will be pulled from your current plan</div>
+                    </div>
+                    <button class="btn btn-primary" onclick="startSession()">🏋️ Start Session</button>
+                </div>
+            </div>
+
+            <div id="workout-active-session" style="display:none">
+                <div class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+                    <div>
+                        <div style="font-size:16px;font-weight:600">Session in progress</div>
+                        <div id="session-timer" style="font-size:13px;color:var(--gold);margin-top:2px">00:00</div>
+                    </div>
+                    <button class="btn btn-ghost" onclick="endSession()">✓ End Session</button>
+                </div>
+
+                <div class="card" style="margin-bottom:16px">
+                    <div class="section-label" style="margin-top:0">Today's Exercises</div>
+                    <div id="exercise-chips" class="chip-list"></div>
+                    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+                        <input type="text" id="custom-exercise-input" placeholder="Other exercise…" style="flex:1;max-width:260px" />
+                        <button class="btn btn-ghost btn-sm" onclick="selectCustomExercise()">Select</button>
+                    </div>
+                </div>
+
+                <div id="log-set-card" class="card" style="display:none;margin-bottom:16px">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                        <h3 id="selected-exercise-name" style="margin:0"></h3>
+                        <button class="btn btn-ghost btn-sm" onclick="clearSelectedExercise()">✕</button>
+                    </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+                        <div>
+                            <div class="section-label" style="margin-top:0">Weight (kg)</div>
+                            <div class="stepper">
+                                <button class="stepper-btn" onclick="adjustWeight(-2.5)">−</button>
+                                <input type="number" id="weight-input" class="stepper-input" value="60" step="2.5" min="0" />
+                                <button class="stepper-btn" onclick="adjustWeight(2.5)">+</button>
+                            </div>
+                        </div>
+                        <div>
+                            <div class="section-label" style="margin-top:0">Reps</div>
+                            <div class="stepper">
+                                <button class="stepper-btn" onclick="adjustReps(-1)">−</button>
+                                <input type="number" id="reps-input" class="stepper-input" value="8" step="1" min="1" />
+                                <button class="stepper-btn" onclick="adjustReps(1)">+</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:12px">
+                        <button class="btn btn-primary" onclick="logSet()" style="flex:1">Log Set</button>
+                        <div id="last-1rm-hint" style="font-size:12px;color:var(--text-muted)"></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h3>Sets This Session</h3>
+                    <div id="session-sets-list"><p class="empty-state" style="padding:16px 0">No sets yet. Select an exercise above.</p></div>
+                </div>
+            </div>
+
+            <div class="card" style="margin-top:20px">
+                <h3>Personal Records</h3>
+                <div id="prs-list"><p class="empty-state">No personal records yet.</p></div>
+            </div>
+
+            <div class="card" style="margin-top:20px">
+                <h3>Session History</h3>
+                <div id="session-history-list"><p class="empty-state">No sessions yet.</p></div>
             </div>
         </section>
 

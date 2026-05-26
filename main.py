@@ -325,6 +325,190 @@ def get_progress(db: Session = Depends(get_db)):
     ]
 
 
+# ── Workout Sessions ──────────────────────────────────────────────────────────
+
+@app.get("/api/sessions/active")
+def get_active_session(db: Session = Depends(get_db)):
+    session = (
+        db.query(models.WorkoutSession)
+        .filter(models.WorkoutSession.chat_id == 0, models.WorkoutSession.ended_at == None)
+        .order_by(models.WorkoutSession.started_at.desc())
+        .first()
+    )
+    if not session:
+        return {"session": None, "sets": []}
+    sets = (
+        db.query(models.SetLog)
+        .filter(models.SetLog.session_id == session.id)
+        .order_by(models.SetLog.logged_at.asc())
+        .all()
+    )
+    return {
+        "session": {
+            "id": session.id,
+            "started_at": session.started_at.isoformat(),
+            "notes": session.notes,
+        },
+        "sets": [
+            {
+                "id": s.id,
+                "exercise_name": s.exercise_name,
+                "weight_kg": s.weight_kg,
+                "reps": s.reps,
+                "estimated_1rm": s.estimated_1rm,
+                "logged_at": s.logged_at.isoformat(),
+            }
+            for s in sets
+        ],
+    }
+
+
+@app.post("/api/sessions/start")
+async def start_session(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    # Close any orphaned open session
+    db.query(models.WorkoutSession).filter(
+        models.WorkoutSession.chat_id == 0,
+        models.WorkoutSession.ended_at == None,
+    ).update({"ended_at": datetime.now(timezone.utc)})
+    session = models.WorkoutSession(chat_id=0, notes=data.get("notes"))
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return {"id": session.id, "started_at": session.started_at.isoformat()}
+
+
+@app.post("/api/sessions/{session_id}/end")
+def end_session(session_id: int, db: Session = Depends(get_db)):
+    session = db.query(models.WorkoutSession).filter(models.WorkoutSession.id == session_id).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    session.ended_at = datetime.now(timezone.utc)
+    sets = db.query(models.SetLog).filter(models.SetLog.session_id == session_id).all()
+    total_volume = sum(s.weight_kg * s.reps for s in sets)
+    db.commit()
+    return {
+        "status": "ended",
+        "set_count": len(sets),
+        "total_volume_kg": round(total_volume, 1),
+        "exercises": list({s.exercise_name for s in sets}),
+    }
+
+
+@app.post("/api/sessions/{session_id}/sets")
+async def log_set(session_id: int, request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    exercise = data["exercise_name"].strip()
+    weight_kg = float(data["weight_kg"])
+    reps = int(data["reps"])
+    estimated_1rm = round(weight_kg * (1 + reps / 30), 1)
+
+    set_log = models.SetLog(
+        session_id=session_id,
+        exercise_name=exercise,
+        weight_kg=weight_kg,
+        reps=reps,
+        estimated_1rm=estimated_1rm,
+    )
+    db.add(set_log)
+    db.flush()
+
+    existing_pr = (
+        db.query(models.PersonalRecord)
+        .filter(
+            models.PersonalRecord.chat_id == 0,
+            models.PersonalRecord.exercise_name == exercise,
+        )
+        .first()
+    )
+
+    is_pr = False
+    prev_pr = None
+    if not existing_pr or estimated_1rm > existing_pr.estimated_1rm:
+        is_pr = True
+        if existing_pr:
+            prev_pr = {
+                "weight_kg": existing_pr.weight_kg,
+                "reps": existing_pr.reps,
+                "estimated_1rm": existing_pr.estimated_1rm,
+            }
+            existing_pr.weight_kg = weight_kg
+            existing_pr.reps = reps
+            existing_pr.estimated_1rm = estimated_1rm
+            existing_pr.set_log_id = set_log.id
+            existing_pr.achieved_at = datetime.now(timezone.utc)
+        else:
+            db.add(
+                models.PersonalRecord(
+                    chat_id=0,
+                    exercise_name=exercise,
+                    weight_kg=weight_kg,
+                    reps=reps,
+                    estimated_1rm=estimated_1rm,
+                    set_log_id=set_log.id,
+                )
+            )
+
+    db.commit()
+    db.refresh(set_log)
+    return {
+        "id": set_log.id,
+        "exercise_name": exercise,
+        "weight_kg": weight_kg,
+        "reps": reps,
+        "estimated_1rm": estimated_1rm,
+        "logged_at": set_log.logged_at.isoformat(),
+        "is_pr": is_pr,
+        "prev_pr": prev_pr,
+    }
+
+
+@app.get("/api/sessions/history")
+def get_session_history(db: Session = Depends(get_db)):
+    sessions = (
+        db.query(models.WorkoutSession)
+        .filter(
+            models.WorkoutSession.chat_id == 0,
+            models.WorkoutSession.ended_at != None,
+        )
+        .order_by(models.WorkoutSession.started_at.desc())
+        .limit(10)
+        .all()
+    )
+    result = []
+    for s in sessions:
+        sets = db.query(models.SetLog).filter(models.SetLog.session_id == s.id).all()
+        result.append({
+            "id": s.id,
+            "started_at": s.started_at.isoformat(),
+            "ended_at": s.ended_at.isoformat() if s.ended_at else None,
+            "set_count": len(sets),
+            "exercises": list({x.exercise_name for x in sets}),
+            "total_volume_kg": round(sum(x.weight_kg * x.reps for x in sets), 1),
+        })
+    return result
+
+
+@app.get("/api/prs")
+def get_prs(db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.PersonalRecord)
+        .filter(models.PersonalRecord.chat_id == 0)
+        .order_by(models.PersonalRecord.exercise_name)
+        .all()
+    )
+    return [
+        {
+            "exercise_name": r.exercise_name,
+            "weight_kg": r.weight_kg,
+            "reps": r.reps,
+            "estimated_1rm": r.estimated_1rm,
+            "achieved_at": r.achieved_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
