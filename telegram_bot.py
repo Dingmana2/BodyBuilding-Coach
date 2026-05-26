@@ -157,6 +157,7 @@ def get_user(chat_id: int) -> dict:
             "garmin_pass_enc": None,
             "mfp_username": None,
             "mfp_pass_enc": None,
+            "units": "kg",            # display unit: "kg" or "lbs"
         }
     else:
         # Back-fill fields added in later versions
@@ -167,6 +168,7 @@ def get_user(chat_id: int) -> dict:
             "meal_logs": [], "measurements": [], "session_counter": 0,
             "garmin_email": None, "garmin_pass_enc": None,
             "mfp_username": None, "mfp_pass_enc": None,
+            "units": "kg",
         }
         for k, v in defaults.items():
             u.setdefault(k, v)
@@ -231,6 +233,51 @@ def _parse_logset_weight_kg(s: str) -> float | None:
 def _epley_1rm(weight_kg: float, reps: int) -> float:
     """Epley formula: weight × (1 + reps/30)."""
     return round(weight_kg * (1 + reps / 30), 1)
+
+
+# ── Unit display helpers ──────────────────────────────────────────────────────
+
+_LBS_PER_KG = 2.20462
+
+
+def _wu(user: dict) -> str:
+    """User's preferred weight unit: 'kg' or 'lbs'."""
+    return user.get("units", "kg")
+
+
+def _w(weight_kg: float, user: dict) -> float:
+    """Convert a stored kg value to the user's display unit."""
+    if _wu(user) == "lbs":
+        return round(weight_kg * _LBS_PER_KG, 1)
+    return weight_kg
+
+
+def _wfmt(weight_kg: float, user: dict) -> str:
+    """Format a stored kg value as a display string, e.g. '102.5kg' or '226lbs'."""
+    return f"{_w(weight_kg, user):g}{_wu(user)}"
+
+
+def _parse_weight_input(text: str, user: dict) -> float | None:
+    """Parse user-typed weight respecting their unit preference.
+
+    Explicit suffixes (kg/lbs) always win; bare numbers are treated as the
+    user's preferred unit and converted to kg for storage.
+    """
+    s = text.strip().lower().replace(" ", "")
+    # Explicit lbs
+    m = re.match(r"(\d+(?:\.\d+)?)(?:lbs?|pounds?)$", s)
+    if m:
+        return round(float(m.group(1)) * 0.453592, 4)
+    # Explicit kg
+    m = re.match(r"(\d+(?:\.\d+)?)kg$", s)
+    if m:
+        return float(m.group(1))
+    # Bare number — interpret in user's preferred unit
+    m = re.match(r"(\d+(?:\.\d+)?)$", s)
+    if m:
+        val = float(m.group(1))
+        return round(val / _LBS_PER_KG, 4) if _wu(user) == "lbs" else val
+    return None
 
 
 # ── Workout inline keyboard helpers ──────────────────────────────────────────
@@ -316,7 +363,10 @@ def _ex_keyboard(exercises: list, has_session: bool) -> InlineKeyboardMarkup:
 
 
 def _weight_keyboard(exercise_name: str, user: dict) -> InlineKeyboardMarkup:
-    """Inline keyboard with recent weights ±increments for this exercise."""
+    """Inline keyboard with recent weights ±increments for this exercise.
+
+    Callback data always stores kg; labels display in the user's chosen unit.
+    """
     recent = [s["weight_kg"] for s in reversed(user["set_logs"]) if s["exercise_name"] == exercise_name]
     last = recent[0] if recent else None
     if last:
@@ -326,7 +376,7 @@ def _weight_keyboard(exercise_name: str, user: dict) -> InlineKeyboardMarkup:
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for w in opts:
-        row.append(InlineKeyboardButton(f"{w:g}kg", callback_data=f"wk:w:{w}"))
+        row.append(InlineKeyboardButton(_wfmt(w, user), callback_data=f"wk:w:{w}"))
         if len(row) == 3:
             rows.append(row)
             row = []
@@ -772,7 +822,7 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             lines = []
             for ex, sets in by_ex.items():
                 best = max(sets, key=lambda x: x["estimated_1rm"])
-                lines.append(f"  {ex}: {len(sets)} sets | best {best['weight_kg']}kg×{best['reps']} (1RM ~{best['estimated_1rm']}kg)")
+                lines.append(f"  {ex}: {len(sets)} sets | best {_wfmt(best['weight_kg'], user)}×{best['reps']} (1RM ~{_wfmt(best['estimated_1rm'], user)})")
             exercise_summary = "\n" + "\n".join(lines)
 
         # Generate next-session targets (progressive overload suggestion)
@@ -798,7 +848,7 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
         await update.message.reply_text(
             f"✅ *Session #{sid} complete!*\n\n"
-            f"Sets: {total_sets} | Volume: {total_volume:,.0f}kg{exercise_summary}"
+            f"Sets: {total_sets} | Volume: {_w(total_volume, user):,.0f}{_wu(user)}{exercise_summary}"
             f"{next_targets_text}\n\n"
             "Type /stats to see your PRs.",
             parse_mode="Markdown",
@@ -902,8 +952,8 @@ async def cmd_logset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     _save_store()
     await update.message.reply_text(
-        f"✅ *{exercise}* — {weight_kg}kg × {reps} reps\n"
-        f"1RM estimate: ~{one_rm}kg (Epley){pr_text}",
+        f"✅ *{exercise}* — {_wfmt(weight_kg, user)} × {reps} reps\n"
+        f"1RM estimate: ~{_wfmt(one_rm, user)} (Epley){pr_text}",
         parse_mode="Markdown",
     )
 
@@ -967,9 +1017,9 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
         name = part[3:]
         context.user_data["wk_ex"] = name
         pr = user["prs"].get(name)
-        pr_hint = f"\n_Current PR: {pr['weight_kg']}kg×{pr['reps']} (~{pr['estimated_1rm']}kg 1RM)_" if pr else ""
+        pr_hint = f"\n_Current PR: {_wfmt(pr['weight_kg'], user)}×{pr['reps']} (~{_wfmt(pr['estimated_1rm'], user)} 1RM)_" if pr else ""
         await query.edit_message_text(
-            f"*{name}*{pr_hint}\n\nSelect weight (kg):",
+            f"*{name}*{pr_hint}\n\nSelect weight ({_wu(user)}):",
             parse_mode="Markdown",
             reply_markup=_weight_keyboard(name, user),
         )
@@ -984,7 +1034,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
             context.user_data["wk_awaiting"] = "weight"
             ex = context.user_data.get("wk_ex", "exercise")
             await query.edit_message_text(
-                f"*{ex}* — Type weight in kg (e.g. `102.5`):",
+                f"*{ex}* — Type weight in {_wu(user)} (e.g. `{'225' if _wu(user) == 'lbs' else '102.5'}`):",
                 parse_mode="Markdown",
             )
         else:
@@ -992,7 +1042,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
             context.user_data["wk_w"] = weight
             ex = context.user_data.get("wk_ex", "exercise")
             await query.edit_message_text(
-                f"*{ex}* — {weight:g}kg\n\nSelect reps:",
+                f"*{ex}* — {_wfmt(weight, user)}\n\nSelect reps:",
                 parse_mode="Markdown",
                 reply_markup=_rep_keyboard(),
             )
@@ -1004,7 +1054,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
             ex = context.user_data.get("wk_ex", "?")
             w = context.user_data.get("wk_w", "?")
             await query.edit_message_text(
-                f"*{ex}* @ {w}kg — Type reps:",
+                f"*{ex}* @ {_wfmt(w, user) if isinstance(w, (int, float)) else w} — Type reps:",
                 parse_mode="Markdown",
             )
         else:
@@ -1017,8 +1067,8 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
             entry, is_pr = _do_log_set(user, ex, weight, reps)
             pr_badge = " 🏆 *NEW PR!*" if is_pr else ""
             await query.edit_message_text(
-                f"✅ *{ex}* — {weight:g}kg × {reps}{pr_badge}\n"
-                f"Est. 1RM: ~{entry['estimated_1rm']}kg",
+                f"✅ *{ex}* — {_wfmt(weight, user)} × {reps}{pr_badge}\n"
+                f"Est. 1RM: ~{_wfmt(entry['estimated_1rm'], user)}",
                 parse_mode="Markdown",
                 reply_markup=_after_set_keyboard(),
             )
@@ -1086,12 +1136,12 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
             lines = []
             for ex_name, sets in by_ex.items():
                 best = max(sets, key=lambda x: x["estimated_1rm"])
-                lines.append(f"  {ex_name}: {len(sets)} sets | best {best['weight_kg']}kg×{best['reps']}")
+                lines.append(f"  {ex_name}: {len(sets)} sets | best {_wfmt(best['weight_kg'], user)}×{best['reps']}")
             ex_summary = "\n" + "\n".join(lines)
 
         await query.edit_message_text(
             f"✅ *Session #{sid} complete!*\n\n"
-            f"Sets: {total_sets} | Volume: {total_volume:,.0f}kg{ex_summary}\n\n"
+            f"Sets: {total_sets} | Volume: {_w(total_volume, user):,.0f}{_wu(user)}{ex_summary}\n\n"
             "Type /stats to see your PRs.",
             parse_mode="Markdown",
         )
@@ -1110,7 +1160,7 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         diff = round(last_w - first_w, 1)
         arrow = "▼" if diff < 0 else ("▲" if diff > 0 else "→")
         spark = _sparkline([w[1] for w in weights[-10:]])
-        lines.append(f"*Weight:* {first_w}kg → {last_w}kg ({arrow} {abs(diff)}kg) {spark}")
+        lines.append(f"*Weight:* {_wfmt(first_w, user)} → {_wfmt(last_w, user)} ({arrow} {_wfmt(abs(diff), user)}) {spark}")
 
     # Recovery trend
     recent_checkins = user["checkins"][-30:]
@@ -1123,7 +1173,7 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if user["prs"]:
         pr_lines = sorted(user["prs"].items(), key=lambda x: x[1]["estimated_1rm"], reverse=True)[:3]
         pr_text = "\n".join(
-            f"  {ex}: {v['weight_kg']}kg×{v['reps']} (1RM ~{v['estimated_1rm']}kg)"
+            f"  {ex}: {_wfmt(v['weight_kg'], user)}×{v['reps']} (1RM ~{_wfmt(v['estimated_1rm'], user)})"
             for ex, v in pr_lines
         )
         lines.append(f"\n*Top PRs:*\n{pr_text}")
@@ -1389,7 +1439,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     sorted_prs = sorted(prs.items(), key=lambda x: x[1]["estimated_1rm"], reverse=True)
     pr_lines = "\n".join(
-        f"*{ex}:* {v['weight_kg']}kg × {v['reps']} reps  (1RM ~{v['estimated_1rm']}kg)  📅 {v['date']}"
+        f"*{ex}:* {_wfmt(v['weight_kg'], user)} × {v['reps']} reps  (1RM ~{_wfmt(v['estimated_1rm'], user)})  📅 {v['date']}"
         for ex, v in sorted_prs
     )
 
@@ -1749,16 +1799,16 @@ async def cmd_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if not context.args:
         last = next((m for m in reversed(user["measurements"]) if m.get("body_weight_kg")), None)
-        last_str = f"\nLast logged: {last['body_weight_kg']}kg on {last['date']}" if last else ""
+        last_str = f"\nLast logged: {_wfmt(last['body_weight_kg'], user)} on {last['date']}" if last else ""
         await update.message.reply_text(
-            f"Usage: `/weight 84.5`{last_str}",
+            f"Usage: `/weight {'186' if _wu(user) == 'lbs' else '84.5'}`{last_str}",
             parse_mode="Markdown",
         )
         return
 
-    weight_kg = _parse_logset_weight_kg(context.args[0])
+    weight_kg = _parse_weight_input(context.args[0], user)
     if weight_kg is None:
-        await update.message.reply_text("Couldn't parse weight. Try `/weight 84.5` or `/weight 186lbs`.", parse_mode="Markdown")
+        await update.message.reply_text(f"Couldn't parse weight. Try `/weight {'186' if _wu(user) == 'lbs' else '84.5'}` or explicit units like `186lbs` or `84.5kg`.", parse_mode="Markdown")
         return
 
     entry = {"date": _today(), "body_weight_kg": weight_kg}
@@ -1769,12 +1819,13 @@ async def cmd_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     # Compare to previous weight log
     prev_weights = [m for m in user["measurements"][:-1] if m.get("body_weight_kg")]
     change_text = ""
+    diff = 0.0
     if prev_weights:
         prev = prev_weights[-1]["body_weight_kg"]
-        diff = round(weight_kg - prev, 1)
+        diff = round(weight_kg - prev, 3)
         if diff != 0:
             arrow = "▲" if diff > 0 else "▼"
-            change_text = f" ({arrow} {abs(diff)}kg from last log)"
+            change_text = f" ({arrow} {_wfmt(abs(diff), user)} from last log)"
 
     goal = user["profile"].get("goal", "")
     motivation = ""
@@ -1784,8 +1835,8 @@ async def cmd_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         motivation = " Gaining! 📈"
 
     await update.message.reply_text(
-        f"✅ *{weight_kg}kg logged*{change_text}{motivation}\n"
-        "Track more with `/measurements weight=84.5kg waist=32in`",
+        f"✅ *{_wfmt(weight_kg, user)} logged*{change_text}{motivation}\n"
+        f"Track more with `/measurements weight={'186lbs' if _wu(user) == 'lbs' else '84.5kg'} waist=32in`",
         parse_mode="Markdown",
     )
 
@@ -2028,6 +2079,33 @@ async def cmd_billing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+async def cmd_units(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/units [kg|lbs] — view or change your preferred weight unit."""
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    if not context.args:
+        current = _wu(user)
+        other = "lbs" if current == "kg" else "kg"
+        await update.message.reply_text(
+            f"Current unit: *{current}*\n\nSwitch with `/units {other}`.",
+            parse_mode="Markdown",
+        )
+        return
+
+    arg = context.args[0].lower().strip()
+    if arg in ("lbs", "lb", "pounds"):
+        user["units"] = "lbs"
+        _save_store()
+        await update.message.reply_text("Done! Weights will now be displayed in *lbs*.", parse_mode="Markdown")
+    elif arg == "kg":
+        user["units"] = "kg"
+        _save_store()
+        await update.message.reply_text("Done! Weights will now be displayed in *kg*.", parse_mode="Markdown")
+    else:
+        await update.message.reply_text("Unknown unit. Use `/units kg` or `/units lbs`.", parse_mode="Markdown")
+
+
 async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Generate a one-time code to link this Telegram account to the web app."""
     chat_id = update.effective_chat.id
@@ -2184,14 +2262,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if wk_awaiting == "weight":
         context.user_data.pop("wk_awaiting")
-        weight = _parse_logset_weight_kg(text.strip())
+        weight = _parse_weight_input(text.strip(), user)
         if weight is None:
-            await update.message.reply_text("Couldn't parse that. Try `100`, `100kg`, or `225lbs`.")
+            unit = _wu(user)
+            await update.message.reply_text(f"Couldn't parse that. Try `{'225' if unit == 'lbs' else '100'}` or `{'225lbs' if unit == 'lbs' else '100kg'}`.")
             return
         context.user_data["wk_w"] = weight
         ex = context.user_data.get("wk_ex", "exercise")
         await update.message.reply_text(
-            f"*{ex}* — {weight:g}kg\n\nSelect reps:",
+            f"*{ex}* — {_wfmt(weight, user)}\n\nSelect reps:",
             parse_mode="Markdown",
             reply_markup=_rep_keyboard(),
         )
@@ -2211,8 +2290,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         entry, is_pr = _do_log_set(user, ex, weight, reps)
         pr_badge = " 🏆 *NEW PR!*" if is_pr else ""
         await update.message.reply_text(
-            f"✅ *{ex}* — {weight:g}kg × {reps}{pr_badge}\n"
-            f"Est. 1RM: ~{entry['estimated_1rm']}kg",
+            f"✅ *{ex}* — {_wfmt(weight, user)} × {reps}{pr_badge}\n"
+            f"Est. 1RM: ~{_wfmt(entry['estimated_1rm'], user)}",
             parse_mode="Markdown",
             reply_markup=_after_set_keyboard(),
         )
@@ -2808,6 +2887,7 @@ def main() -> None:
     app.add_handler(CommandHandler("weakpoints", cmd_weakpoints))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("billing", cmd_billing))
+    app.add_handler(CommandHandler("units", cmd_units))
     app.add_handler(CommandHandler("link", cmd_link))
     app.add_handler(CommandHandler("link_status", cmd_link_status))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
