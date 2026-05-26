@@ -2,6 +2,71 @@
 
 ## 2026-05-26
 
+### R2 — Delete dead `_get_today_exercises` function
+**Files**: `telegram_bot.py`
+**Rationale**: Function was superseded by `_get_session_exercises` during Phase 1 refactor (AUDIT §7g).
+Grep confirmed zero call sites. Pure deletion, no behavior change.
+**Rollback**: Restore `_get_today_exercises` definition at approximately line 285.
+
+### R3 — Atomic `_save_store()` write
+**Files**: `telegram_bot.py`
+**Rationale**: `Path.write_text()` is not crash-safe; a mid-write failure corrupts `bot_state.json`
+and destroys all user data (AUDIT §7d). Now writes to `.tmp` file then `os.replace()` (POSIX atomic rename).
+**Rollback**: Revert `_save_store` body to the single `write_text` call.
+
+### R4 — Add missing compound DB indexes
+**Files**: `main.py`
+**Rationale**: All existing indexes were single-column. Five common multi-column query patterns
+(checkin by user+date, set logs by exercise+time, meals by user+date, measurements by user+date,
+PRs by user+exercise+1RM) had no compound index, causing full-table scans (ARCHITECTURE §4c).
+Added via idempotent `CREATE INDEX IF NOT EXISTS` in `_migrate_db()`.
+**Rollback**: Remove the five `CREATE INDEX` statements from `_migrate_db()`; drop indexes manually
+if needed (`DROP INDEX IF EXISTS ix_...`).
+
+### R5 — Add error logging to silent `except Exception:` blocks
+**Files**: `telegram_bot.py`
+**Rationale**: Four bare `except Exception: pass/continue` blocks made production failures invisible
+(AUDIT §7d). Added `print(f"Warning: ...")` before each pass/continue to match existing convention.
+**Rollback**: Revert the four `except Exception as e:` lines back to `except Exception:` and remove the print calls.
+
+### R6 — Create `prompt_builder.py` skeleton
+**Files**: `prompt_builder.py` (new)
+**Rationale**: Establishes module boundary per ARCHITECTURE §6a. All stubs raise `NotImplementedError`.
+Zero impact on existing code. Phase 4 will migrate prompt construction here.
+**Rollback**: Delete `prompt_builder.py`.
+
+### R7 — Create `coach_brain.py` skeleton
+**Files**: `coach_brain.py` (new)
+**Rationale**: Establishes orchestration layer per ARCHITECTURE §1. Typed frozen dataclasses for all
+snapshots; stub async domain methods raise `NotImplementedError`. Zero impact on existing code.
+**Rollback**: Delete `coach_brain.py`.
+
+### R8 — Consolidate duplicate model constants
+**Files**: `telegram_bot.py`, `claude_service.py`
+**Rationale**: `telegram_bot.py` had local copies of `ANALYSIS_MODEL` and `SUMMARY_MODEL` that
+duplicated `claude_service.py`'s definitions (AUDIT §7c). Removed the local copies and added
+`from claude_service import ANALYSIS_MODEL, SUMMARY_MODEL` at the top level. `CHAT_MODEL` stays
+local as it is bot-specific.
+**Rollback**: Remove the import and restore the two constant definitions in `telegram_bot.py`.
+
+### R9 — Centralize Epley 1RM formula
+**Files**: `claude_service.py`, `telegram_bot.py`, `main.py`
+**Rationale**: `_epley_1rm()` was defined privately in `telegram_bot.py` and duplicated inline
+in `main.py` (AUDIT §7c). Moved to `claude_service.epley_1rm()` as a public function; both callers
+now import it. Single implementation, single test point.
+**Rollback**: Restore `_epley_1rm` private def in `telegram_bot.py`; restore inline formula in `main.py`;
+remove `epley_1rm` from `claude_service.py` and its import in `main.py`.
+
+### R10 — Consolidate duplicate Anthropic client singletons
+**Files**: `claude_service.py`, `telegram_bot.py`
+**Rationale**: Both modules maintained their own lazy `anthropic.Anthropic()` singleton, creating
+two client objects per process (AUDIT §7c). Exposed `get_anthropic_client()` as a public function
+from `claude_service.py` (aliasing the existing `_client`). `telegram_bot.py` now imports and uses
+the shared client; its local `_anthropic_client` singleton and `claude()` function are removed.
+Removed the now-unused `import anthropic` from `telegram_bot.py`.
+**Rollback**: Restore `_anthropic_client` singleton and `claude()` function in `telegram_bot.py`;
+restore `import anthropic`; rename `get_anthropic_client` back to `_client` in `claude_service.py`.
+
 ### R1 — Fix hardcoded model strings in claude_service.py
 **Files**: `claude_service.py`
 **Rationale**: `generate_weekly_report()` (line 565) and `analyze_weak_points()` (line 603) hardcoded

@@ -10,6 +10,12 @@ SUMMARY_MODEL    = "claude-haiku-4-5-20251001"
 REPORT_MODEL     = "claude-opus-4-7"
 WEAK_POINT_MODEL = "claude-haiku-4-5-20251001"
 
+
+def epley_1rm(weight_kg: float, reps: int) -> float:
+    """Epley one-rep-max estimate: weight × (1 + reps / 30)."""
+    return round(weight_kg * (1 + reps / 30), 1)
+
+
 # Goal-specific system prompt variants injected into every AI coaching call.
 _GOAL_SYSTEM_PROMPTS: dict[str, str] = {
     "bulk": (
@@ -80,7 +86,8 @@ def get_goal_system_prompt(goal: str | None) -> str:
 _anthropic_client: anthropic.Anthropic | None = None
 
 
-def _client() -> anthropic.Anthropic:
+def get_anthropic_client() -> anthropic.Anthropic:
+    """Return the shared Anthropic client singleton for this process."""
     global _anthropic_client
     if _anthropic_client is None:
         key = os.getenv("ANTHROPIC_API_KEY")
@@ -88,6 +95,10 @@ def _client() -> anthropic.Anthropic:
             raise ValueError("ANTHROPIC_API_KEY is not set. Add it to your .env file.")
         _anthropic_client = anthropic.Anthropic(api_key=key)
     return _anthropic_client
+
+
+# Internal alias so existing calls within this module are unchanged.
+_client = get_anthropic_client
 
 
 def _encode_image(image_path: str) -> tuple[str, str]:

@@ -15,7 +15,6 @@ from datetime import date as _date, timedelta
 from io import BytesIO
 from pathlib import Path
 
-import anthropic
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
@@ -31,13 +30,13 @@ from telegram.ext import (
 
 load_dotenv()
 
+from claude_service import ANALYSIS_MODEL, SUMMARY_MODEL, epley_1rm, get_anthropic_client  # noqa: E402 — after load_dotenv()
+
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 BOT_SECRET = os.getenv("BOT_SECRET", "")
-ANALYSIS_MODEL = "claude-opus-4-7"
 CHAT_MODEL = "claude-sonnet-4-6"
-SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 MAX_HISTORY = 20
 
 # Cooldown in seconds between expensive per-user operations.
@@ -65,9 +64,9 @@ def _load_store() -> dict[int, dict]:
 
 def _save_store() -> None:
     try:
-        _STORE_PATH.write_text(
-            json.dumps(user_data, ensure_ascii=False), encoding="utf-8"
-        )
+        tmp = _STORE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(user_data, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, _STORE_PATH)
     except Exception as e:
         print(f"Warning: could not save bot state: {e}")
 
@@ -115,16 +114,6 @@ RESEARCH_TOPICS = [
 ]
 
 
-_anthropic_client: anthropic.Anthropic | None = None
-
-
-def claude() -> anthropic.Anthropic:
-    global _anthropic_client
-    if _anthropic_client is None:
-        if not ANTHROPIC_KEY:
-            raise ValueError("ANTHROPIC_API_KEY not set in environment.")
-        _anthropic_client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
-    return _anthropic_client
 
 
 def _check_cooldown(cooldown_dict: dict[int, float], chat_id: int, seconds: int) -> int | None:
@@ -230,9 +219,6 @@ def _parse_logset_weight_kg(s: str) -> float | None:
     return None
 
 
-def _epley_1rm(weight_kg: float, reps: int) -> float:
-    """Epley formula: weight × (1 + reps/30)."""
-    return round(weight_kg * (1 + reps / 30), 1)
 
 
 # ── Unit display helpers ──────────────────────────────────────────────────────
@@ -282,15 +268,6 @@ def _parse_weight_input(text: str, user: dict) -> float | None:
 
 # ── Workout inline keyboard helpers ──────────────────────────────────────────
 
-def _get_today_exercises(user: dict) -> list:
-    """Return today's exercise list from the user's current plan (empty list if none)."""
-    if not user.get("last_plan"):
-        return []
-    today_name = _date.today().strftime("%A")
-    days = user["last_plan"].get("workout", {}).get("days", [])
-    today_day = next((d for d in days if d.get("day", "").lower() == today_name.lower()), None)
-    return today_day.get("exercises", []) if today_day else []
-
 
 def _get_session_exercises(user: dict) -> list:
     """Return exercises for the active session day (falls back to today)."""
@@ -320,7 +297,7 @@ def _days_keyboard(user: dict) -> InlineKeyboardMarkup:
 
 def _do_log_set(user: dict, exercise: str, weight_kg: float, reps: int) -> tuple[dict, bool]:
     """Append a set to user state, check for PR. Returns (entry, is_pr)."""
-    one_rm = _epley_1rm(weight_kg, reps)
+    one_rm = epley_1rm(weight_kg, reps)
     entry = {
         "exercise_name": exercise,
         "weight_kg": weight_kg,
@@ -585,8 +562,8 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         try:
             import garmin_service
             garmin_data = garmin_service.get_cached(chat_id)
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"Warning: Garmin get_cached failed for chat_id={chat_id}: {e}")
 
     if garmin_data and garmin_data.get("sleep_score_1_10"):
         sleep_score = garmin_data["sleep_score_1_10"]
@@ -838,8 +815,8 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                     None, generate_next_session_targets, session_sets, plan_day_ctx, profile
                 )
                 next_targets_text = f"\n\n🎯 *Next session targets:*\n_{targets}_"
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: generate_next_session_targets failed: {e}")
 
         await update.message.reply_text(
             f"✅ *Session #{sid} complete!*\n\n"
@@ -920,7 +897,7 @@ async def cmd_logset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     exercise = " ".join(context.args[:-2]).title()
-    one_rm = _epley_1rm(weight_kg, reps)
+    one_rm = epley_1rm(weight_kg, reps)
 
     entry = {
         "exercise_name": exercise,
@@ -2404,7 +2381,7 @@ def _chat_with_coach(text: str, user: dict) -> tuple[str, dict | None]:
     if len(history) > MAX_HISTORY:
         history[:] = history[-MAX_HISTORY:]
 
-    response = claude().messages.create(
+    response = get_anthropic_client().messages.create(
         model=CHAT_MODEL,
         max_tokens=800,
         system=system,
@@ -2482,7 +2459,7 @@ def _analyze_photo(img_b64: str, profile: dict) -> dict:
         '}'
     )
 
-    message = claude().messages.create(
+    message = get_anthropic_client().messages.create(
         model=ANALYSIS_MODEL,
         max_tokens=1500,
         messages=[
@@ -2608,7 +2585,7 @@ def _parse_plan_response(text: str) -> dict:
 def _generate_plan(analysis: dict, profile: dict) -> dict:
     days = int(profile.get("days", 4))
     prompt = _build_plan_prompt(profile, analysis, days)
-    message = claude().messages.create(
+    message = get_anthropic_client().messages.create(
         model=ANALYSIS_MODEL,
         max_tokens=5000,
         messages=[{"role": "user", "content": prompt}],
@@ -2619,7 +2596,7 @@ def _generate_plan(analysis: dict, profile: dict) -> dict:
 def _generate_plan_from_profile(profile: dict) -> dict:
     days = int(profile.get("days", 3))
     prompt = _build_plan_prompt(profile, None, days)
-    message = claude().messages.create(
+    message = get_anthropic_client().messages.create(
         model=ANALYSIS_MODEL,
         max_tokens=5000,
         messages=[{"role": "user", "content": prompt}],
@@ -2638,7 +2615,8 @@ async def _fetch_research_summaries() -> list[str]:
                 summary = _summarize_papers(topic, papers)
                 summaries.append(f"*{topic.replace('2024', '').strip().title()}*\n{summary}")
             await asyncio.sleep(0.5)
-        except Exception:
+        except Exception as e:
+            print(f"Warning: research topic {topic!r} failed: {e}")
             continue
     return summaries or ["No research data available. Try again in a moment."]
 
@@ -2682,8 +2660,8 @@ def _parse_pubmed_xml(xml_text: str) -> list:
             year = article.findtext(".//PubDate/Year", "")
             if title and abstract:
                 papers.append({"title": title, "abstract": abstract[:600], "year": year})
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"Warning: _parse_pubmed_xml failed: {e}")
     return papers
 
 
@@ -2692,7 +2670,7 @@ def _summarize_papers(topic: str, papers: list) -> str:
         f"Title: {p['title']} ({p.get('year', '')})\n{p['abstract']}"
         for p in papers[:4]
     )
-    message = claude().messages.create(
+    message = get_anthropic_client().messages.create(
         model=SUMMARY_MODEL,
         max_tokens=280,
         messages=[{

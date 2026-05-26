@@ -101,6 +101,7 @@ from database import engine, get_db
 import models
 from claude_service import (
     analyze_body_photo,
+    epley_1rm,
     estimate_meal_macros,
     generate_comprehensive_plan,
     generate_next_session_targets,
@@ -115,7 +116,7 @@ models.Base.metadata.create_all(bind=engine)
 
 # ── Safe column migrations (idempotent ALTER TABLE for schema evolution) ──────
 def _migrate_db():
-    """Add columns that may not exist in pre-existing SQLite databases."""
+    """Add columns and indexes that may not exist in pre-existing databases."""
     from sqlalchemy import text
     migrations = [
         ("user_profiles", "user_id", "INTEGER REFERENCES users(id)"),
@@ -124,6 +125,13 @@ def _migrate_db():
         ("user_profiles", "show_date", "DATE"),
         ("body_analyses", "body_fat_confidence", "VARCHAR"),
     ]
+    indexes = [
+        "CREATE INDEX IF NOT EXISTS ix_daily_checkins_chat_date ON daily_checkins(chat_id, date)",
+        "CREATE INDEX IF NOT EXISTS ix_set_logs_exercise_logged ON set_logs(exercise_name, logged_at)",
+        "CREATE INDEX IF NOT EXISTS ix_meal_logs_chat_date ON meal_logs(chat_id, date)",
+        "CREATE INDEX IF NOT EXISTS ix_body_measurements_chat_date ON body_measurements(chat_id, date)",
+        "CREATE INDEX IF NOT EXISTS ix_prs_chat_exercise_1rm ON personal_records(chat_id, exercise_name, estimated_1rm)",
+    ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
             try:
@@ -131,6 +139,12 @@ def _migrate_db():
                 conn.commit()
             except Exception:
                 pass  # Column already exists
+        for ddl in indexes:
+            try:
+                conn.execute(text(ddl))
+                conn.commit()
+            except Exception:
+                pass  # Index already exists
 
 _migrate_db()
 
@@ -825,7 +839,7 @@ async def log_set(
     exercise = data["exercise_name"].strip()
     weight_kg = float(data["weight_kg"])
     reps = int(data["reps"])
-    estimated_1rm = round(weight_kg * (1 + reps / 30), 1)
+    estimated_1rm = epley_1rm(weight_kg, reps)
 
     set_log = models.SetLog(
         session_id=session_id,
