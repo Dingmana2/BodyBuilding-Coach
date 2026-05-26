@@ -207,3 +207,15 @@ class Badge(Base):
     badge_type = Column(String)             # first_pr|7_day_streak|100_sets|etc
     badge_metadata = Column(Text, nullable=True)  # JSON string
     earned_at = Column(DateTime, server_default=func.now())
+
+
+class TelegramLinkCode(Base):
+    """One-time code that ties a Telegram chat_id to a web User account."""
+    __tablename__ = "telegram_link_codes"
+    id = Column(Integer, primary_key=True)
+    code = Column(String(8), unique=True, index=True)
+    telegram_chat_id = Column(Integer, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    expires_at = Column(DateTime)
+    used_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, server_default=func.now())

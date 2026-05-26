@@ -315,6 +315,31 @@
                     <button type="submit" class="btn btn-primary">Save Profile</button>
                 </form>
             </div>
+
+            <div class="card" id="telegram-link-card" style="margin-top:1.5rem">
+                <h3 style="margin-bottom:1rem">Telegram Account</h3>
+                <div id="telegram-linked-status" style="display:none">
+                    <div class="telegram-linked-badge">
+                        <span>✅ Linked</span>
+                        <span id="telegram-linked-email" style="color:var(--text-muted);font-size:13px"></span>
+                    </div>
+                </div>
+                <div id="telegram-unlinked-status">
+                    <p style="color:var(--text-muted);font-size:14px;margin-bottom:1rem">
+                        Link your Telegram account to sync data between the bot and the web app.
+                        Run <code>/link</code> in your Telegram bot to get a code.
+                    </p>
+                    <div style="display:flex;gap:8px;align-items:flex-end">
+                        <div style="flex:1">
+                            <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Link code from /link command</label>
+                            <input id="telegram-link-code" type="text" maxlength="8" placeholder="e.g. A3F7B2"
+                                style="font-size:18px;letter-spacing:4px;text-transform:uppercase;font-family:monospace;width:100%" />
+                        </div>
+                        <button class="btn btn-primary" onclick="linkTelegram()">Link</button>
+                    </div>
+                    <p id="telegram-link-error" class="form-error" style="display:none;margin-top:8px"></p>
+                </div>
+            </div>
         </section>
 
         <!-- BILLING -->

@@ -8,6 +8,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import httpx
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -20,6 +21,7 @@ load_dotenv()
 # ── Auth helpers (stdlib only — no cryptography dependency) ───────────────────
 
 _SECRET_KEY = os.getenv("SECRET_KEY", "change-me-use-a-long-random-string-in-production").encode()
+_BOT_SECRET = os.getenv("BOT_SECRET", "")
 _TOKEN_EXPIRE_DAYS = 30
 _bearer = HTTPBearer(auto_error=False)
 
@@ -61,25 +63,38 @@ def _create_token(user_id: int) -> str:
 
 def get_current_user_id(
     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+    request: Request = None,
 ) -> int:
-    """Extract user_id from Bearer JWT. Returns 0 for unauthenticated/invalid."""
-    if not credentials:
-        return 0
-    try:
-        parts = credentials.credentials.split(".")
-        if len(parts) != 3:
-            return 0
-        header_b64, payload_b64, sig_b64 = parts
-        signing_input = f"{header_b64}.{payload_b64}".encode()
-        expected_sig = _b64url(hmac.new(_SECRET_KEY, signing_input, hashlib.sha256).digest())
-        if not hmac.compare_digest(expected_sig, sig_b64):
-            return 0
-        payload = json.loads(_b64url_decode(payload_b64))
-        if payload.get("exp", 0) < datetime.now(timezone.utc).timestamp():
-            return 0
-        return int(payload.get("sub", 0))
-    except Exception:
-        return 0
+    """Return user_id from Bearer JWT or bot-secret headers. Returns 0 when unauthenticated.
+
+    Bot calls pass:
+      X-Bot-Secret: <BOT_SECRET>
+      X-Telegram-User-ID: <web user_id obtained after /link>
+    """
+    # ── 1. JWT Bearer token (web app) ─────────────────────────────────────────
+    if credentials:
+        try:
+            parts = credentials.credentials.split(".")
+            if len(parts) == 3:
+                header_b64, payload_b64, sig_b64 = parts
+                signing_input = f"{header_b64}.{payload_b64}".encode()
+                expected_sig = _b64url(hmac.new(_SECRET_KEY, signing_input, hashlib.sha256).digest())
+                if hmac.compare_digest(expected_sig, sig_b64):
+                    payload = json.loads(_b64url_decode(payload_b64))
+                    if payload.get("exp", 0) >= datetime.now(timezone.utc).timestamp():
+                        return int(payload.get("sub", 0))
+        except Exception:
+            pass
+
+    # ── 2. Bot-secret + Telegram user_id headers (Telegram bot API calls) ────
+    if _BOT_SECRET and request:
+        bot_secret = request.headers.get("X-Bot-Secret", "")
+        if bot_secret and hmac.compare_digest(bot_secret, _BOT_SECRET):
+            uid_str = request.headers.get("X-Telegram-User-ID", "")
+            if uid_str.lstrip("-").isdigit():
+                return int(uid_str)
+
+    return 0
 
 
 from database import engine, get_db
@@ -198,6 +213,127 @@ def _get_user_tier(user_id: int, db: Session) -> str:
         return "free"
     user = db.query(models.User).filter(models.User.id == user_id).first()
     return user.subscription_tier if user else "free"
+
+
+# ── Telegram account linking ──────────────────────────────────────────────────
+
+@app.post("/api/internal/link-code/generate")
+async def generate_link_code(request: Request, db: Session = Depends(get_db)):
+    """Bot calls this to create a one-time link code for a Telegram chat_id."""
+    if not _BOT_SECRET:
+        raise HTTPException(status_code=503, detail="BOT_SECRET not configured.")
+    bot_secret = request.headers.get("X-Bot-Secret", "")
+    if not bot_secret or not hmac.compare_digest(bot_secret, _BOT_SECRET):
+        raise HTTPException(status_code=403, detail="Invalid bot secret.")
+    chat_id_str = request.headers.get("X-Chat-ID", "")
+    if not chat_id_str.lstrip("-").isdigit():
+        raise HTTPException(status_code=400, detail="X-Chat-ID header required.")
+    chat_id = int(chat_id_str)
+
+    # Invalidate existing unused codes for this chat_id
+    db.query(models.TelegramLinkCode).filter(
+        models.TelegramLinkCode.telegram_chat_id == chat_id,
+        models.TelegramLinkCode.used_at == None,
+    ).delete()
+
+    code = os.urandom(3).hex().upper()  # 6 hex chars e.g. "A3F7B2"
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
+    link = models.TelegramLinkCode(
+        code=code, telegram_chat_id=chat_id, expires_at=expires_at
+    )
+    db.add(link)
+    db.commit()
+    return {"code": code, "expires_in_seconds": 600}
+
+
+@app.post("/api/auth/link-telegram")
+async def link_telegram(
+    request: Request,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Web user submits a link code to bind their account to a Telegram chat_id."""
+    if not current_user_id:
+        raise HTTPException(status_code=401, detail="Sign in first.")
+    data = await request.json()
+    code = (data.get("code") or "").strip().upper()
+    if not code:
+        raise HTTPException(status_code=400, detail="code is required.")
+
+    link = db.query(models.TelegramLinkCode).filter(
+        models.TelegramLinkCode.code == code,
+        models.TelegramLinkCode.used_at == None,
+    ).first()
+    if not link:
+        raise HTTPException(status_code=404, detail="Code not found or already used.")
+    if link.expires_at.replace(tzinfo=timezone.utc) < datetime.now(timezone.utc):
+        raise HTTPException(status_code=410, detail="Code has expired. Use /link in Telegram to get a new one.")
+
+    user = db.query(models.User).filter(models.User.id == current_user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    # Check if this Telegram chat_id is already linked to another account
+    existing = db.query(models.User).filter(
+        models.User.telegram_chat_id == link.telegram_chat_id,
+        models.User.id != current_user_id,
+    ).first()
+    if existing:
+        raise HTTPException(status_code=409, detail="This Telegram account is already linked to another user.")
+
+    user.telegram_chat_id = link.telegram_chat_id
+    link.used_at = datetime.now(timezone.utc)
+    link.user_id = current_user_id
+    db.commit()
+
+    # Notify via Telegram (fire and forget)
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
+    if bot_token:
+        try:
+            await asyncio.to_thread(
+                lambda: httpx.post(
+                    f"https://api.telegram.org/bot{bot_token}/sendMessage",
+                    json={
+                        "chat_id": link.telegram_chat_id,
+                        "text": (
+                            f"✅ *Telegram account linked!*\n\n"
+                            f"Your Telegram is now connected to *{user.email}*.\n\n"
+                            f"Your web user ID is `{user.id}` — the bot will use this for "
+                            f"future API calls. Type /link\\-status to confirm."
+                        ),
+                        "parse_mode": "Markdown",
+                    },
+                    timeout=5,
+                )
+            )
+        except Exception:
+            pass
+
+    return {
+        "linked": True,
+        "user_id": user.id,
+        "email": user.email,
+        "telegram_chat_id": user.telegram_chat_id,
+    }
+
+
+@app.get("/api/internal/telegram/{chat_id}/user")
+def get_telegram_user(chat_id: int, request: Request, db: Session = Depends(get_db)):
+    """Bot calls this to resolve a chat_id to a web user_id after linking."""
+    if not _BOT_SECRET:
+        raise HTTPException(status_code=503, detail="BOT_SECRET not configured.")
+    bot_secret = request.headers.get("X-Bot-Secret", "")
+    if not bot_secret or not hmac.compare_digest(bot_secret, _BOT_SECRET):
+        raise HTTPException(status_code=403, detail="Invalid bot secret.")
+    user = db.query(models.User).filter(models.User.telegram_chat_id == chat_id).first()
+    if not user:
+        return {"linked": False, "chat_id": chat_id}
+    return {
+        "linked": True,
+        "user_id": user.id,
+        "email": user.email,
+        "subscription_tier": user.subscription_tier,
+    }
 
 
 @app.get("/api/subscription")

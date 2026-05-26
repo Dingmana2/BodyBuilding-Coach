@@ -33,6 +33,8 @@ load_dotenv()
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+BOT_SECRET = os.getenv("BOT_SECRET", "")
 ANALYSIS_MODEL = "claude-opus-4-7"
 CHAT_MODEL = "claude-sonnet-4-6"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"
@@ -72,6 +74,38 @@ def _save_store() -> None:
 
 # In-memory store: chat_id → {profile, last_analysis, last_plan, conversation_history}
 user_data: dict[int, dict] = _load_store()
+
+# chat_id → web user_id, populated after /link succeeds
+_linked_user_ids: dict[int, int] = {}
+
+
+async def _api_get(path: str, chat_id: int | None = None) -> dict:
+    """Call the FastAPI backend as the bot. Returns parsed JSON or raises."""
+    headers = {}
+    if BOT_SECRET and chat_id is not None:
+        linked_uid = _linked_user_ids.get(chat_id)
+        if linked_uid:
+            headers["X-Bot-Secret"] = BOT_SECRET
+            headers["X-Telegram-User-ID"] = str(linked_uid)
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(f"{API_BASE_URL}/api{path}", headers=headers)
+        r.raise_for_status()
+        return r.json()
+
+
+async def _api_post(path: str, data: dict, chat_id: int | None = None) -> dict:
+    """POST to the FastAPI backend as the bot. Returns parsed JSON or raises."""
+    headers = {"Content-Type": "application/json"}
+    if BOT_SECRET and chat_id is not None:
+        linked_uid = _linked_user_ids.get(chat_id)
+        if linked_uid:
+            headers["X-Bot-Secret"] = BOT_SECRET
+            headers["X-Telegram-User-ID"] = str(linked_uid)
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.post(f"{API_BASE_URL}/api{path}", json=data, headers=headers)
+        r.raise_for_status()
+        return r.json()
+
 
 RESEARCH_TOPICS = [
     "muscle hypertrophy resistance training 2024",
@@ -1945,6 +1979,97 @@ async def cmd_billing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
 
 
+async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate a one-time code to link this Telegram account to the web app."""
+    chat_id = update.effective_chat.id
+
+    if not BOT_SECRET or not API_BASE_URL:
+        await update.message.reply_text(
+            "⚠️ Account linking is not configured. Set BOT_SECRET and API_BASE_URL in the environment."
+        )
+        return
+
+    # Check if already linked
+    try:
+        info = await _api_get(f"/internal/telegram/{chat_id}/user", chat_id=None)
+        if info.get("linked"):
+            _linked_user_ids[chat_id] = info["user_id"]
+            await update.message.reply_text(
+                f"✅ *Already linked!*\n\n"
+                f"Your Telegram is connected to *{info.get('email', '?')}*.\n"
+                f"Plan: *{info.get('subscription_tier', 'free').title()}*",
+                parse_mode="Markdown",
+            )
+            return
+    except Exception:
+        pass
+
+    # Generate new link code via API
+    try:
+        headers = {"X-Bot-Secret": BOT_SECRET, "X-Chat-ID": str(chat_id)}
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{API_BASE_URL}/api/internal/link-code/generate",
+                headers=headers,
+            )
+            r.raise_for_status()
+            result = r.json()
+        code = result["code"]
+    except Exception as e:
+        await update.message.reply_text(f"❌ Could not generate link code: {e}")
+        return
+
+    await update.message.reply_text(
+        f"🔗 *Link your Telegram to the web app*\n\n"
+        f"Your one-time code:\n\n"
+        f"```\n{code}\n```\n\n"
+        f"1. Open the web app\n"
+        f"2. Go to **Profile → Link Telegram**\n"
+        f"3. Enter the code above\n\n"
+        f"_Code expires in 10 minutes. Use /link\\-status to verify._",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_link_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Check whether this Telegram account is linked to a web account."""
+    chat_id = update.effective_chat.id
+
+    if not BOT_SECRET or not API_BASE_URL:
+        await update.message.reply_text("Account linking is not configured.")
+        return
+
+    try:
+        headers = {"X-Bot-Secret": BOT_SECRET}
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{API_BASE_URL}/api/internal/telegram/{chat_id}/user",
+                headers=headers,
+            )
+            r.raise_for_status()
+            info = r.json()
+    except Exception as e:
+        await update.message.reply_text(f"❌ Could not check link status: {e}")
+        return
+
+    if info.get("linked"):
+        _linked_user_ids[chat_id] = info["user_id"]
+        get_user(chat_id)["web_user_id"] = info["user_id"]
+        _save_store()
+        await update.message.reply_text(
+            f"✅ *Linked!*\n\n"
+            f"Telegram → *{info.get('email', '?')}*\n"
+            f"Plan: *{info.get('subscription_tier', 'free').title()}*\n"
+            f"User ID: `{info['user_id']}`",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "❌ *Not linked yet.*\n\nUse /link to generate a code, then enter it on the web app.",
+            parse_mode="Markdown",
+        )
+
+
 # ── Photo handler ─────────────────────────────────────────────────────────────
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2634,6 +2759,8 @@ def main() -> None:
     app.add_handler(CommandHandler("weakpoints", cmd_weakpoints))
     app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CommandHandler("billing", cmd_billing))
+    app.add_handler(CommandHandler("link", cmd_link))
+    app.add_handler(CommandHandler("link_status", cmd_link_status))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

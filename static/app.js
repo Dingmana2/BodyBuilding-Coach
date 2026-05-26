@@ -749,15 +749,48 @@ async function loadProgress() {
 
 /* ── Profile ── */
 async function loadProfile() {
-    const profile = await cachedApi('GET', '/profile').catch(() => ({}));
-    if (!profile || !profile.age) return;
+    const [profile, me] = await Promise.all([
+        cachedApi('GET', '/profile').catch(() => ({})),
+        api('GET', '/auth/me').catch(() => null),
+    ]);
 
-    const form = document.getElementById('profile-form');
-    const fields = ['age', 'gender', 'height_cm', 'weight_kg', 'goal', 'training_experience', 'training_days_per_week', 'dietary_restrictions'];
-    fields.forEach(field => {
-        const el = form.querySelector(`[name="${field}"]`);
-        if (el && profile[field] != null) el.value = profile[field];
-    });
+    if (profile && profile.age) {
+        const form = document.getElementById('profile-form');
+        const fields = ['age', 'gender', 'height_cm', 'weight_kg', 'goal', 'training_experience', 'training_days_per_week', 'dietary_restrictions'];
+        fields.forEach(field => {
+            const el = form.querySelector(`[name="${field}"]`);
+            if (el && profile[field] != null) el.value = profile[field];
+        });
+    }
+
+    // Telegram link status
+    if (me) {
+        if (me.telegram_linked) {
+            document.getElementById('telegram-unlinked-status').style.display = 'none';
+            document.getElementById('telegram-linked-status').style.display = '';
+            document.getElementById('telegram-linked-email').textContent = me.email;
+        } else {
+            document.getElementById('telegram-unlinked-status').style.display = '';
+            document.getElementById('telegram-linked-status').style.display = 'none';
+        }
+    }
+}
+
+async function linkTelegram() {
+    const code = (document.getElementById('telegram-link-code').value || '').trim().toUpperCase();
+    const errEl = document.getElementById('telegram-link-error');
+    errEl.style.display = 'none';
+    if (!code) { errEl.textContent = 'Enter the code from /link in Telegram.'; errEl.style.display = ''; return; }
+
+    try {
+        const res = await api('POST', '/auth/link-telegram', { code });
+        showToast('Telegram linked successfully!');
+        invalidateCache('/auth/me');
+        await loadProfile();
+    } catch (err) {
+        errEl.textContent = err.message || 'Invalid or expired code.';
+        errEl.style.display = '';
+    }
 }
 
 async function saveProfile(event) {
