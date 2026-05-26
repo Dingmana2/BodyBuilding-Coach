@@ -245,6 +245,32 @@ def _get_today_exercises(user: dict) -> list:
     return today_day.get("exercises", []) if today_day else []
 
 
+def _get_session_exercises(user: dict) -> list:
+    """Return exercises for the active session day (falls back to today)."""
+    if not user.get("last_plan"):
+        return []
+    day_name = (
+        user.get("command_state", {}).get("active_session_day")
+        or _date.today().strftime("%A")
+    )
+    days = user["last_plan"].get("workout", {}).get("days", [])
+    day = next((d for d in days if d.get("day", "").lower() == day_name.lower()), None)
+    return day.get("exercises", []) if day else []
+
+
+def _days_keyboard(user: dict) -> InlineKeyboardMarkup:
+    """Inline keyboard listing all plan days so the user can pick a different one."""
+    days = user.get("last_plan", {}).get("workout", {}).get("days", []) if user.get("last_plan") else []
+    rows: list[list[InlineKeyboardButton]] = []
+    for d in days:
+        name = d.get("day", "")
+        focus = d.get("focus", "")
+        label = f"{name} — {focus}" if focus else name
+        rows.append([InlineKeyboardButton(label, callback_data=f"wk:day:{name}")])
+    rows.append([InlineKeyboardButton("‹ Back", callback_data="wk:pick")])
+    return InlineKeyboardMarkup(rows)
+
+
 def _do_log_set(user: dict, exercise: str, weight_kg: float, reps: int) -> tuple[dict, bool]:
     """Append a set to user state, check for PR. Returns (entry, is_pr)."""
     one_rm = _epley_1rm(weight_kg, reps)
@@ -280,6 +306,7 @@ def _ex_keyboard(exercises: list, has_session: bool) -> InlineKeyboardMarkup:
             pair = []
     if pair:
         rows.append(pair)
+    rows.append([InlineKeyboardButton("📅 Different day…", callback_data="wk:days")])
     rows.append([InlineKeyboardButton("✏️ Other exercise…", callback_data="wk:ex_custom")])
     if has_session:
         rows.append([InlineKeyboardButton("✅ End Session", callback_data="wk:end")])
@@ -708,14 +735,14 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         user["command_state"]["current_session_sets"] = []
         _save_store()
 
-        exercises = _get_today_exercises(user)
+        exercises = _get_session_exercises(user)
         plan_text = ""
-        if exercises:
-            today_name = _date.today().strftime("%A")
+        if user.get("last_plan"):
+            session_day = user["command_state"].get("active_session_day") or _date.today().strftime("%A")
             days = user["last_plan"].get("workout", {}).get("days", [])
-            today_day = next((d for d in days if d.get("day", "").lower() == today_name.lower()), None)
+            today_day = next((d for d in days if d.get("day", "").lower() == session_day.lower()), None)
             focus = today_day.get("focus", "") if today_day else ""
-            plan_text = f"\n*{today_name} — {focus}*" if focus else ""
+            plan_text = f"\n*{session_day} — {focus}*" if focus else ""
 
         await update.message.reply_text(
             f"🏋️ *Session #{sid} started!*{plan_text}\n\nTap an exercise to log a set:",
@@ -734,6 +761,7 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         total_sets = len(session_sets)
         user["active_session_id"] = None
         user["command_state"]["current_session_sets"] = []
+        user["command_state"].pop("active_session_day", None)
         _save_store()
 
         exercise_summary = ""
@@ -892,14 +920,14 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user["active_session_id"] = sid
         user["command_state"]["current_session_sets"] = []
         _save_store()
-        exercises = _get_today_exercises(user)
+        exercises = _get_session_exercises(user)
         await update.message.reply_text(
             f"🏋️ *Session #{sid} started!* Tap an exercise:",
             parse_mode="Markdown",
             reply_markup=_ex_keyboard(exercises, has_session=True),
         )
     else:
-        exercises = _get_today_exercises(user)
+        exercises = _get_session_exercises(user)
         await update.message.reply_text(
             f"🏋️ Session #{user['active_session_id']} — Tap an exercise:",
             reply_markup=_ex_keyboard(exercises, has_session=True),
@@ -917,7 +945,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
 
     if part == "start":
         if user["active_session_id"] is not None:
-            exercises = _get_today_exercises(user)
+            exercises = _get_session_exercises(user)
             await query.edit_message_text(
                 f"⚠️ Session #{user['active_session_id']} already open. Tap an exercise:",
                 reply_markup=_ex_keyboard(exercises, has_session=True),
@@ -928,7 +956,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
         user["active_session_id"] = sid
         user["command_state"]["current_session_sets"] = []
         _save_store()
-        exercises = _get_today_exercises(user)
+        exercises = _get_session_exercises(user)
         await query.edit_message_text(
             f"🏋️ *Session #{sid} started!* Tap an exercise:",
             parse_mode="Markdown",
@@ -998,7 +1026,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
     elif part == "more":
         ex = context.user_data.get("wk_ex", "")
         if not ex:
-            exercises = _get_today_exercises(user)
+            exercises = _get_session_exercises(user)
             await query.edit_message_text(
                 "Pick an exercise:",
                 reply_markup=_ex_keyboard(exercises, has_session=user["active_session_id"] is not None),
@@ -1011,9 +1039,29 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
         )
 
     elif part == "pick":
-        exercises = _get_today_exercises(user)
+        exercises = _get_session_exercises(user)
         await query.edit_message_text(
             "Select exercise:",
+            reply_markup=_ex_keyboard(exercises, has_session=user["active_session_id"] is not None),
+        )
+
+    elif part == "days":
+        if not user.get("last_plan"):
+            await query.answer("No plan loaded — generate one with /plan first.", show_alert=True)
+            return
+        await query.edit_message_text(
+            "Pick which day to train:",
+            reply_markup=_days_keyboard(user),
+        )
+
+    elif part.startswith("day:"):
+        day_name = part[4:]
+        user["command_state"]["active_session_day"] = day_name
+        _save_store()
+        exercises = _get_session_exercises(user)
+        await query.edit_message_text(
+            f"📅 *{day_name}* — Tap an exercise:",
+            parse_mode="Markdown",
             reply_markup=_ex_keyboard(exercises, has_session=user["active_session_id"] is not None),
         )
 
@@ -1027,6 +1075,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
         total_sets = len(session_sets)
         user["active_session_id"] = None
         user["command_state"]["current_session_sets"] = []
+        user["command_state"].pop("active_session_day", None)
         _save_store()
 
         ex_summary = ""
