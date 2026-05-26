@@ -5,8 +5,10 @@ import os
 import re
 from pathlib import Path
 
-ANALYSIS_MODEL = "claude-opus-4-7"
-SUMMARY_MODEL = "claude-haiku-4-5-20251001"
+ANALYSIS_MODEL   = "claude-opus-4-7"
+SUMMARY_MODEL    = "claude-haiku-4-5-20251001"
+REPORT_MODEL     = "claude-opus-4-7"
+WEAK_POINT_MODEL = "claude-haiku-4-5-20251001"
 
 # Goal-specific system prompt variants injected into every AI coaching call.
 _GOAL_SYSTEM_PROMPTS: dict[str, str] = {
@@ -562,7 +564,7 @@ def generate_weekly_report(sessions: list, checkins: list, meals: list, prs: lis
     )
 
     message = _client().messages.create(
-        model="claude-sonnet-4-6",
+        model=REPORT_MODEL,
         max_tokens=500,
         messages=[{
             "role": "user",
@@ -600,7 +602,7 @@ def analyze_weak_points(analyses: list, set_logs: list, profile: dict | None = N
                 volume_by_muscle[muscle] = volume_by_muscle.get(muscle, 0) + 1
 
     message = _client().messages.create(
-        model="claude-sonnet-4-6",
+        model=WEAK_POINT_MODEL,
         max_tokens=400,
         messages=[{
             "role": "user",
