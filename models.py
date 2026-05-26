@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Integer, String, Float, Text, DateTime
+from sqlalchemy import Boolean, Column, Date, ForeignKey, Integer, String, Float, Text, DateTime
 from sqlalchemy.sql import func
 from database import Base
 
@@ -14,6 +14,9 @@ class UserProfile(Base):
     training_experience = Column(String)  # beginner | intermediate | advanced
     training_days_per_week = Column(Integer)
     dietary_restrictions = Column(Text)
+    equipment_available = Column(String, nullable=True)
+    injuries = Column(Text, nullable=True)
+    show_date = Column(Date, nullable=True)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
 
 
@@ -29,6 +32,7 @@ class BodyAnalysis(Base):
     symmetry_notes = Column(Text)
     coach_message = Column(Text)
     raw_analysis = Column(Text)     # Full JSON from Claude
+    body_fat_confidence = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now(), index=True)
 
 
@@ -157,3 +161,37 @@ class WeeklyReport(Base):
     avg_protein_g = Column(Float, nullable=True)
     ai_insights = Column(Text)              # JSON array of insight strings
     created_at = Column(DateTime, server_default=func.now())
+
+
+class UserStreak(Base):
+    __tablename__ = "user_streaks"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    streak_type = Column(String)            # checkin|workout|overall
+    current_streak = Column(Integer, default=0)
+    longest_streak = Column(Integer, default=0)
+    last_activity_date = Column(Date, nullable=True)
+    total_days_active = Column(Integer, default=0)
+
+
+class UserGoal(Base):
+    __tablename__ = "user_goals"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    goal_type = Column(String)              # cut|bulk|recomp|strength|prep
+    target_weight_kg = Column(Float, nullable=True)
+    target_bf_pct = Column(Float, nullable=True)
+    target_date = Column(Date, nullable=True)
+    start_weight_kg = Column(Float, nullable=True)
+    start_bf_pct = Column(Float, nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class Badge(Base):
+    __tablename__ = "badges"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    badge_type = Column(String)             # first_pr|7_day_streak|100_sets|etc
+    badge_metadata = Column(Text, nullable=True)  # JSON string
+    earned_at = Column(DateTime, server_default=func.now())

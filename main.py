@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -15,7 +15,14 @@ load_dotenv()
 
 from database import engine, get_db
 import models
-from claude_service import analyze_body_photo, generate_comprehensive_plan
+from claude_service import (
+    analyze_body_photo,
+    estimate_meal_macros,
+    generate_comprehensive_plan,
+    generate_recovery_insight,
+    generate_weekly_report,
+    analyze_weak_points,
+)
 from research_service import refresh_all_research
 
 models.Base.metadata.create_all(bind=engine)
@@ -507,6 +514,492 @@ def get_prs(db: Session = Depends(get_db)):
         }
         for r in rows
     ]
+
+
+# ── Shared helpers ────────────────────────────────────────────────────────────
+
+def _checkin_dict(r) -> dict:
+    return {
+        "id": r.id, "date": r.date,
+        "sleep_score": r.sleep_score, "energy_score": r.energy_score,
+        "soreness_score": r.soreness_score, "stress_score": r.stress_score,
+        "recovery_score": r.recovery_score, "coaching_tip": r.coaching_tip,
+        "hrv_ms": r.hrv_ms, "resting_hr_bpm": r.resting_hr_bpm,
+        "sleep_duration_hrs": r.sleep_duration_hrs, "data_source": r.data_source,
+        "created_at": r.created_at.isoformat(),
+    }
+
+
+def _measurement_dict(r) -> dict:
+    return {
+        "id": r.id, "date": r.date,
+        "body_weight_kg": r.body_weight_kg, "waist_cm": r.waist_cm,
+        "chest_cm": r.chest_cm, "hips_cm": r.hips_cm,
+        "left_arm_cm": r.left_arm_cm, "right_arm_cm": r.right_arm_cm,
+        "left_thigh_cm": r.left_thigh_cm, "right_thigh_cm": r.right_thigh_cm,
+        "created_at": r.created_at.isoformat(),
+    }
+
+
+def _meal_dict(r) -> dict:
+    return {
+        "id": r.id, "date": r.date, "description": r.description,
+        "calories": r.calories, "protein_g": r.protein_g,
+        "carbs_g": r.carbs_g, "fat_g": r.fat_g,
+        "macro_source": r.macro_source, "logged_at": r.logged_at.isoformat(),
+    }
+
+
+def _goal_dict(r) -> dict:
+    return {
+        "id": r.id, "goal_type": r.goal_type,
+        "target_weight_kg": r.target_weight_kg, "target_bf_pct": r.target_bf_pct,
+        "target_date": r.target_date.isoformat() if r.target_date else None,
+        "start_weight_kg": r.start_weight_kg, "start_bf_pct": r.start_bf_pct,
+        "is_active": r.is_active, "created_at": r.created_at.isoformat(),
+    }
+
+
+def _get_streak(db: Session, chat_id: int, streak_type: str):
+    return (
+        db.query(models.UserStreak)
+        .filter(models.UserStreak.chat_id == chat_id, models.UserStreak.streak_type == streak_type)
+        .first()
+    )
+
+
+def _update_streak(db: Session, chat_id: int, streak_type: str) -> None:
+    from datetime import date, timedelta as td
+    today = date.today()
+    streak = _get_streak(db, chat_id, streak_type)
+    if not streak:
+        db.add(models.UserStreak(
+            chat_id=chat_id, streak_type=streak_type,
+            current_streak=1, longest_streak=1,
+            last_activity_date=today, total_days_active=1,
+        ))
+    else:
+        last = streak.last_activity_date
+        if last == today:
+            return
+        elif last == today - td(days=1):
+            streak.current_streak += 1
+        else:
+            streak.current_streak = 1
+        streak.longest_streak = max(streak.longest_streak, streak.current_streak)
+        streak.last_activity_date = today
+        streak.total_days_active = (streak.total_days_active or 0) + 1
+    db.commit()
+
+
+def _award_badge(db: Session, chat_id: int, badge_type: str, metadata: dict | None = None) -> bool:
+    existing = db.query(models.Badge).filter(
+        models.Badge.chat_id == chat_id, models.Badge.badge_type == badge_type
+    ).first()
+    if existing:
+        return False
+    db.add(models.Badge(
+        chat_id=chat_id, badge_type=badge_type,
+        badge_metadata=json.dumps(metadata) if metadata else None,
+    ))
+    db.commit()
+    return True
+
+
+# ── Check-Ins ─────────────────────────────────────────────────────────────────
+
+@app.get("/api/checkins")
+def list_checkins(limit: int = 90, chat_id: int = 0, db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.DailyCheckIn)
+        .filter(models.DailyCheckIn.chat_id == chat_id)
+        .order_by(models.DailyCheckIn.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_checkin_dict(r) for r in rows]
+
+
+@app.post("/api/checkins")
+async def create_checkin(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    chat_id = int(data.get("chat_id", 0))
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    existing = (
+        db.query(models.DailyCheckIn)
+        .filter(models.DailyCheckIn.chat_id == chat_id, models.DailyCheckIn.date == today)
+        .first()
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="Already checked in today.")
+
+    sleep_score = int(data["sleep_score"])
+    energy_score = int(data["energy_score"])
+    soreness_score = int(data["soreness_score"])
+    stress_score = int(data["stress_score"])
+
+    profile = db.query(models.UserProfile).first()
+    profile_dict = None
+    if profile:
+        profile_dict = {"age": profile.age, "goal": profile.goal, "experience": profile.training_experience}
+
+    try:
+        recovery_score, coaching_tip = await asyncio.to_thread(
+            generate_recovery_insight, sleep_score, energy_score, soreness_score, stress_score, profile_dict
+        )
+    except Exception:
+        recovery_score, coaching_tip = 50, "Listen to your body and train accordingly."
+
+    checkin = models.DailyCheckIn(
+        chat_id=chat_id, date=today,
+        sleep_score=sleep_score, energy_score=energy_score,
+        soreness_score=soreness_score, stress_score=stress_score,
+        recovery_score=recovery_score, coaching_tip=coaching_tip,
+        hrv_ms=data.get("hrv_ms"), resting_hr_bpm=data.get("resting_hr_bpm"),
+        sleep_duration_hrs=data.get("sleep_duration_hrs"),
+        data_source=data.get("data_source", "manual"),
+    )
+    db.add(checkin)
+    db.commit()
+    db.refresh(checkin)
+
+    _update_streak(db, chat_id, "checkin")
+    streak = _get_streak(db, chat_id, "checkin")
+    streak_count = streak.current_streak if streak else 1
+    if streak_count in (7, 14, 30, 60, 90):
+        _award_badge(db, chat_id, f"{streak_count}_day_checkin_streak")
+
+    return {**_checkin_dict(checkin), "streak": streak_count}
+
+
+@app.get("/api/checkins/streak")
+def get_checkin_streak(chat_id: int = 0, db: Session = Depends(get_db)):
+    streak = _get_streak(db, chat_id, "checkin")
+    if not streak:
+        return {"current_streak": 0, "longest_streak": 0, "total_days_active": 0}
+    return {
+        "current_streak": streak.current_streak,
+        "longest_streak": streak.longest_streak,
+        "total_days_active": streak.total_days_active,
+        "last_activity_date": streak.last_activity_date.isoformat() if streak.last_activity_date else None,
+    }
+
+
+# ── Measurements ──────────────────────────────────────────────────────────────
+
+@app.get("/api/measurements")
+def list_measurements(limit: int = 30, chat_id: int = 0, db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.BodyMeasurement)
+        .filter(models.BodyMeasurement.chat_id == chat_id)
+        .order_by(models.BodyMeasurement.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_measurement_dict(r) for r in rows]
+
+
+@app.post("/api/measurements")
+async def create_measurement(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    chat_id = int(data.get("chat_id", 0))
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+    m = models.BodyMeasurement(
+        chat_id=chat_id, date=data.get("date", today),
+        body_weight_kg=data.get("body_weight_kg"),
+        waist_cm=data.get("waist_cm"), chest_cm=data.get("chest_cm"),
+        hips_cm=data.get("hips_cm"), left_arm_cm=data.get("left_arm_cm"),
+        right_arm_cm=data.get("right_arm_cm"), left_thigh_cm=data.get("left_thigh_cm"),
+        right_thigh_cm=data.get("right_thigh_cm"),
+    )
+    db.add(m)
+    db.commit()
+    db.refresh(m)
+    return _measurement_dict(m)
+
+
+# ── Meals ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/meals")
+def list_meals(limit: int = 30, chat_id: int = 0, db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.MealLog)
+        .filter(models.MealLog.chat_id == chat_id)
+        .order_by(models.MealLog.logged_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [_meal_dict(r) for r in rows]
+
+
+@app.get("/api/meals/today")
+def get_today_meals(chat_id: int = 0, db: Session = Depends(get_db)):
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    rows = (
+        db.query(models.MealLog)
+        .filter(models.MealLog.chat_id == chat_id, models.MealLog.date == today)
+        .order_by(models.MealLog.logged_at.asc())
+        .all()
+    )
+    return {
+        "meals": [_meal_dict(r) for r in rows],
+        "totals": {
+            "calories": round(sum(r.calories or 0 for r in rows)),
+            "protein_g": round(sum(r.protein_g or 0 for r in rows), 1),
+            "carbs_g": round(sum(r.carbs_g or 0 for r in rows), 1),
+            "fat_g": round(sum(r.fat_g or 0 for r in rows), 1),
+        },
+    }
+
+
+@app.post("/api/meals")
+async def log_meal(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    chat_id = int(data.get("chat_id", 0))
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    description = data.get("description", "")
+    calories = data.get("calories")
+    protein_g = data.get("protein_g")
+    carbs_g = data.get("carbs_g")
+    fat_g = data.get("fat_g")
+    macro_source = data.get("macro_source", "manual")
+
+    if description and (calories is None or protein_g is None):
+        try:
+            estimated = await asyncio.to_thread(estimate_meal_macros, description)
+            calories = estimated.get("calories")
+            protein_g = estimated.get("protein_g")
+            carbs_g = estimated.get("carbs_g")
+            fat_g = estimated.get("fat_g")
+            macro_source = "estimated"
+        except Exception:
+            pass
+
+    meal = models.MealLog(
+        chat_id=chat_id, date=data.get("date", today), description=description,
+        calories=calories, protein_g=protein_g, carbs_g=carbs_g, fat_g=fat_g,
+        macro_source=macro_source,
+    )
+    db.add(meal)
+    db.commit()
+    db.refresh(meal)
+    return _meal_dict(meal)
+
+
+# ── Weekly Reports ────────────────────────────────────────────────────────────
+
+@app.get("/api/reports")
+def list_reports(limit: int = 10, chat_id: int = 0, db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.WeeklyReport)
+        .filter(models.WeeklyReport.chat_id == chat_id)
+        .order_by(models.WeeklyReport.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {
+            "id": r.id, "week_start": r.week_start, "sessions_count": r.sessions_count,
+            "avg_recovery": r.avg_recovery, "prs_count": r.prs_count,
+            "avg_protein_g": r.avg_protein_g,
+            "ai_insights": json.loads(r.ai_insights) if r.ai_insights else [],
+            "created_at": r.created_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+@app.post("/api/reports/generate")
+async def generate_report(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    chat_id = int(data.get("chat_id", 0))
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    sessions = db.query(models.WorkoutSession).filter(
+        models.WorkoutSession.chat_id == chat_id,
+        models.WorkoutSession.ended_at != None,
+        models.WorkoutSession.started_at >= datetime.fromisoformat(seven_days_ago),
+    ).all()
+
+    checkins = db.query(models.DailyCheckIn).filter(
+        models.DailyCheckIn.chat_id == chat_id,
+        models.DailyCheckIn.date >= seven_days_ago,
+    ).all()
+
+    meals = db.query(models.MealLog).filter(
+        models.MealLog.chat_id == chat_id,
+        models.MealLog.date >= seven_days_ago,
+    ).all()
+
+    prs = (
+        db.query(models.PersonalRecord)
+        .filter(models.PersonalRecord.chat_id == chat_id)
+        .order_by(models.PersonalRecord.achieved_at.desc())
+        .limit(10)
+        .all()
+    )
+
+    profile = db.query(models.UserProfile).first()
+    profile_dict = {"goal": profile.goal, "experience": profile.training_experience} if profile else None
+
+    sessions_data = [{"id": s.id, "started_at": s.started_at.isoformat()} for s in sessions]
+    checkins_data = [{"recovery_score": c.recovery_score} for c in checkins]
+    meals_data = [{"protein_g": m.protein_g} for m in meals]
+    prs_data = [{"exercise_name": p.exercise_name, "weight_kg": p.weight_kg, "reps": p.reps} for p in prs]
+
+    try:
+        report_data = await asyncio.to_thread(
+            generate_weekly_report, sessions_data, checkins_data, meals_data, prs_data, profile_dict
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
+
+    week_start = seven_days_ago
+    report = models.WeeklyReport(
+        chat_id=chat_id, week_start=week_start, sessions_count=len(sessions),
+        avg_recovery=report_data.get("avg_recovery"), prs_count=len(prs_data),
+        avg_protein_g=report_data.get("avg_protein_g"),
+        ai_insights=json.dumps(report_data.get("insights", [])),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+
+    return {
+        "id": report.id, "week_start": week_start,
+        "insights": report_data.get("insights", []),
+        "next_week_focus": report_data.get("next_week_focus"),
+        "adherence_rating": report_data.get("adherence_rating"),
+        "sessions_count": len(sessions), "avg_recovery": report_data.get("avg_recovery"),
+        "avg_protein_g": report_data.get("avg_protein_g"), "prs_count": len(prs_data),
+    }
+
+
+# ── Streaks & Badges ──────────────────────────────────────────────────────────
+
+@app.get("/api/streaks")
+def get_streaks(chat_id: int = 0, db: Session = Depends(get_db)):
+    streaks = db.query(models.UserStreak).filter(models.UserStreak.chat_id == chat_id).all()
+    return {
+        s.streak_type: {
+            "current_streak": s.current_streak,
+            "longest_streak": s.longest_streak,
+            "total_days_active": s.total_days_active,
+            "last_activity_date": s.last_activity_date.isoformat() if s.last_activity_date else None,
+        }
+        for s in streaks
+    }
+
+
+@app.get("/api/badges")
+def get_badges(chat_id: int = 0, db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.Badge)
+        .filter(models.Badge.chat_id == chat_id)
+        .order_by(models.Badge.earned_at.desc())
+        .all()
+    )
+    return [
+        {
+            "id": r.id, "badge_type": r.badge_type,
+            "metadata": json.loads(r.badge_metadata) if r.badge_metadata else {},
+            "earned_at": r.earned_at.isoformat(),
+        }
+        for r in rows
+    ]
+
+
+# ── Goals ─────────────────────────────────────────────────────────────────────
+
+@app.get("/api/goals")
+def list_goals(chat_id: int = 0, db: Session = Depends(get_db)):
+    rows = (
+        db.query(models.UserGoal)
+        .filter(models.UserGoal.chat_id == chat_id)
+        .order_by(models.UserGoal.created_at.desc())
+        .all()
+    )
+    return [_goal_dict(r) for r in rows]
+
+
+@app.post("/api/goals")
+async def create_goal(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    chat_id = int(data.get("chat_id", 0))
+
+    db.query(models.UserGoal).filter(
+        models.UserGoal.chat_id == chat_id,
+        models.UserGoal.goal_type == data.get("goal_type"),
+        models.UserGoal.is_active == True,
+    ).update({"is_active": False})
+
+    target_date = None
+    if data.get("target_date"):
+        from datetime import date
+        target_date = date.fromisoformat(data["target_date"])
+
+    goal = models.UserGoal(
+        chat_id=chat_id, goal_type=data.get("goal_type"),
+        target_weight_kg=data.get("target_weight_kg"), target_bf_pct=data.get("target_bf_pct"),
+        target_date=target_date, start_weight_kg=data.get("start_weight_kg"),
+        start_bf_pct=data.get("start_bf_pct"), is_active=True,
+    )
+    db.add(goal)
+    db.commit()
+    db.refresh(goal)
+    return _goal_dict(goal)
+
+
+# ── Dashboard Summary ─────────────────────────────────────────────────────────
+
+@app.get("/api/dashboard/summary")
+def dashboard_summary(chat_id: int = 0, db: Session = Depends(get_db)):
+    streaks = {
+        s.streak_type: s.current_streak
+        for s in db.query(models.UserStreak).filter(models.UserStreak.chat_id == chat_id).all()
+    }
+    prs_count = db.query(models.PersonalRecord).filter(models.PersonalRecord.chat_id == chat_id).count()
+
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+    sessions_week = db.query(models.WorkoutSession).filter(
+        models.WorkoutSession.chat_id == chat_id,
+        models.WorkoutSession.started_at >= datetime.fromisoformat(seven_days_ago),
+        models.WorkoutSession.ended_at != None,
+    ).count()
+
+    checkins = db.query(models.DailyCheckIn).filter(
+        models.DailyCheckIn.chat_id == chat_id,
+        models.DailyCheckIn.date >= seven_days_ago,
+    ).all()
+    avg_recovery = round(sum(c.recovery_score or 0 for c in checkins) / len(checkins)) if checkins else None
+
+    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today_meals = db.query(models.MealLog).filter(
+        models.MealLog.chat_id == chat_id,
+        models.MealLog.date == today_str,
+    ).all()
+
+    latest_analysis = (
+        db.query(models.BodyAnalysis)
+        .order_by(models.BodyAnalysis.created_at.desc())
+        .first()
+    )
+
+    badges = db.query(models.Badge).filter(models.Badge.chat_id == chat_id).count()
+
+    return {
+        "streaks": streaks,
+        "prs_count": prs_count,
+        "badges_count": badges,
+        "sessions_this_week": sessions_week,
+        "avg_recovery_7d": avg_recovery,
+        "today_protein_g": round(sum(m.protein_g or 0 for m in today_meals), 1),
+        "today_calories": round(sum(m.calories or 0 for m in today_meals)),
+        "latest_bf": latest_analysis.body_fat_estimate if latest_analysis else None,
+        "latest_score": latest_analysis.overall_physique_score if latest_analysis else None,
+    }
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

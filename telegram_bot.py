@@ -11,7 +11,7 @@ import os
 import re
 import time
 import xml.etree.ElementTree as ET
-from datetime import date as _date
+from datetime import date as _date, timedelta
 from io import BytesIO
 from pathlib import Path
 
@@ -326,13 +326,19 @@ WELCOME = (
     "*Daily tracking:*\n"
     "/checkin — Log sleep, energy, soreness → recovery score\n"
     "/workout — Start/end a session · see today's plan\n"
+    "/log — Quick tap-based workout logger\n"
     "/logset — Log a set: `/logset bench 100kg 8`\n"
+    "/weight — Quick weight log: `/weight 84.5`\n"
     "/meal — Log food: `/meal 2 eggs, oatmeal, banana`\n"
     "/macros — Today's macro targets vs. logged\n\n"
-    "*Progress & stats:*\n"
+    "*Progress & analytics:*\n"
     "/progress — 30-day trend: weight, BF%, strength\n"
     "/stats — Personal records + volume by muscle\n"
-    "/measurements — Log body measurements\n\n"
+    "/streak — Check-in streak + badges earned\n"
+    "/goals — Set/view your target (weight, BF%, date)\n"
+    "/measurements — Log body measurements\n"
+    "/weakpoints — AI analysis of training imbalances\n"
+    "/report — Weekly AI coaching report\n\n"
     "*Other:*\n"
     "/connect — Link Garmin or MyFitnessPal\n"
     "/mfp sync — Sync today's MFP diary\n"
@@ -599,12 +605,29 @@ async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: d
             parts.append(f"RHR {rhr}bpm")
         if parts:
             garmin_line = f"\n📡 Garmin: {' | '.join(parts)}"
+
+    # Calculate current streak
+    sorted_dates = sorted({c["date"] for c in user["checkins"]}, reverse=True)
+    streak_count = 0
+    for d in sorted_dates:
+        dt = _date.fromisoformat(d)
+        expected = _date.today() - timedelta(days=streak_count)
+        if dt == expected:
+            streak_count += 1
+        else:
+            break
+
+    streak_text = f"\n🔥 *{streak_count}-day streak!*" if streak_count >= 2 else ""
+    deload_hint = ""
+    if score < 50:
+        deload_hint = "\n\n⚠️ _Recovery is low — consider a deload or active recovery session today._"
+
     await msg.edit_text(
         f"✅ *Check-in saved!*\n\n"
-        f"{bar} Recovery Score: *{score}/100*\n\n"
+        f"{bar} Recovery Score: *{score}/100*{streak_text}\n\n"
         f"😴 Sleep: {data['sleep']}/10  ⚡ Energy: {data['energy']}/10\n"
         f"🤕 Soreness: {data['soreness']}/10  🧠 Stress: {data['stress']}/10{garmin_line}\n\n"
-        f"_{tip}_",
+        f"_{tip}_{deload_hint}",
         parse_mode="Markdown",
     )
 
@@ -1529,6 +1552,293 @@ async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await msg.edit_text(f"❌ Research fetch failed: {e}")
 
 
+async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    checkins = user["checkins"]
+    if not checkins:
+        await update.message.reply_text(
+            "No streak yet — do your first /checkin to start one! 🔥"
+        )
+        return
+
+    # Calculate streak from local checkin cache
+    sorted_dates = sorted({c["date"] for c in checkins}, reverse=True)
+    today_str = _today()
+    current = 0
+    longest = 0
+    run = 0
+    prev: _date | None = None
+    for d in reversed(sorted_dates):
+        dt = _date.fromisoformat(d)
+        if prev is None or (dt - prev).days == 1:
+            run += 1
+        else:
+            run = 1
+        longest = max(longest, run)
+        prev = dt
+
+    # current streak: count back from today or yesterday
+    current = 0
+    for d in sorted_dates:
+        dt = _date.fromisoformat(d)
+        expected = _date.today() - timedelta(days=current)
+        if dt == expected:
+            current += 1
+        else:
+            break
+
+    badge_emojis = {7: "🥉", 14: "🥈", 30: "🥇", 60: "💎", 90: "👑"}
+    badges_earned = [f"{badge_emojis[n]} {n}-day streak" for n in badge_emojis if longest >= n]
+    badge_text = "\n" + "\n".join(badges_earned) if badges_earned else ""
+
+    flame = "🔥" if current >= 3 else ("✅" if current >= 1 else "💤")
+    await update.message.reply_text(
+        f"{flame} *Your Streaks*\n\n"
+        f"Check-in streak: *{current} days* (longest: {longest})\n"
+        f"Total check-ins: {len(checkins)}{badge_text}\n\n"
+        f"Keep it going — /checkin to extend your streak!",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Quick weight log: /weight 84.5"""
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    if not context.args:
+        last = next((m for m in reversed(user["measurements"]) if m.get("body_weight_kg")), None)
+        last_str = f"\nLast logged: {last['body_weight_kg']}kg on {last['date']}" if last else ""
+        await update.message.reply_text(
+            f"Usage: `/weight 84.5`{last_str}",
+            parse_mode="Markdown",
+        )
+        return
+
+    weight_kg = _parse_logset_weight_kg(context.args[0])
+    if weight_kg is None:
+        await update.message.reply_text("Couldn't parse weight. Try `/weight 84.5` or `/weight 186lbs`.", parse_mode="Markdown")
+        return
+
+    entry = {"date": _today(), "body_weight_kg": weight_kg}
+    user["measurements"].append(entry)
+    user["measurements"] = user["measurements"][-100:]
+    _save_store()
+
+    # Compare to previous weight log
+    prev_weights = [m for m in user["measurements"][:-1] if m.get("body_weight_kg")]
+    change_text = ""
+    if prev_weights:
+        prev = prev_weights[-1]["body_weight_kg"]
+        diff = round(weight_kg - prev, 1)
+        if diff != 0:
+            arrow = "▲" if diff > 0 else "▼"
+            change_text = f" ({arrow} {abs(diff)}kg from last log)"
+
+    goal = user["profile"].get("goal", "")
+    motivation = ""
+    if goal == "cut" and diff < 0:
+        motivation = " Keep it up! 📉"
+    elif goal == "bulk" and diff > 0:
+        motivation = " Gaining! 📈"
+
+    await update.message.reply_text(
+        f"✅ *{weight_kg}kg logged*{change_text}{motivation}\n"
+        "Track more with `/measurements weight=84.5kg waist=32in`",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    if not context.args:
+        goals_data = user.get("goals", [])
+        active = [g for g in goals_data if g.get("is_active")]
+        if not active:
+            await update.message.reply_text(
+                "🎯 *Goals*\nNo active goal set.\n\n"
+                "Set one:\n"
+                "`/goals set cut 10%bf by 2026-09-01`\n"
+                "`/goals set bulk 90kg by 2026-12-01`\n"
+                "`/goals set strength`",
+                parse_mode="Markdown",
+            )
+            return
+        g = active[-1]
+        target_parts = []
+        if g.get("target_weight_kg"):
+            target_parts.append(f"Weight: {g['target_weight_kg']}kg")
+        if g.get("target_bf_pct"):
+            target_parts.append(f"Body fat: {g['target_bf_pct']}%")
+        if g.get("target_date"):
+            from datetime import date as _date_cls
+            days_left = (_date_cls.fromisoformat(g["target_date"]) - _date_cls.today()).days
+            target_parts.append(f"Date: {g['target_date']} ({days_left} days away)")
+        target_str = " | ".join(target_parts) if target_parts else "No specific target"
+        await update.message.reply_text(
+            f"🎯 *Active Goal: {g['goal_type'].title()}*\n{target_str}\n\n"
+            "Update with `/goals set <type> <target>`",
+            parse_mode="Markdown",
+        )
+        return
+
+    if context.args[0].lower() == "set" and len(context.args) >= 2:
+        goal_type = context.args[1].lower()
+        target_weight_kg = None
+        target_bf_pct = None
+        target_date = None
+
+        for arg in context.args[2:]:
+            if arg.endswith("%bf") or arg.endswith("%"):
+                try:
+                    target_bf_pct = float(arg.rstrip("%bf").rstrip("%"))
+                except ValueError:
+                    pass
+            elif "kg" in arg or (arg.replace(".", "").isdigit() and "." in arg):
+                try:
+                    target_weight_kg = float(arg.replace("kg", ""))
+                except ValueError:
+                    pass
+            elif re.match(r"\d{4}-\d{2}-\d{2}", arg):
+                target_date = arg
+
+        # Deactivate previous
+        for g in user.get("goals", []):
+            if g.get("goal_type") == goal_type:
+                g["is_active"] = False
+
+        new_goal = {
+            "goal_type": goal_type,
+            "target_weight_kg": target_weight_kg,
+            "target_bf_pct": target_bf_pct,
+            "target_date": target_date,
+            "start_weight_kg": float(user["profile"].get("weight", 0) or 0) or None,
+            "created_at": _today(),
+            "is_active": True,
+        }
+        user.setdefault("goals", []).append(new_goal)
+        _save_store()
+
+        parts = [f"Type: {goal_type}"]
+        if target_weight_kg:
+            parts.append(f"Target weight: {target_weight_kg}kg")
+        if target_bf_pct:
+            parts.append(f"Target body fat: {target_bf_pct}%")
+        if target_date:
+            parts.append(f"Target date: {target_date}")
+        await update.message.reply_text(
+            "🎯 *Goal set!*\n" + "\n".join(f"• {p}" for p in parts),
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            "Usage: `/goals set <type> [target] [date]`\n"
+            "Examples:\n"
+            "`/goals set cut 10%bf by 2026-09-01`\n"
+            "`/goals set bulk 90kg`\n"
+            "`/goals set recomp`",
+            parse_mode="Markdown",
+        )
+
+
+async def cmd_weakpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    if not user["last_analysis"]:
+        await update.message.reply_text(
+            "No physique analysis yet. Send a photo first and I'll identify your weak points. 📸"
+        )
+        return
+
+    msg = await update.message.reply_text("🔬 Analyzing training imbalances…")
+    try:
+        from claude_service import analyze_weak_points
+        analyses = [user["last_analysis"]]
+        # Last 30 days of set logs
+        cutoff = str(_date.today().replace(day=max(1, _date.today().day - 30)))
+        recent_sets = [s for s in user["set_logs"] if s.get("date", "") >= cutoff]
+        result = await asyncio.run_in_executor(
+            None, analyze_weak_points, analyses, recent_sets, user["profile"] or None
+        )
+        weak_pts = "\n".join(f"• {w}" for w in result.get("weak_points", []))
+        vol_recs = result.get("volume_recommendations", {})
+        vol_text = "\n".join(f"• {m.capitalize()}: {rec}" for m, rec in vol_recs.items()) if vol_recs else ""
+        priority = result.get("priority_fix", "")
+
+        reply = f"📊 *Weak Point Analysis*\n\n"
+        if weak_pts:
+            reply += f"*Current Imbalances:*\n{weak_pts}\n\n"
+        if vol_text:
+            reply += f"*Volume Adjustments:*\n{vol_text}\n\n"
+        if priority:
+            reply += f"🎯 *#1 Priority Fix:* {priority}"
+
+        await msg.edit_text(reply, parse_mode="Markdown")
+    except Exception as e:
+        await msg.edit_text(f"❌ Weak point analysis failed: {e}")
+
+
+async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    msg = await update.message.reply_text("📊 Generating your weekly report…")
+    try:
+        from claude_service import generate_weekly_report
+        from datetime import timedelta
+
+        cutoff = str(_date.today() - timedelta(days=7))
+        recent_sessions_count = user.get("session_counter", 0)
+        recent_checkins = [c for c in user["checkins"] if c.get("date", "") >= cutoff]
+        recent_meals = [m for m in user["meal_logs"] if m.get("date", "") >= cutoff]
+        recent_sets = [s for s in user["set_logs"] if s.get("date", "") >= cutoff]
+
+        # Top PRs as a list
+        prs_list = [
+            {"exercise_name": ex, "weight_kg": v["weight_kg"], "reps": v["reps"]}
+            for ex, v in user["prs"].items()
+        ]
+
+        sessions_data = [{"id": i} for i in range(recent_sessions_count)][:7]
+        checkins_data = [{"recovery_score": c.get("recovery_score", 0)} for c in recent_checkins]
+        meals_data = [{"protein_g": m.get("protein_g", 0)} for m in recent_meals]
+
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, generate_weekly_report, sessions_data, checkins_data, meals_data, prs_list, user["profile"] or None
+        )
+
+        insights = result.get("insights", [])
+        focus = result.get("next_week_focus", "")
+        adherence = result.get("adherence_rating", "")
+        avg_rec = result.get("avg_recovery")
+        avg_prot = result.get("avg_protein_g")
+
+        insights_text = "\n".join(f"• {i}" for i in insights) if insights else "No insights generated."
+
+        reply = (
+            f"📊 *Weekly Report*\n\n"
+            f"Sessions: {len(sessions_data)} | Check-ins: {len(recent_checkins)}\n"
+        )
+        if avg_rec:
+            reply += f"Avg recovery: {avg_rec}/100\n"
+        if avg_prot:
+            reply += f"Avg protein: {avg_prot}g/day\n"
+        reply += f"\n*Insights:*\n{insights_text}\n\n"
+        if focus:
+            reply += f"🎯 *Next Week Focus:* {focus}\n"
+        if adherence:
+            reply += f"📈 *Adherence:* {adherence}"
+
+        await msg.edit_text(reply, parse_mode="Markdown")
+    except Exception as e:
+        await msg.edit_text(f"❌ Report generation failed: {e}")
+
+
 # ── Photo handler ─────────────────────────────────────────────────────────────
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2109,6 +2419,80 @@ async def _daily_garmin_sync() -> None:
                 print(f"Garmin sync failed for chat_id={chat_id}: {e}")
 
 
+async def _weekly_stall_check() -> None:
+    """Monday 9am: detect weight stalls vs goal and send coaching nudge."""
+    global _app
+    if _app is None:
+        return
+    for chat_id, u in list(user_data.items()):
+        try:
+            goal = u.get("profile", {}).get("goal", "")
+            if goal not in ("bulk", "cut"):
+                continue
+            measurements = u.get("measurements", [])
+            weights = sorted(
+                [(m["date"], m["body_weight_kg"]) for m in measurements if m.get("body_weight_kg")],
+                key=lambda x: x[0],
+            )
+            if len(weights) < 4:
+                continue
+            # Compare last 14 days
+            cutoff_14 = str(_date.today() - timedelta(days=14))
+            recent = [w for w in weights if w[0] >= cutoff_14]
+            if len(recent) < 2:
+                continue
+            change = abs(recent[-1][1] - recent[0][1])
+            if change < 0.3:
+                direction = "gaining weight" if goal == "bulk" else "losing weight"
+                await _app.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"📊 *Weekly Check-In*\n\n"
+                        f"Your weight has been stable for 2 weeks ({recent[0][1]}kg → {recent[-1][1]}kg).\n\n"
+                        f"For your *{goal}* goal you should be {direction}. "
+                        f"{'Try adding 150-200 kcal/day to break the plateau.' if goal == 'bulk' else 'Try reducing calories by 150-200 kcal/day or adding 20 min cardio.'}\n\n"
+                        f"Type /macros to review your nutrition or chat with me for a personalised fix."
+                    ),
+                    parse_mode="Markdown",
+                )
+        except Exception as e:
+            print(f"Stall check failed for {chat_id}: {e}")
+
+
+async def _missed_workout_check() -> None:
+    """9pm daily: check if user had a planned workout today but logged nothing."""
+    global _app
+    if _app is None:
+        return
+    today_name = _date.today().strftime("%A")
+    for chat_id, u in list(user_data.items()):
+        try:
+            plan = u.get("last_plan", {})
+            if not plan:
+                continue
+            days = plan.get("workout", {}).get("days", [])
+            today_day = next((d for d in days if d.get("day", "").lower() == today_name.lower()), None)
+            if not today_day:
+                continue  # rest day
+            # Check if any sets were logged today
+            today_str = _today()
+            logged_today = any(s.get("date") == today_str for s in u.get("set_logs", []))
+            if not logged_today and u.get("active_session_id") is None:
+                focus = today_day.get("focus", "workout")
+                await _app.bot.send_message(
+                    chat_id=chat_id,
+                    text=(
+                        f"🏋️ *Missed session reminder*\n\n"
+                        f"You had *{focus}* planned for today but haven't logged any sets.\n\n"
+                        f"Still time to squeeze it in! Use /log to start quickly, "
+                        f"or tell me if something came up and I'll adjust your plan."
+                    ),
+                    parse_mode="Markdown",
+                )
+        except Exception as e:
+            print(f"Missed workout check failed for {chat_id}: {e}")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -2138,6 +2522,11 @@ def main() -> None:
     app.add_handler(CommandHandler("connect", cmd_connect))
     app.add_handler(CommandHandler("mfp", cmd_mfp))
     app.add_handler(CommandHandler("research", cmd_research))
+    app.add_handler(CommandHandler("streak", cmd_streak))
+    app.add_handler(CommandHandler("weight", cmd_weight))
+    app.add_handler(CommandHandler("goals", cmd_goals))
+    app.add_handler(CommandHandler("weakpoints", cmd_weakpoints))
+    app.add_handler(CommandHandler("report", cmd_report))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -2154,6 +2543,25 @@ def main() -> None:
             hour=6,
             minute=0,
             id="daily_garmin_sync",
+            replace_existing=True,
+        )
+
+        _scheduler.add_job(
+            _weekly_stall_check,
+            trigger="cron",
+            day_of_week="mon",
+            hour=9,
+            minute=0,
+            id="weekly_stall_check",
+            replace_existing=True,
+        )
+
+        _scheduler.add_job(
+            _missed_workout_check,
+            trigger="cron",
+            hour=21,
+            minute=0,
+            id="missed_workout_check",
             replace_existing=True,
         )
 

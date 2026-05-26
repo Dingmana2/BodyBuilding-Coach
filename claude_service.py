@@ -511,6 +511,72 @@ def analyze_weak_points(analyses: list, set_logs: list, profile: dict | None = N
     return _extract_json(message.content[0].text)
 
 
+def build_rich_context(user_data: dict) -> str:
+    """Assemble a rich training/recovery/nutrition context string for AI prompts."""
+    from datetime import date, timedelta
+
+    profile = user_data.get("profile", {})
+    set_logs = user_data.get("set_logs", [])
+    checkins = user_data.get("checkins", [])
+    meal_logs = user_data.get("meal_logs", [])
+    measurements = user_data.get("measurements", [])
+    prs = user_data.get("prs", {})
+    session_counter = user_data.get("session_counter", 0)
+
+    today = date.today()
+    seven_days_ago = str(today - timedelta(days=7))
+    thirty_days_ago = str(today - timedelta(days=30))
+
+    # Training last 7 days
+    recent_sets = [s for s in set_logs if s.get("date", "") >= seven_days_ago]
+    session_ids_7d = {s.get("session_id") for s in recent_sets if s.get("session_id") is not None}
+    volume_7d = sum(s.get("weight_kg", 0) * s.get("reps", 0) for s in recent_sets)
+
+    # Recovery last 7 days
+    recent_checkins = [c for c in checkins if c.get("date", "") >= seven_days_ago]
+    avg_recovery = round(sum(c.get("recovery_score", 0) for c in recent_checkins) / len(recent_checkins)) if recent_checkins else None
+    avg_sleep = round(sum(c.get("sleep_score", 0) for c in recent_checkins) / len(recent_checkins), 1) if recent_checkins else None
+    avg_soreness = round(sum(c.get("soreness_score", 0) for c in recent_checkins) / len(recent_checkins), 1) if recent_checkins else None
+
+    # Weight trend 30 days
+    recent_weights = [(m.get("date", ""), m.get("body_weight_kg")) for m in measurements if m.get("body_weight_kg") and m.get("date", "") >= thirty_days_ago]
+    weight_change_30d = None
+    if len(recent_weights) >= 2:
+        sorted_w = sorted(recent_weights, key=lambda x: x[0])
+        weight_change_30d = round(sorted_w[-1][1] - sorted_w[0][1], 1)
+    latest_weight = recent_weights[-1][1] if recent_weights else profile.get("weight")
+
+    # Protein compliance 7 days
+    protein_target = None
+    plan = user_data.get("last_plan", {})
+    if plan:
+        protein_target = plan.get("diet", {}).get("protein_g")
+    recent_meals_by_day: dict[str, float] = {}
+    for m in meal_logs:
+        d = m.get("date", "")
+        if d >= seven_days_ago:
+            recent_meals_by_day[d] = recent_meals_by_day.get(d, 0) + (m.get("protein_g") or 0)
+    protein_compliance_pct = None
+    if protein_target and recent_meals_by_day:
+        days_hit = sum(1 for p in recent_meals_by_day.values() if p >= protein_target * 0.9)
+        protein_compliance_pct = round(days_hit / max(len(recent_meals_by_day), 1) * 100)
+
+    # Top PRs
+    top_prs = sorted(prs.items(), key=lambda x: x[1].get("estimated_1rm", 0), reverse=True)[:5]
+    prs_text = ", ".join(f"{ex} {v['weight_kg']}kg×{v['reps']}" for ex, v in top_prs) if top_prs else "none"
+
+    lines = [
+        f"Profile: goal={profile.get('goal','?')}, experience={profile.get('experience','?')}, age={profile.get('age','?')}",
+        f"Training 7d: {len(session_ids_7d)} sessions, {len(recent_sets)} sets, {volume_7d:,.0f}kg total volume",
+        f"Recovery 7d: avg score={avg_recovery}/100, avg sleep={avg_sleep}/10, avg soreness={avg_soreness}/10" if avg_recovery else "Recovery: no check-ins this week",
+        f"Weight: current={latest_weight}kg, 30d change={weight_change_30d:+.1f}kg" if weight_change_30d is not None else f"Weight: current={latest_weight}kg",
+        f"Protein compliance (7d): {protein_compliance_pct}% of days hit target" if protein_compliance_pct is not None else "Protein: not tracked this week",
+        f"Total sessions logged: {session_counter}",
+        f"Top PRs: {prs_text}",
+    ]
+    return "\n".join(lines)
+
+
 def summarize_research(topic: str, papers: list) -> str:
     client = _client()
 
