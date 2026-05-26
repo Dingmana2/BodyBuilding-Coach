@@ -21,6 +21,10 @@
                 <button class="nav-tab" data-tab="research" onclick="showTab('research')">Research</button>
                 <button class="nav-tab" data-tab="progress" onclick="showTab('progress')">Progress</button>
                 <button class="nav-tab" data-tab="profile" onclick="showTab('profile')">Profile</button>
+                <div id="user-badge" class="user-badge" style="display:none">
+                    <span id="user-email-short"></span>
+                    <button class="btn btn-ghost btn-sm" onclick="signOut()">Sign Out</button>
+                </div>
             </nav>
         </div>
     </header>
@@ -323,6 +327,36 @@
 
     <!-- Toast -->
     <div id="toast" class="toast" style="display:none"></div>
+
+    <!-- Auth modal -->
+    <div id="auth-overlay" style="display:none">
+        <div class="auth-box">
+            <div class="auth-logo">⚡ BodyBuilding Coach AI</div>
+            <div id="auth-tabs" class="auth-tabs">
+                <button class="auth-tab active" onclick="switchAuthTab('login')">Sign In</button>
+                <button class="auth-tab" onclick="switchAuthTab('register')">Create Account</button>
+            </div>
+
+            <form id="auth-form" onsubmit="submitAuth(event)">
+                <div class="form-group" style="margin-bottom:16px">
+                    <label style="font-size:13px;color:var(--text-muted)">Email</label>
+                    <input type="email" id="auth-email" required autocomplete="email"
+                           style="width:100%;margin-top:6px" placeholder="you@example.com" />
+                </div>
+                <div class="form-group" style="margin-bottom:24px">
+                    <label style="font-size:13px;color:var(--text-muted)">Password</label>
+                    <input type="password" id="auth-password" required autocomplete="current-password"
+                           style="width:100%;margin-top:6px" placeholder="••••••••" />
+                </div>
+                <div id="auth-error" class="auth-error" style="display:none"></div>
+                <button type="submit" class="btn btn-primary" style="width:100%" id="auth-submit-btn">Sign In</button>
+            </form>
+
+            <div class="auth-footer">
+                Your data stays private and is tied to your account.
+            </div>
+        </div>
+    </div>
 
     <script src="/static/app.js"></script>
 </body>

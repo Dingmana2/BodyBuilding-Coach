@@ -692,3 +692,57 @@ input:focus, select:focus, textarea:focus {
     main { padding: 20px 16px; }
     .analysis-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Auth overlay ── */
+#auth-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.85);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999; backdrop-filter: blur(4px);
+}
+
+.auth-box {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 16px; padding: 40px; width: 100%; max-width: 400px;
+    box-shadow: 0 24px 48px rgba(0,0,0,0.6);
+}
+
+.auth-logo {
+    font-size: 20px; font-weight: 700; color: var(--gold);
+    text-align: center; margin-bottom: 28px; letter-spacing: -0.3px;
+}
+
+.auth-tabs {
+    display: flex; gap: 4px; background: var(--surface-2);
+    border-radius: 8px; padding: 4px; margin-bottom: 28px;
+}
+
+.auth-tab {
+    flex: 1; padding: 8px; border: none; border-radius: 6px;
+    background: transparent; color: var(--text-muted);
+    cursor: pointer; font-size: 14px; font-weight: 500;
+    font-family: var(--font); transition: all 0.15s;
+}
+
+.auth-tab.active {
+    background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+}
+
+.auth-error {
+    background: rgba(239,68,68,0.1); border: 1px solid var(--red);
+    color: var(--red); border-radius: 8px; padding: 10px 14px;
+    font-size: 13px; margin-bottom: 16px;
+}
+
+.auth-footer {
+    text-align: center; font-size: 12px; color: var(--text-muted);
+    margin-top: 20px; line-height: 1.5;
+}
+
+/* ── User badge in nav ── */
+.user-badge {
+    display: flex; align-items: center; gap: 10px;
+    padding: 4px 0; margin-left: 8px; border-left: 1px solid var(--border);
+    padding-left: 16px;
+}
+
+#user-email-short { font-size: 12px; color: var(--text-muted); }

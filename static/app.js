@@ -40,18 +40,116 @@ const state = {
     _workoutExercises: [],
 };
 
+/* ── Auth ── */
+const AUTH_KEY = 'bb_auth_token';
+const USER_KEY = 'bb_auth_user';
+
+function getToken() { return localStorage.getItem(AUTH_KEY); }
+function getStoredUser() {
+    try { return JSON.parse(localStorage.getItem(USER_KEY) || 'null'); } catch { return null; }
+}
+
+function setAuth(token, user) {
+    localStorage.setItem(AUTH_KEY, token);
+    localStorage.setItem(USER_KEY, JSON.stringify(user));
+    updateUserBadge(user);
+    document.getElementById('auth-overlay').style.display = 'none';
+}
+
+function clearAuth() {
+    localStorage.removeItem(AUTH_KEY);
+    localStorage.removeItem(USER_KEY);
+    document.getElementById('user-badge').style.display = 'none';
+    showAuthOverlay();
+}
+
+function updateUserBadge(user) {
+    const badge = document.getElementById('user-badge');
+    const emailEl = document.getElementById('user-email-short');
+    if (user) {
+        const short = user.email.split('@')[0];
+        emailEl.textContent = short;
+        badge.style.display = 'flex';
+    }
+}
+
+function showAuthOverlay(mode = 'login') {
+    document.getElementById('auth-overlay').style.display = 'flex';
+    switchAuthTab(mode);
+}
+
+let _authMode = 'login';
+
+function switchAuthTab(mode) {
+    _authMode = mode;
+    document.querySelectorAll('.auth-tab').forEach((el, i) => {
+        el.classList.toggle('active', (i === 0 && mode === 'login') || (i === 1 && mode === 'register'));
+    });
+    document.getElementById('auth-submit-btn').textContent = mode === 'login' ? 'Sign In' : 'Create Account';
+    document.getElementById('auth-error').style.display = 'none';
+    const pw = document.getElementById('auth-password');
+    pw.autocomplete = mode === 'login' ? 'current-password' : 'new-password';
+}
+
+async function submitAuth(e) {
+    e.preventDefault();
+    const email = document.getElementById('auth-email').value.trim();
+    const password = document.getElementById('auth-password').value;
+    const errEl = document.getElementById('auth-error');
+    errEl.style.display = 'none';
+    const btn = document.getElementById('auth-submit-btn');
+    btn.disabled = true;
+    btn.textContent = '…';
+    try {
+        const path = _authMode === 'login' ? '/auth/login' : '/auth/register';
+        const data = await api('POST', path, { email, password });
+        setAuth(data.token, data.user);
+        await loadDashboard();
+    } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = 'block';
+        btn.disabled = false;
+        btn.textContent = _authMode === 'login' ? 'Sign In' : 'Create Account';
+    }
+}
+
+function signOut() {
+    if (!confirm('Sign out?')) return;
+    clearAuth();
+}
+
+async function initAuth() {
+    const token = getToken();
+    if (!token) { showAuthOverlay(); return; }
+    const user = getStoredUser();
+    if (user) { updateUserBadge(user); }
+    try {
+        const me = await api('GET', '/auth/me');
+        updateUserBadge(me);
+    } catch {
+        clearAuth();
+    }
+}
+
 /* ── API helpers ── */
 async function api(method, path, body = null, isFormData = false) {
-    const opts = { method };
+    const opts = { method, headers: {} };
+    const token = getToken();
+    if (token) opts.headers['Authorization'] = `Bearer ${token}`;
+
     if (body) {
         if (isFormData) {
             opts.body = body;
         } else {
-            opts.headers = { 'Content-Type': 'application/json' };
+            opts.headers['Content-Type'] = 'application/json';
             opts.body = JSON.stringify(body);
         }
     }
     const res = await fetch(`/api${path}`, opts);
+    if (res.status === 401 && path !== '/auth/login' && path !== '/auth/register') {
+        clearAuth();
+        throw new Error('Session expired — please sign in again.');
+    }
     if (!res.ok) {
         const err = await res.json().catch(() => ({ detail: res.statusText }));
         throw new Error(err.detail || 'Request failed');
@@ -952,6 +1050,8 @@ function formatDate(iso) {
 }
 
 /* ── Init ── */
-document.addEventListener('DOMContentLoaded', () => {
-    loadDashboard();
+document.addEventListener('DOMContentLoaded', async () => {
+    await initAuth();
+    const token = getToken();
+    if (token) loadDashboard();
 });

@@ -1,4 +1,7 @@
 import asyncio
+import base64
+import hashlib
+import hmac
 import json
 import os
 import uuid
@@ -8,10 +11,76 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 load_dotenv()
+
+# ── Auth helpers (stdlib only — no cryptography dependency) ───────────────────
+
+_SECRET_KEY = os.getenv("SECRET_KEY", "change-me-use-a-long-random-string-in-production").encode()
+_TOKEN_EXPIRE_DAYS = 30
+_bearer = HTTPBearer(auto_error=False)
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode()
+
+
+def _b64url_decode(s: str) -> bytes:
+    pad = 4 - len(s) % 4
+    return base64.urlsafe_b64decode(s + "=" * (pad % 4))
+
+
+def _hash_password(plain: str) -> str:
+    import hashlib as _hl
+    salt = os.urandom(16).hex()
+    h = _hl.pbkdf2_hmac("sha256", plain.encode(), salt.encode(), 260_000).hex()
+    return f"pbkdf2$sha256$260000${salt}${h}"
+
+
+def _verify_password(plain: str, stored: str) -> bool:
+    import hashlib as _hl
+    try:
+        _, algo, iters, salt, expected = stored.split("$")
+        h = _hl.pbkdf2_hmac(algo, plain.encode(), salt.encode(), int(iters)).hex()
+        return hmac.compare_digest(h, expected)
+    except Exception:
+        return False
+
+
+def _create_token(user_id: int) -> str:
+    header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
+    expire = int((datetime.now(timezone.utc) + timedelta(days=_TOKEN_EXPIRE_DAYS)).timestamp())
+    payload = _b64url(json.dumps({"sub": str(user_id), "exp": expire}).encode())
+    signing_input = f"{header}.{payload}".encode()
+    sig = _b64url(hmac.new(_SECRET_KEY, signing_input, hashlib.sha256).digest())
+    return f"{header}.{payload}.{sig}"
+
+
+def get_current_user_id(
+    credentials: HTTPAuthorizationCredentials | None = Depends(_bearer),
+) -> int:
+    """Extract user_id from Bearer JWT. Returns 0 for unauthenticated/invalid."""
+    if not credentials:
+        return 0
+    try:
+        parts = credentials.credentials.split(".")
+        if len(parts) != 3:
+            return 0
+        header_b64, payload_b64, sig_b64 = parts
+        signing_input = f"{header_b64}.{payload_b64}".encode()
+        expected_sig = _b64url(hmac.new(_SECRET_KEY, signing_input, hashlib.sha256).digest())
+        if not hmac.compare_digest(expected_sig, sig_b64):
+            return 0
+        payload = json.loads(_b64url_decode(payload_b64))
+        if payload.get("exp", 0) < datetime.now(timezone.utc).timestamp():
+            return 0
+        return int(payload.get("sub", 0))
+    except Exception:
+        return 0
+
 
 from database import engine, get_db
 import models
@@ -26,6 +95,27 @@ from claude_service import (
 from research_service import refresh_all_research
 
 models.Base.metadata.create_all(bind=engine)
+
+# ── Safe column migrations (idempotent ALTER TABLE for schema evolution) ──────
+def _migrate_db():
+    """Add columns that may not exist in pre-existing SQLite databases."""
+    from sqlalchemy import text
+    migrations = [
+        ("user_profiles", "user_id", "INTEGER REFERENCES users(id)"),
+        ("user_profiles", "equipment_available", "VARCHAR"),
+        ("user_profiles", "injuries", "TEXT"),
+        ("user_profiles", "show_date", "DATE"),
+        ("body_analyses", "body_fat_confidence", "VARCHAR"),
+    ]
+    with engine.connect() as conn:
+        for table, column, col_type in migrations:
+            try:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}"))
+                conn.commit()
+            except Exception:
+                pass  # Column already exists
+
+_migrate_db()
 
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
@@ -42,11 +132,76 @@ def root():
     return FileResponse("static/index.html")
 
 
+# ── Auth ─────────────────────────────────────────────────────────────────────
+
+@app.post("/api/auth/register")
+async def register(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    if not email or not password:
+        raise HTTPException(status_code=400, detail="Email and password are required.")
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail="Password must be at least 8 characters.")
+    if db.query(models.User).filter(models.User.email == email).first():
+        raise HTTPException(status_code=409, detail="An account with that email already exists.")
+    user = models.User(email=email, hashed_password=_hash_password(password))
+    db.add(user)
+    db.commit()
+    db.refresh(user)
+    return {
+        "token": _create_token(user.id),
+        "user": {"id": user.id, "email": user.email, "subscription_tier": user.subscription_tier},
+    }
+
+
+@app.post("/api/auth/login")
+async def login(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    email = (data.get("email") or "").strip().lower()
+    password = data.get("password") or ""
+    user = db.query(models.User).filter(models.User.email == email).first()
+    if not user or not _verify_password(password, user.hashed_password):
+        raise HTTPException(status_code=401, detail="Invalid email or password.")
+    if not user.is_active:
+        raise HTTPException(status_code=403, detail="Account is disabled.")
+    return {
+        "token": _create_token(user.id),
+        "user": {"id": user.id, "email": user.email, "subscription_tier": user.subscription_tier},
+    }
+
+
+@app.get("/api/auth/me")
+def get_me(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if not current_user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    user = db.query(models.User).filter(models.User.id == current_user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    return {
+        "id": user.id,
+        "email": user.email,
+        "subscription_tier": user.subscription_tier,
+        "telegram_linked": user.telegram_chat_id is not None,
+        "created_at": user.created_at.isoformat(),
+    }
+
+
 # ── Profile ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/profile")
-def get_profile(db: Session = Depends(get_db)):
-    profile = db.query(models.UserProfile).first()
+def get_profile(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    profile = (
+        db.query(models.UserProfile)
+        .filter(models.UserProfile.user_id == current_user_id)
+        .first()
+    ) if current_user_id else db.query(models.UserProfile).filter(models.UserProfile.user_id == None).first()
     if not profile:
         return {}
     return {
@@ -59,15 +214,25 @@ def get_profile(db: Session = Depends(get_db)):
         "training_experience": profile.training_experience,
         "training_days_per_week": profile.training_days_per_week,
         "dietary_restrictions": profile.dietary_restrictions,
+        "equipment_available": profile.equipment_available,
+        "injuries": profile.injuries,
     }
 
 
 @app.post("/api/profile")
-async def save_profile(request: Request, db: Session = Depends(get_db)):
+async def save_profile(
+    request: Request,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     data = await request.json()
-    profile = db.query(models.UserProfile).first()
+    profile = (
+        db.query(models.UserProfile)
+        .filter(models.UserProfile.user_id == current_user_id)
+        .first()
+    ) if current_user_id else db.query(models.UserProfile).filter(models.UserProfile.user_id == None).first()
     if not profile:
-        profile = models.UserProfile()
+        profile = models.UserProfile(user_id=current_user_id if current_user_id else None)
         db.add(profile)
 
     profile.age = data.get("age")
@@ -78,6 +243,8 @@ async def save_profile(request: Request, db: Session = Depends(get_db)):
     profile.training_experience = data.get("training_experience")
     profile.training_days_per_week = data.get("training_days_per_week")
     profile.dietary_restrictions = data.get("dietary_restrictions")
+    profile.equipment_available = data.get("equipment_available")
+    profile.injuries = data.get("injuries")
     db.commit()
     return {"status": "saved"}
 
@@ -335,10 +502,13 @@ def get_progress(db: Session = Depends(get_db)):
 # ── Workout Sessions ──────────────────────────────────────────────────────────
 
 @app.get("/api/sessions/active")
-def get_active_session(db: Session = Depends(get_db)):
+def get_active_session(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     session = (
         db.query(models.WorkoutSession)
-        .filter(models.WorkoutSession.chat_id == 0, models.WorkoutSession.ended_at == None)
+        .filter(models.WorkoutSession.chat_id == current_user_id, models.WorkoutSession.ended_at == None)
         .order_by(models.WorkoutSession.started_at.desc())
         .first()
     )
@@ -371,14 +541,17 @@ def get_active_session(db: Session = Depends(get_db)):
 
 
 @app.post("/api/sessions/start")
-async def start_session(request: Request, db: Session = Depends(get_db)):
+async def start_session(
+    request: Request,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     data = await request.json()
-    # Close any orphaned open session
     db.query(models.WorkoutSession).filter(
-        models.WorkoutSession.chat_id == 0,
+        models.WorkoutSession.chat_id == current_user_id,
         models.WorkoutSession.ended_at == None,
     ).update({"ended_at": datetime.now(timezone.utc)})
-    session = models.WorkoutSession(chat_id=0, notes=data.get("notes"))
+    session = models.WorkoutSession(chat_id=current_user_id, notes=data.get("notes"))
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -403,7 +576,12 @@ def end_session(session_id: int, db: Session = Depends(get_db)):
 
 
 @app.post("/api/sessions/{session_id}/sets")
-async def log_set(session_id: int, request: Request, db: Session = Depends(get_db)):
+async def log_set(
+    session_id: int,
+    request: Request,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     data = await request.json()
     exercise = data["exercise_name"].strip()
     weight_kg = float(data["weight_kg"])
@@ -423,7 +601,7 @@ async def log_set(session_id: int, request: Request, db: Session = Depends(get_d
     existing_pr = (
         db.query(models.PersonalRecord)
         .filter(
-            models.PersonalRecord.chat_id == 0,
+            models.PersonalRecord.chat_id == current_user_id,
             models.PersonalRecord.exercise_name == exercise,
         )
         .first()
@@ -447,7 +625,7 @@ async def log_set(session_id: int, request: Request, db: Session = Depends(get_d
         else:
             db.add(
                 models.PersonalRecord(
-                    chat_id=0,
+                    chat_id=current_user_id,
                     exercise_name=exercise,
                     weight_kg=weight_kg,
                     reps=reps,
@@ -471,11 +649,14 @@ async def log_set(session_id: int, request: Request, db: Session = Depends(get_d
 
 
 @app.get("/api/sessions/history")
-def get_session_history(db: Session = Depends(get_db)):
+def get_session_history(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     sessions = (
         db.query(models.WorkoutSession)
         .filter(
-            models.WorkoutSession.chat_id == 0,
+            models.WorkoutSession.chat_id == current_user_id,
             models.WorkoutSession.ended_at != None,
         )
         .order_by(models.WorkoutSession.started_at.desc())
@@ -497,10 +678,13 @@ def get_session_history(db: Session = Depends(get_db)):
 
 
 @app.get("/api/prs")
-def get_prs(db: Session = Depends(get_db)):
+def get_prs(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     rows = (
         db.query(models.PersonalRecord)
-        .filter(models.PersonalRecord.chat_id == 0)
+        .filter(models.PersonalRecord.chat_id == current_user_id)
         .order_by(models.PersonalRecord.exercise_name)
         .all()
     )
@@ -574,7 +758,7 @@ def _update_streak(db: Session, chat_id: int, streak_type: str) -> None:
     streak = _get_streak(db, chat_id, streak_type)
     if not streak:
         db.add(models.UserStreak(
-            chat_id=chat_id, streak_type=streak_type,
+            chat_id=current_user_id, streak_type=streak_type,
             current_streak=1, longest_streak=1,
             last_activity_date=today, total_days_active=1,
         ))
@@ -599,7 +783,7 @@ def _award_badge(db: Session, chat_id: int, badge_type: str, metadata: dict | No
     if existing:
         return False
     db.add(models.Badge(
-        chat_id=chat_id, badge_type=badge_type,
+        chat_id=current_user_id, badge_type=badge_type,
         badge_metadata=json.dumps(metadata) if metadata else None,
     ))
     db.commit()
@@ -609,10 +793,11 @@ def _award_badge(db: Session, chat_id: int, badge_type: str, metadata: dict | No
 # ── Check-Ins ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/checkins")
-def list_checkins(limit: int = 90, chat_id: int = 0, db: Session = Depends(get_db)):
+def list_checkins(limit: int = 90, current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
     rows = (
         db.query(models.DailyCheckIn)
-        .filter(models.DailyCheckIn.chat_id == chat_id)
+        .filter(models.DailyCheckIn.chat_id == current_user_id)
         .order_by(models.DailyCheckIn.created_at.desc())
         .limit(limit)
         .all()
@@ -621,14 +806,13 @@ def list_checkins(limit: int = 90, chat_id: int = 0, db: Session = Depends(get_d
 
 
 @app.post("/api/checkins")
-async def create_checkin(request: Request, db: Session = Depends(get_db)):
+async def create_checkin(request: Request, current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     data = await request.json()
-    chat_id = int(data.get("chat_id", 0))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     existing = (
         db.query(models.DailyCheckIn)
-        .filter(models.DailyCheckIn.chat_id == chat_id, models.DailyCheckIn.date == today)
+        .filter(models.DailyCheckIn.chat_id == current_user_id, models.DailyCheckIn.date == today)
         .first()
     )
     if existing:
@@ -652,7 +836,7 @@ async def create_checkin(request: Request, db: Session = Depends(get_db)):
         recovery_score, coaching_tip = 50, "Listen to your body and train accordingly."
 
     checkin = models.DailyCheckIn(
-        chat_id=chat_id, date=today,
+        chat_id=current_user_id, date=today,
         sleep_score=sleep_score, energy_score=energy_score,
         soreness_score=soreness_score, stress_score=stress_score,
         recovery_score=recovery_score, coaching_tip=coaching_tip,
@@ -664,18 +848,19 @@ async def create_checkin(request: Request, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(checkin)
 
-    _update_streak(db, chat_id, "checkin")
-    streak = _get_streak(db, chat_id, "checkin")
+    _update_streak(db, current_user_id, "checkin")
+    streak = _get_streak(db, current_user_id, "checkin")
     streak_count = streak.current_streak if streak else 1
     if streak_count in (7, 14, 30, 60, 90):
-        _award_badge(db, chat_id, f"{streak_count}_day_checkin_streak")
+        _award_badge(db, current_user_id, f"{streak_count}_day_checkin_streak")
 
     return {**_checkin_dict(checkin), "streak": streak_count}
 
 
 @app.get("/api/checkins/streak")
-def get_checkin_streak(chat_id: int = 0, db: Session = Depends(get_db)):
-    streak = _get_streak(db, chat_id, "checkin")
+def get_checkin_streak(current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
+    streak = _get_streak(db, current_user_id, "checkin")
     if not streak:
         return {"current_streak": 0, "longest_streak": 0, "total_days_active": 0}
     return {
@@ -689,10 +874,11 @@ def get_checkin_streak(chat_id: int = 0, db: Session = Depends(get_db)):
 # ── Measurements ──────────────────────────────────────────────────────────────
 
 @app.get("/api/measurements")
-def list_measurements(limit: int = 30, chat_id: int = 0, db: Session = Depends(get_db)):
+def list_measurements(limit: int = 30, current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
     rows = (
         db.query(models.BodyMeasurement)
-        .filter(models.BodyMeasurement.chat_id == chat_id)
+        .filter(models.BodyMeasurement.chat_id == current_user_id)
         .order_by(models.BodyMeasurement.created_at.desc())
         .limit(limit)
         .all()
@@ -701,13 +887,12 @@ def list_measurements(limit: int = 30, chat_id: int = 0, db: Session = Depends(g
 
 
 @app.post("/api/measurements")
-async def create_measurement(request: Request, db: Session = Depends(get_db)):
+async def create_measurement(request: Request, current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     data = await request.json()
-    chat_id = int(data.get("chat_id", 0))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     m = models.BodyMeasurement(
-        chat_id=chat_id, date=data.get("date", today),
+        chat_id=current_user_id, date=data.get("date", today),
         body_weight_kg=data.get("body_weight_kg"),
         waist_cm=data.get("waist_cm"), chest_cm=data.get("chest_cm"),
         hips_cm=data.get("hips_cm"), left_arm_cm=data.get("left_arm_cm"),
@@ -723,10 +908,11 @@ async def create_measurement(request: Request, db: Session = Depends(get_db)):
 # ── Meals ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/meals")
-def list_meals(limit: int = 30, chat_id: int = 0, db: Session = Depends(get_db)):
+def list_meals(limit: int = 30, current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
     rows = (
         db.query(models.MealLog)
-        .filter(models.MealLog.chat_id == chat_id)
+        .filter(models.MealLog.chat_id == current_user_id)
         .order_by(models.MealLog.logged_at.desc())
         .limit(limit)
         .all()
@@ -735,11 +921,12 @@ def list_meals(limit: int = 30, chat_id: int = 0, db: Session = Depends(get_db))
 
 
 @app.get("/api/meals/today")
-def get_today_meals(chat_id: int = 0, db: Session = Depends(get_db)):
+def get_today_meals(current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     rows = (
         db.query(models.MealLog)
-        .filter(models.MealLog.chat_id == chat_id, models.MealLog.date == today)
+        .filter(models.MealLog.chat_id == current_user_id, models.MealLog.date == today)
         .order_by(models.MealLog.logged_at.asc())
         .all()
     )
@@ -755,9 +942,8 @@ def get_today_meals(chat_id: int = 0, db: Session = Depends(get_db)):
 
 
 @app.post("/api/meals")
-async def log_meal(request: Request, db: Session = Depends(get_db)):
+async def log_meal(request: Request, current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     data = await request.json()
-    chat_id = int(data.get("chat_id", 0))
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     description = data.get("description", "")
     calories = data.get("calories")
@@ -778,7 +964,7 @@ async def log_meal(request: Request, db: Session = Depends(get_db)):
             pass
 
     meal = models.MealLog(
-        chat_id=chat_id, date=data.get("date", today), description=description,
+        chat_id=current_user_id, date=data.get("date", today), description=description,
         calories=calories, protein_g=protein_g, carbs_g=carbs_g, fat_g=fat_g,
         macro_source=macro_source,
     )
@@ -791,10 +977,11 @@ async def log_meal(request: Request, db: Session = Depends(get_db)):
 # ── Weekly Reports ────────────────────────────────────────────────────────────
 
 @app.get("/api/reports")
-def list_reports(limit: int = 10, chat_id: int = 0, db: Session = Depends(get_db)):
+def list_reports(limit: int = 10, current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
     rows = (
         db.query(models.WeeklyReport)
-        .filter(models.WeeklyReport.chat_id == chat_id)
+        .filter(models.WeeklyReport.chat_id == current_user_id)
         .order_by(models.WeeklyReport.created_at.desc())
         .limit(limit)
         .all()
@@ -812,30 +999,29 @@ def list_reports(limit: int = 10, chat_id: int = 0, db: Session = Depends(get_db
 
 
 @app.post("/api/reports/generate")
-async def generate_report(request: Request, db: Session = Depends(get_db)):
+async def generate_report(request: Request, current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     data = await request.json()
-    chat_id = int(data.get("chat_id", 0))
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
 
     sessions = db.query(models.WorkoutSession).filter(
-        models.WorkoutSession.chat_id == chat_id,
+        models.WorkoutSession.chat_id == current_user_id,
         models.WorkoutSession.ended_at != None,
         models.WorkoutSession.started_at >= datetime.fromisoformat(seven_days_ago),
     ).all()
 
     checkins = db.query(models.DailyCheckIn).filter(
-        models.DailyCheckIn.chat_id == chat_id,
+        models.DailyCheckIn.chat_id == current_user_id,
         models.DailyCheckIn.date >= seven_days_ago,
     ).all()
 
     meals = db.query(models.MealLog).filter(
-        models.MealLog.chat_id == chat_id,
+        models.MealLog.chat_id == current_user_id,
         models.MealLog.date >= seven_days_ago,
     ).all()
 
     prs = (
         db.query(models.PersonalRecord)
-        .filter(models.PersonalRecord.chat_id == chat_id)
+        .filter(models.PersonalRecord.chat_id == current_user_id)
         .order_by(models.PersonalRecord.achieved_at.desc())
         .limit(10)
         .all()
@@ -858,7 +1044,7 @@ async def generate_report(request: Request, db: Session = Depends(get_db)):
 
     week_start = seven_days_ago
     report = models.WeeklyReport(
-        chat_id=chat_id, week_start=week_start, sessions_count=len(sessions),
+        chat_id=current_user_id, week_start=week_start, sessions_count=len(sessions),
         avg_recovery=report_data.get("avg_recovery"), prs_count=len(prs_data),
         avg_protein_g=report_data.get("avg_protein_g"),
         ai_insights=json.dumps(report_data.get("insights", [])),
@@ -880,8 +1066,9 @@ async def generate_report(request: Request, db: Session = Depends(get_db)):
 # ── Streaks & Badges ──────────────────────────────────────────────────────────
 
 @app.get("/api/streaks")
-def get_streaks(chat_id: int = 0, db: Session = Depends(get_db)):
-    streaks = db.query(models.UserStreak).filter(models.UserStreak.chat_id == chat_id).all()
+def get_streaks(current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
+    streaks = db.query(models.UserStreak).filter(models.UserStreak.chat_id == current_user_id).all()
     return {
         s.streak_type: {
             "current_streak": s.current_streak,
@@ -894,10 +1081,11 @@ def get_streaks(chat_id: int = 0, db: Session = Depends(get_db)):
 
 
 @app.get("/api/badges")
-def get_badges(chat_id: int = 0, db: Session = Depends(get_db)):
+def get_badges(current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
     rows = (
         db.query(models.Badge)
-        .filter(models.Badge.chat_id == chat_id)
+        .filter(models.Badge.chat_id == current_user_id)
         .order_by(models.Badge.earned_at.desc())
         .all()
     )
@@ -914,10 +1102,11 @@ def get_badges(chat_id: int = 0, db: Session = Depends(get_db)):
 # ── Goals ─────────────────────────────────────────────────────────────────────
 
 @app.get("/api/goals")
-def list_goals(chat_id: int = 0, db: Session = Depends(get_db)):
+def list_goals(current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
     rows = (
         db.query(models.UserGoal)
-        .filter(models.UserGoal.chat_id == chat_id)
+        .filter(models.UserGoal.chat_id == current_user_id)
         .order_by(models.UserGoal.created_at.desc())
         .all()
     )
@@ -925,12 +1114,11 @@ def list_goals(chat_id: int = 0, db: Session = Depends(get_db)):
 
 
 @app.post("/api/goals")
-async def create_goal(request: Request, db: Session = Depends(get_db)):
+async def create_goal(request: Request, current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
     data = await request.json()
-    chat_id = int(data.get("chat_id", 0))
 
     db.query(models.UserGoal).filter(
-        models.UserGoal.chat_id == chat_id,
+        models.UserGoal.chat_id == current_user_id,
         models.UserGoal.goal_type == data.get("goal_type"),
         models.UserGoal.is_active == True,
     ).update({"is_active": False})
@@ -941,7 +1129,7 @@ async def create_goal(request: Request, db: Session = Depends(get_db)):
         target_date = date.fromisoformat(data["target_date"])
 
     goal = models.UserGoal(
-        chat_id=chat_id, goal_type=data.get("goal_type"),
+        chat_id=current_user_id, goal_type=data.get("goal_type"),
         target_weight_kg=data.get("target_weight_kg"), target_bf_pct=data.get("target_bf_pct"),
         target_date=target_date, start_weight_kg=data.get("start_weight_kg"),
         start_bf_pct=data.get("start_bf_pct"), is_active=True,
@@ -955,29 +1143,30 @@ async def create_goal(request: Request, db: Session = Depends(get_db)):
 # ── Dashboard Summary ─────────────────────────────────────────────────────────
 
 @app.get("/api/dashboard/summary")
-def dashboard_summary(chat_id: int = 0, db: Session = Depends(get_db)):
+def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db)):
     streaks = {
         s.streak_type: s.current_streak
-        for s in db.query(models.UserStreak).filter(models.UserStreak.chat_id == chat_id).all()
+        for s in db.query(models.UserStreak).filter(models.UserStreak.chat_id == current_user_id).all()
     }
-    prs_count = db.query(models.PersonalRecord).filter(models.PersonalRecord.chat_id == chat_id).count()
+    prs_count = db.query(models.PersonalRecord).filter(models.PersonalRecord.chat_id == current_user_id).count()
 
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
     sessions_week = db.query(models.WorkoutSession).filter(
-        models.WorkoutSession.chat_id == chat_id,
+        models.WorkoutSession.chat_id == current_user_id,
         models.WorkoutSession.started_at >= datetime.fromisoformat(seven_days_ago),
         models.WorkoutSession.ended_at != None,
     ).count()
 
     checkins = db.query(models.DailyCheckIn).filter(
-        models.DailyCheckIn.chat_id == chat_id,
+        models.DailyCheckIn.chat_id == current_user_id,
         models.DailyCheckIn.date >= seven_days_ago,
     ).all()
     avg_recovery = round(sum(c.recovery_score or 0 for c in checkins) / len(checkins)) if checkins else None
 
     today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     today_meals = db.query(models.MealLog).filter(
-        models.MealLog.chat_id == chat_id,
+        models.MealLog.chat_id == current_user_id,
         models.MealLog.date == today_str,
     ).all()
 
@@ -987,7 +1176,7 @@ def dashboard_summary(chat_id: int = 0, db: Session = Depends(get_db)):
         .first()
     )
 
-    badges = db.query(models.Badge).filter(models.Badge.chat_id == chat_id).count()
+    badges = db.query(models.Badge).filter(models.Badge.chat_id == current_user_id).count()
 
     return {
         "streaks": streaks,
