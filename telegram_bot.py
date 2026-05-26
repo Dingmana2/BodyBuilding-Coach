@@ -19,9 +19,10 @@ import anthropic
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from telegram import Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -196,6 +197,111 @@ def _parse_logset_weight_kg(s: str) -> float | None:
 def _epley_1rm(weight_kg: float, reps: int) -> float:
     """Epley formula: weight × (1 + reps/30)."""
     return round(weight_kg * (1 + reps / 30), 1)
+
+
+# ── Workout inline keyboard helpers ──────────────────────────────────────────
+
+def _get_today_exercises(user: dict) -> list:
+    """Return today's exercise list from the user's current plan (empty list if none)."""
+    if not user.get("last_plan"):
+        return []
+    today_name = _date.today().strftime("%A")
+    days = user["last_plan"].get("workout", {}).get("days", [])
+    today_day = next((d for d in days if d.get("day", "").lower() == today_name.lower()), None)
+    return today_day.get("exercises", []) if today_day else []
+
+
+def _do_log_set(user: dict, exercise: str, weight_kg: float, reps: int) -> tuple[dict, bool]:
+    """Append a set to user state, check for PR. Returns (entry, is_pr)."""
+    one_rm = _epley_1rm(weight_kg, reps)
+    entry = {
+        "exercise_name": exercise,
+        "weight_kg": weight_kg,
+        "reps": reps,
+        "estimated_1rm": one_rm,
+        "date": _today(),
+        "session_id": user["active_session_id"],
+    }
+    user["set_logs"].append(entry)
+    user["set_logs"] = user["set_logs"][-500:]
+    if user["active_session_id"] is not None:
+        user["command_state"].setdefault("current_session_sets", []).append(entry)
+    pr = user["prs"].get(exercise)
+    is_pr = pr is None or one_rm > pr["estimated_1rm"]
+    if is_pr:
+        user["prs"][exercise] = {"weight_kg": weight_kg, "reps": reps, "estimated_1rm": one_rm, "date": _today()}
+    _save_store()
+    return entry, is_pr
+
+
+def _ex_keyboard(exercises: list, has_session: bool) -> InlineKeyboardMarkup:
+    """Inline keyboard listing today's exercises as tap buttons."""
+    rows: list[list[InlineKeyboardButton]] = []
+    pair: list[InlineKeyboardButton] = []
+    for ex in exercises:
+        name = ex["name"] if isinstance(ex, dict) else str(ex)
+        pair.append(InlineKeyboardButton(name, callback_data=f"wk:ex:{name[:40]}"))
+        if len(pair) == 2:
+            rows.append(pair)
+            pair = []
+    if pair:
+        rows.append(pair)
+    rows.append([InlineKeyboardButton("✏️ Other exercise…", callback_data="wk:ex_custom")])
+    if has_session:
+        rows.append([InlineKeyboardButton("✅ End Session", callback_data="wk:end")])
+    else:
+        rows.append([InlineKeyboardButton("🏋️ Start Session", callback_data="wk:start")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _weight_keyboard(exercise_name: str, user: dict) -> InlineKeyboardMarkup:
+    """Inline keyboard with recent weights ±increments for this exercise."""
+    recent = [s["weight_kg"] for s in reversed(user["set_logs"]) if s["exercise_name"] == exercise_name]
+    last = recent[0] if recent else None
+    if last:
+        opts = sorted({max(0.0, last - 5), max(0.0, last - 2.5), last, last + 2.5, last + 5})
+    else:
+        opts = [20.0, 40.0, 60.0, 80.0, 100.0]
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for w in opts:
+        row.append(InlineKeyboardButton(f"{w:g}kg", callback_data=f"wk:w:{w}"))
+        if len(row) == 3:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✏️ Type weight…", callback_data="wk:w:type")])
+    rows.append([InlineKeyboardButton("‹ Back to exercises", callback_data="wk:pick")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _rep_keyboard() -> InlineKeyboardMarkup:
+    """Inline keyboard for selecting rep count."""
+    counts = [3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20]
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for r in counts:
+        row.append(InlineKeyboardButton(str(r), callback_data=f"wk:r:{r}"))
+        if len(row) == 4:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton("✏️ Type reps…", callback_data="wk:r:type")])
+    rows.append([InlineKeyboardButton("‹ Back to exercises", callback_data="wk:pick")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _after_set_keyboard() -> InlineKeyboardMarkup:
+    """Keyboard shown after a set is successfully logged."""
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("Same exercise", callback_data="wk:more"),
+            InlineKeyboardButton("Other exercise", callback_data="wk:pick"),
+        ],
+        [InlineKeyboardButton("✅ End Session", callback_data="wk:end")],
+    ])
 
 
 def _sparkline(values: list[float]) -> str:
@@ -521,24 +627,19 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         user["command_state"]["current_session_sets"] = []
         _save_store()
 
+        exercises = _get_today_exercises(user)
         plan_text = ""
-        if user["last_plan"]:
+        if exercises:
             today_name = _date.today().strftime("%A")
             days = user["last_plan"].get("workout", {}).get("days", [])
             today_day = next((d for d in days if d.get("day", "").lower() == today_name.lower()), None)
-            if today_day:
-                exercises = today_day.get("exercises", [])
-                lines = "\n".join(
-                    f"• {e['name']}: {e['sets']}×{e['reps']}"
-                    for e in exercises
-                )
-                plan_text = f"\n\n*Today ({today_name} — {today_day.get('focus', '')}):*\n{lines}"
+            focus = today_day.get("focus", "") if today_day else ""
+            plan_text = f"\n*{today_name} — {focus}*" if focus else ""
 
         await update.message.reply_text(
-            f"🏋️ *Session #{sid} started!*{plan_text}\n\n"
-            "Log sets as you go:\n`/logset bench 100kg 8`\n\n"
-            "Type `/workout end` when you're done.",
+            f"🏋️ *Session #{sid} started!*{plan_text}\n\nTap an exercise to log a set:",
             parse_mode="Markdown",
+            reply_markup=_ex_keyboard(exercises, has_session=True),
         )
 
     elif sub == "end":
@@ -575,18 +676,20 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     else:
         # Show today's planned workout
         if not user["last_plan"]:
+            has_session = user["active_session_id"] is not None
             await update.message.reply_text(
-                "No plan yet. Run /plan to generate one first, or `/workout start` to begin a free session.",
-                parse_mode="Markdown",
+                "No plan yet — run /plan to generate one, or tap below to start a free session.",
+                reply_markup=_ex_keyboard([], has_session=has_session),
             )
             return
         today_name = _date.today().strftime("%A")
         days = user["last_plan"].get("workout", {}).get("days", [])
         today_day = next((d for d in days if d.get("day", "").lower() == today_name.lower()), None)
         if not today_day:
+            has_session = user["active_session_id"] is not None
             await update.message.reply_text(
-                f"No session planned for {today_name}. Rest day! Or `/workout start` for a free session.",
-                parse_mode="Markdown",
+                f"No session planned for {today_name} — rest day! Or start a free session:",
+                reply_markup=_ex_keyboard([], has_session=has_session),
             )
             return
         exercises = today_day.get("exercises", [])
@@ -594,11 +697,12 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"• {e['name']}: {e['sets']}×{e['reps']} | {e.get('notes', '')}".rstrip(" |")
             for e in exercises
         )
-        status = f"🔴 Session open (#{user['active_session_id']})" if user["active_session_id"] else "⚪ No open session"
+        has_session = user["active_session_id"] is not None
+        status = f"🔴 Session open (#{user['active_session_id']})" if has_session else "⚪ No open session"
         await update.message.reply_text(
-            f"🏋️ *{today_name} — {today_day.get('focus', '')}*\n{status}\n\n{lines}\n\n"
-            "Start logging: `/workout start` → `/logset bench 100kg 8`",
+            f"🏋️ *{today_name} — {today_day.get('focus', '')}*\n{status}\n\n{lines}",
             parse_mode="Markdown",
+            reply_markup=_ex_keyboard(exercises, has_session=has_session),
         )
 
 
@@ -661,6 +765,174 @@ async def cmd_logset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         f"1RM estimate: ~{one_rm}kg (Epley){pr_text}",
         parse_mode="Markdown",
     )
+
+
+async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/log — quick shortcut: starts session if needed, then shows exercise picker."""
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    if user["active_session_id"] is None:
+        # Auto-start a new session
+        user["session_counter"] += 1
+        sid = user["session_counter"]
+        user["active_session_id"] = sid
+        user["command_state"]["current_session_sets"] = []
+        _save_store()
+        exercises = _get_today_exercises(user)
+        await update.message.reply_text(
+            f"🏋️ *Session #{sid} started!* Tap an exercise:",
+            parse_mode="Markdown",
+            reply_markup=_ex_keyboard(exercises, has_session=True),
+        )
+    else:
+        exercises = _get_today_exercises(user)
+        await update.message.reply_text(
+            f"🏋️ Session #{user['active_session_id']} — Tap an exercise:",
+            reply_markup=_ex_keyboard(exercises, has_session=True),
+        )
+
+
+async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles all wk: callback queries from inline workout keyboards."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    data: str = query.data  # starts with "wk:"
+    part = data[3:]          # strip "wk:"
+
+    if part == "start":
+        if user["active_session_id"] is not None:
+            exercises = _get_today_exercises(user)
+            await query.edit_message_text(
+                f"⚠️ Session #{user['active_session_id']} already open. Tap an exercise:",
+                reply_markup=_ex_keyboard(exercises, has_session=True),
+            )
+            return
+        user["session_counter"] += 1
+        sid = user["session_counter"]
+        user["active_session_id"] = sid
+        user["command_state"]["current_session_sets"] = []
+        _save_store()
+        exercises = _get_today_exercises(user)
+        await query.edit_message_text(
+            f"🏋️ *Session #{sid} started!* Tap an exercise:",
+            parse_mode="Markdown",
+            reply_markup=_ex_keyboard(exercises, has_session=True),
+        )
+
+    elif part.startswith("ex:"):
+        name = part[3:]
+        context.user_data["wk_ex"] = name
+        pr = user["prs"].get(name)
+        pr_hint = f"\n_Current PR: {pr['weight_kg']}kg×{pr['reps']} (~{pr['estimated_1rm']}kg 1RM)_" if pr else ""
+        await query.edit_message_text(
+            f"*{name}*{pr_hint}\n\nSelect weight (kg):",
+            parse_mode="Markdown",
+            reply_markup=_weight_keyboard(name, user),
+        )
+
+    elif part == "ex_custom":
+        context.user_data["wk_awaiting"] = "exercise"
+        await query.edit_message_text("Type the exercise name:")
+
+    elif part.startswith("w:"):
+        val = part[2:]
+        if val == "type":
+            context.user_data["wk_awaiting"] = "weight"
+            ex = context.user_data.get("wk_ex", "exercise")
+            await query.edit_message_text(
+                f"*{ex}* — Type weight in kg (e.g. `102.5`):",
+                parse_mode="Markdown",
+            )
+        else:
+            weight = float(val)
+            context.user_data["wk_w"] = weight
+            ex = context.user_data.get("wk_ex", "exercise")
+            await query.edit_message_text(
+                f"*{ex}* — {weight:g}kg\n\nSelect reps:",
+                parse_mode="Markdown",
+                reply_markup=_rep_keyboard(),
+            )
+
+    elif part.startswith("r:"):
+        val = part[2:]
+        if val == "type":
+            context.user_data["wk_awaiting"] = "reps"
+            ex = context.user_data.get("wk_ex", "?")
+            w = context.user_data.get("wk_w", "?")
+            await query.edit_message_text(
+                f"*{ex}* @ {w}kg — Type reps:",
+                parse_mode="Markdown",
+            )
+        else:
+            reps = int(val)
+            ex = context.user_data.get("wk_ex")
+            weight = context.user_data.get("wk_w")
+            if not ex or weight is None:
+                await query.edit_message_text("Session state lost. Start over with /log.")
+                return
+            entry, is_pr = _do_log_set(user, ex, weight, reps)
+            pr_badge = " 🏆 *NEW PR!*" if is_pr else ""
+            await query.edit_message_text(
+                f"✅ *{ex}* — {weight:g}kg × {reps}{pr_badge}\n"
+                f"Est. 1RM: ~{entry['estimated_1rm']}kg",
+                parse_mode="Markdown",
+                reply_markup=_after_set_keyboard(),
+            )
+
+    elif part == "more":
+        ex = context.user_data.get("wk_ex", "")
+        if not ex:
+            exercises = _get_today_exercises(user)
+            await query.edit_message_text(
+                "Pick an exercise:",
+                reply_markup=_ex_keyboard(exercises, has_session=user["active_session_id"] is not None),
+            )
+            return
+        await query.edit_message_text(
+            f"*{ex}* — Select weight:",
+            parse_mode="Markdown",
+            reply_markup=_weight_keyboard(ex, user),
+        )
+
+    elif part == "pick":
+        exercises = _get_today_exercises(user)
+        await query.edit_message_text(
+            "Select exercise:",
+            reply_markup=_ex_keyboard(exercises, has_session=user["active_session_id"] is not None),
+        )
+
+    elif part == "end":
+        sid = user["active_session_id"]
+        if sid is None:
+            await query.edit_message_text("No open session. Use /log to start one.")
+            return
+        session_sets = user["command_state"].get("current_session_sets", [])
+        total_volume = sum(s["weight_kg"] * s["reps"] for s in session_sets)
+        total_sets = len(session_sets)
+        user["active_session_id"] = None
+        user["command_state"]["current_session_sets"] = []
+        _save_store()
+
+        ex_summary = ""
+        if session_sets:
+            by_ex: dict[str, list] = {}
+            for s in session_sets:
+                by_ex.setdefault(s["exercise_name"], []).append(s)
+            lines = []
+            for ex_name, sets in by_ex.items():
+                best = max(sets, key=lambda x: x["estimated_1rm"])
+                lines.append(f"  {ex_name}: {len(sets)} sets | best {best['weight_kg']}kg×{best['reps']}")
+            ex_summary = "\n" + "\n".join(lines)
+
+        await query.edit_message_text(
+            f"✅ *Session #{sid} complete!*\n\n"
+            f"Sets: {total_sets} | Volume: {total_volume:,.0f}kg{ex_summary}\n\n"
+            "Type /stats to see your PRs.",
+            parse_mode="Markdown",
+        )
 
 
 async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1308,6 +1580,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await _handle_connect_step(update, user, text)
         return
 
+    # Workout keyboard — handle free-text input when user tapped "Type…" buttons
+    wk_awaiting = context.user_data.get("wk_awaiting")
+    if wk_awaiting == "exercise":
+        context.user_data.pop("wk_awaiting")
+        name = text.strip().title()
+        context.user_data["wk_ex"] = name
+        await update.message.reply_text(
+            f"*{name}* — Select weight:",
+            parse_mode="Markdown",
+            reply_markup=_weight_keyboard(name, user),
+        )
+        return
+    if wk_awaiting == "weight":
+        context.user_data.pop("wk_awaiting")
+        weight = _parse_logset_weight_kg(text.strip())
+        if weight is None:
+            await update.message.reply_text("Couldn't parse that. Try `100`, `100kg`, or `225lbs`.")
+            return
+        context.user_data["wk_w"] = weight
+        ex = context.user_data.get("wk_ex", "exercise")
+        await update.message.reply_text(
+            f"*{ex}* — {weight:g}kg\n\nSelect reps:",
+            parse_mode="Markdown",
+            reply_markup=_rep_keyboard(),
+        )
+        return
+    if wk_awaiting == "reps":
+        context.user_data.pop("wk_awaiting")
+        try:
+            reps = int(text.strip())
+        except ValueError:
+            await update.message.reply_text("Type a whole number for reps, e.g. `8`.")
+            return
+        ex = context.user_data.get("wk_ex")
+        weight = context.user_data.get("wk_w")
+        if not ex or weight is None:
+            await update.message.reply_text("Session state lost. Start over with /log.")
+            return
+        entry, is_pr = _do_log_set(user, ex, weight, reps)
+        pr_badge = " 🏆 *NEW PR!*" if is_pr else ""
+        await update.message.reply_text(
+            f"✅ *{ex}* — {weight:g}kg × {reps}{pr_badge}\n"
+            f"Est. 1RM: ~{entry['estimated_1rm']}kg",
+            parse_mode="Markdown",
+            reply_markup=_after_set_keyboard(),
+        )
+        return
+
     msg = await update.message.reply_text("💬 Thinking…")
     try:
         reply, plan_update, plan_regen = _chat_with_coach(text, user)
@@ -1807,6 +2127,7 @@ def main() -> None:
     app.add_handler(CommandHandler("plan", cmd_plan))
     app.add_handler(CommandHandler("checkin", cmd_checkin))
     app.add_handler(CommandHandler("workout", cmd_workout))
+    app.add_handler(CommandHandler("log", cmd_log))
     app.add_handler(CommandHandler("logset", cmd_logset))
     app.add_handler(CommandHandler("progress", cmd_progress))
     app.add_handler(CommandHandler("measurements", cmd_measurements))
@@ -1817,6 +2138,7 @@ def main() -> None:
     app.add_handler(CommandHandler("connect", cmd_connect))
     app.add_handler(CommandHandler("mfp", cmd_mfp))
     app.add_handler(CommandHandler("research", cmd_research))
+    app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
