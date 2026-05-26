@@ -631,6 +631,30 @@ async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: d
         parse_mode="Markdown",
     )
 
+    total_checkins = len(user["checkins"])
+    tier = user.get("subscription_tier", "free")
+    # Conversion nudge after 3rd check-in
+    if total_checkins == 3 and tier == "free":
+        await update.message.reply_text(
+            "📈 *3 check-ins done!*\n\n"
+            "You're building a recovery tracking habit. "
+            "Pro members get their full recovery trend analysis, "
+            "Garmin HRV sync, and weekly AI coaching reports.\n\n"
+            "Upgrade at the web app to unlock all features 🔓",
+            parse_mode="Markdown",
+        )
+    # Nudge at 7-day streak
+    elif streak_count == 7 and tier == "free":
+        await update.message.reply_text(
+            "🔥 *7-day streak!*\n\n"
+            "You're in the top 10% for consistency. "
+            "Pro users get automated weekly reports, "
+            "progressive overload suggestions after every session, "
+            "and unlimited photo analyses.\n\n"
+            "Lock in your results with Pro — upgrade at the web app 🚀",
+            parse_mode="Markdown",
+        )
+
 
 async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
@@ -689,12 +713,44 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 lines.append(f"  {ex}: {len(sets)} sets | best {best['weight_kg']}kg×{best['reps']} (1RM ~{best['estimated_1rm']}kg)")
             exercise_summary = "\n" + "\n".join(lines)
 
+        # Generate next-session targets (progressive overload suggestion)
+        next_targets_text = ""
+        if session_sets:
+            try:
+                from claude_service import generate_next_session_targets
+                profile = user.get("profile") or {}
+                plan_day_ctx = None
+                if user.get("last_plan"):
+                    today_name_end = _date.today().strftime("%A")
+                    days_ctx = user["last_plan"].get("workout", {}).get("days", [])
+                    plan_day_ctx = next(
+                        (d for d in days_ctx if d.get("day", "").lower() == today_name_end.lower()),
+                        None,
+                    )
+                targets = await asyncio.get_event_loop().run_in_executor(
+                    None, generate_next_session_targets, session_sets, plan_day_ctx, profile
+                )
+                next_targets_text = f"\n\n🎯 *Next session targets:*\n_{targets}_"
+            except Exception:
+                pass
+
         await update.message.reply_text(
             f"✅ *Session #{sid} complete!*\n\n"
-            f"Sets: {total_sets} | Volume: {total_volume:,.0f}kg{exercise_summary}\n\n"
+            f"Sets: {total_sets} | Volume: {total_volume:,.0f}kg{exercise_summary}"
+            f"{next_targets_text}\n\n"
             "Type /stats to see your PRs.",
             parse_mode="Markdown",
         )
+
+        # Freemium nudge: after 7th session suggest upgrading for reports
+        if user.get("session_counter", 0) % 7 == 0 and user.get("subscription_tier", "free") == "free":
+            await update.message.reply_text(
+                "📊 *7 sessions logged!*\n\n"
+                "Pro members get a weekly AI coaching report that summarizes your progress, "
+                "spots plateaus, and prioritizes your training. \n\n"
+                "Upgrade at the web app (Settings → Billing) to unlock it 🚀",
+                parse_mode="Markdown",
+            )
 
     else:
         # Show today's planned workout
@@ -1839,6 +1895,56 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await msg.edit_text(f"❌ Report generation failed: {e}")
 
 
+async def cmd_billing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show subscription tier and upgrade info."""
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    tier = user.get("subscription_tier", "free")
+
+    tier_labels = {"free": "Free", "pro": "Pro ($19.99/mo)", "elite": "Elite ($49.99/mo)"}
+    tier_label = tier_labels.get(tier, tier.capitalize())
+
+    pro_features = [
+        "Unlimited AI photo analyses",
+        "Weekly AI coaching report (/report)",
+        "Garmin / MFP sync",
+        "Progressive overload suggestions after sessions",
+        "Weak-point analysis (/weakpoints)",
+        "Meal logging with macro lookup",
+        "Full bot access (all commands)",
+    ]
+    elite_extras = [
+        "Daily AI coaching messages",
+        "Competition prep mode",
+        "Before/after photo comparison",
+        "PDF progress reports",
+        "Priority analysis queue",
+    ]
+
+    if tier == "free":
+        pro_list = "\n".join(f"✅ {f}" for f in pro_features)
+        await update.message.reply_text(
+            f"💳 *Your Plan: {tier_label}*\n\n"
+            f"*Pro features you're missing:*\n{pro_list}\n\n"
+            f"*Upgrade to Pro — $19.99/month*\n"
+            f"Visit the web app → Profile → Billing to upgrade.",
+            parse_mode="Markdown",
+        )
+    elif tier == "pro":
+        elite_list = "\n".join(f"✅ {f}" for f in elite_extras)
+        await update.message.reply_text(
+            f"💳 *Your Plan: {tier_label}*\n\n"
+            f"*Elite extras available:*\n{elite_list}\n\n"
+            f"Visit the web app → Profile → Billing to upgrade to Elite.",
+            parse_mode="Markdown",
+        )
+    else:
+        await update.message.reply_text(
+            f"💳 *Your Plan: {tier_label}*\n\nYou have full access to all features. Thank you! 🏆",
+            parse_mode="Markdown",
+        )
+
+
 # ── Photo handler ─────────────────────────────────────────────────────────────
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2527,6 +2633,7 @@ def main() -> None:
     app.add_handler(CommandHandler("goals", cmd_goals))
     app.add_handler(CommandHandler("weakpoints", cmd_weakpoints))
     app.add_handler(CommandHandler("report", cmd_report))
+    app.add_handler(CommandHandler("billing", cmd_billing))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

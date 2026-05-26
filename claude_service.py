@@ -8,6 +8,72 @@ from pathlib import Path
 ANALYSIS_MODEL = "claude-opus-4-7"
 SUMMARY_MODEL = "claude-haiku-4-5-20251001"
 
+# Goal-specific system prompt variants injected into every AI coaching call.
+_GOAL_SYSTEM_PROMPTS: dict[str, str] = {
+    "bulk": (
+        "You are coaching an athlete in a BULK phase. "
+        "Emphasize progressive overload above all else. "
+        "Flag immediately if body weight is not rising — suggest caloric increases of 150–200 kcal/day. "
+        "Push protein and carbohydrate compliance. "
+        "Prioritize compound lifts and volume accumulation. "
+        "Celebrate strength PRs. Deload warnings only when joints are compromised."
+    ),
+    "cut": (
+        "You are coaching an athlete in a CUT phase. "
+        "Caloric deficit adherence is the top priority — flag any days over target. "
+        "Watch for excessive soreness (muscle loss risk) and recommend deloads proactively. "
+        "Emphasize high protein to protect lean mass. "
+        "Suggest adding 20 min steady-state cardio if weight loss stalls for 10+ days. "
+        "Reinforce that strength maintenance, not gain, is success during a cut."
+    ),
+    "recomp": (
+        "You are coaching an athlete in a RECOMPOSITION phase. "
+        "Balance training intensity and nutrition compliance equally. "
+        "Prefer training consistency over maximum volume. "
+        "Flag macro cycling opportunities — higher carbs on training days, lower on rest days. "
+        "Progress is slower than dedicated bulk/cut; frame this as normal and expected. "
+        "Weekly body measurements matter more than scale weight for tracking recomp."
+    ),
+    "strength": (
+        "You are coaching an ATHLETE prioritizing STRENGTH gains. "
+        "PRs on the main lifts (squat, bench, deadlift, overhead press) are the primary success metric. "
+        "Use Prilepin chart rep ranges (1–6 reps, 70–90% 1RM). "
+        "Flag HRV drops >15% from 7-day average as neural fatigue risk. "
+        "Recommend longer rest periods (3–5 min) and lower daily rep volume. "
+        "Nutrition supports performance — keep protein high, carbs timed around sessions."
+    ),
+    "prep": (
+        "You are coaching an athlete in COMPETITION PREP (show prep). "
+        "Strict caloric and macro adherence is non-negotiable. "
+        "Weekly conditioning assessments are critical — track vascularity, muscle fullness, and stage readiness. "
+        "Count down to show date; flag if current trajectory won't hit target conditioning. "
+        "Posing practice is as important as training — recommend 15 min/day. "
+        "Flag any water retention or fullness changes that could indicate dietary issues. "
+        "In peak week, adjust carb cycling and water manipulation guidance."
+    ),
+    "beginner": (
+        "You are coaching a BEGINNER athlete. "
+        "Use simple, jargon-free language. Explain the 'why' behind every recommendation. "
+        "Celebrate every PR and milestone — early wins build the habit. "
+        "Use longer progression cycles (add weight every 2–3 sessions, not every session). "
+        "Prioritize movement quality and consistency over intensity. "
+        "Keep nutrition advice simple: hit protein target, eat mostly whole foods. "
+        "Never overwhelm with too many changes at once — one adjustment at a time."
+    ),
+}
+
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are an elite strength coach and sports nutritionist with 20+ years of experience "
+    "coaching competitive physique athletes. Be specific, evidence-based, and actionable."
+)
+
+
+def get_goal_system_prompt(goal: str | None) -> str:
+    """Return the appropriate system prompt for the athlete's goal."""
+    if not goal:
+        return _DEFAULT_SYSTEM_PROMPT
+    return _GOAL_SYSTEM_PROMPTS.get(goal.lower(), _DEFAULT_SYSTEM_PROMPT)
+
 # Module-level singleton — one client, one connection pool for the process lifetime.
 _anthropic_client: anthropic.Anthropic | None = None
 
@@ -355,9 +421,13 @@ Create a full program. Return ONLY valid JSON with this exact structure:
 
 Fill in ALL fields with real, specific data for THIS athlete. Make the workout plan complete for all {days} training days. Only return valid JSON."""
 
+    goal = profile.goal if profile and hasattr(profile, "goal") else None
+    system_prompt = get_goal_system_prompt(goal)
+
     message = client.messages.create(
         model=ANALYSIS_MODEL,
         max_tokens=8000,
+        system=system_prompt,
         messages=[{"role": "user", "content": prompt}],
     )
 
@@ -429,6 +499,44 @@ def generate_progressive_overload_suggestion(exercise: str, set_history: list, p
                 f"{profile_ctx}Recent {exercise} history:\n{history_text}\n\n"
                 "Give one specific, actionable recommendation for the next session — "
                 "exact weight and reps to target. One sentence only."
+            ),
+        }],
+    )
+    return message.content[0].text.strip()
+
+
+def generate_next_session_targets(session_sets: list, plan_day: dict | None, profile: dict | None = None) -> str:
+    """After a session ends, suggest targets for the next identical session."""
+    if not session_sets:
+        return "No sets logged for this session."
+
+    by_exercise: dict[str, list] = {}
+    for s in session_sets:
+        ex = s.get("exercise_name", "Unknown")
+        by_exercise.setdefault(ex, []).append(s)
+
+    history_lines = []
+    for ex, sets in by_exercise.items():
+        last = sorted(sets, key=lambda x: x.get("logged_at", ""))[-1]
+        history_lines.append(
+            f"  {ex}: {last['weight_kg']}kg × {last['reps']} reps"
+            f" (est. 1RM ~{last.get('estimated_1rm', '?')}kg)"
+        )
+
+    goal = (profile or {}).get("goal", "general")
+    plan_focus = plan_day.get("focus", "") if plan_day else ""
+
+    message = _client().messages.create(
+        model=SUMMARY_MODEL,
+        max_tokens=200,
+        messages=[{
+            "role": "user",
+            "content": (
+                f"Session completed. Goal: {goal}. Focus: {plan_focus}\n"
+                f"Sets logged:\n" + "\n".join(history_lines) + "\n\n"
+                "Give 3–4 specific targets for the NEXT identical session (exact weight+reps per exercise). "
+                "One sentence per exercise. Be concrete — e.g. 'Bench: try 102.5kg × 5 reps'. "
+                "Only return the recommendations, no preamble."
             ),
         }],
     )

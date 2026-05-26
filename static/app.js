@@ -173,6 +173,7 @@ function showTab(tab) {
         research: loadResearch,
         progress: loadProgress,
         profile: loadProfile,
+        billing: loadBilling,
     };
     if (loaders[tab]) loaders[tab]();
 }
@@ -892,7 +893,11 @@ async function endSession() {
         state.selectedExercise = null;
         showNoSession();
         const volStr = summary.total_volume_kg > 0 ? ` · ${summary.total_volume_kg}kg volume` : '';
-        showToast(`Session done! ${summary.set_count} sets${volStr}`);
+        const streakStr = summary.workout_streak > 1 ? ` 🔥 ${summary.workout_streak}-day workout streak!` : '';
+        showToast(`Session done! ${summary.set_count} sets${volStr}${streakStr}`);
+        if (summary.next_session_targets) {
+            showToast(`Next session: ${summary.next_session_targets.slice(0, 100)}…`, 'info');
+        }
         invalidateCache('/sessions/history');
         await loadWorkout();
     } catch (err) {
@@ -1040,6 +1045,37 @@ function startSessionTimer() {
 function stopSessionTimer() {
     clearInterval(state.sessionTimerInterval);
     state.sessionTimerInterval = null;
+}
+
+/* ── Billing ── */
+async function loadBilling() {
+    const data = await api('GET', '/subscription').catch(() => null);
+    if (!data) return;
+
+    const badge = document.getElementById('billing-tier-badge');
+    const desc = document.getElementById('billing-tier-desc');
+    badge.textContent = data.tier.charAt(0).toUpperCase() + data.tier.slice(1);
+    badge.className = `billing-tier-badge ${data.tier}`;
+
+    const descs = {
+        free: 'Basic workout logging, check-ins, and 3 photo analyses per month.',
+        pro: 'Unlimited photo analyses, weekly reports, Garmin sync, and all bot commands.',
+        elite: 'All Pro features plus daily AI coaching, comp prep mode, and priority analysis.',
+    };
+    desc.textContent = descs[data.tier] || '';
+
+    document.getElementById('billing-free-section').style.display = data.tier === 'free' ? '' : 'none';
+    document.getElementById('billing-pro-section').style.display = data.tier === 'pro' ? '' : 'none';
+    document.getElementById('billing-elite-section').style.display = data.tier === 'elite' ? '' : 'none';
+}
+
+async function upgradeTier(tier) {
+    const res = await api('POST', '/subscription/upgrade', { tier }).catch(e => ({ error: e.message }));
+    if (res && res.error) {
+        showToast(res.error || 'Billing not configured yet — add STRIPE_SECRET_KEY to enable payments.', 'error');
+    } else {
+        showToast('Redirecting to checkout…');
+    }
 }
 
 /* ── Utilities ── */

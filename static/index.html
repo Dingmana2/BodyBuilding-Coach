@@ -21,6 +21,7 @@
                 <button class="nav-tab" data-tab="research" onclick="showTab('research')">Research</button>
                 <button class="nav-tab" data-tab="progress" onclick="showTab('progress')">Progress</button>
                 <button class="nav-tab" data-tab="profile" onclick="showTab('profile')">Profile</button>
+                <button class="nav-tab" data-tab="billing" onclick="showTab('billing')">Billing</button>
                 <div id="user-badge" class="user-badge" style="display:none">
                     <span id="user-email-short"></span>
                     <button class="btn btn-ghost btn-sm" onclick="signOut()">Sign Out</button>
@@ -313,6 +314,75 @@
                     </div>
                     <button type="submit" class="btn btn-primary">Save Profile</button>
                 </form>
+            </div>
+        </section>
+
+        <!-- BILLING -->
+        <section id="tab-billing" class="tab-content">
+            <div class="page-header">
+                <h1>Billing & Subscription</h1>
+                <p class="subtitle">Manage your plan</p>
+            </div>
+
+            <div id="billing-current" class="card" style="margin-bottom:1.5rem">
+                <div class="billing-tier-badge" id="billing-tier-badge">Free</div>
+                <p id="billing-tier-desc" style="color:var(--text-muted);margin-top:.5rem"></p>
+            </div>
+
+            <div id="billing-free-section">
+                <div class="pricing-grid">
+                    <div class="pricing-card pricing-card-pro">
+                        <div class="pricing-name">Pro</div>
+                        <div class="pricing-price">$19.99<span>/month</span></div>
+                        <ul class="pricing-features">
+                            <li>Unlimited AI photo analyses</li>
+                            <li>Weekly AI coaching report</li>
+                            <li>Garmin &amp; MFP sync</li>
+                            <li>Progressive overload suggestions</li>
+                            <li>Weak-point analysis</li>
+                            <li>Meal logging with macro lookup</li>
+                            <li>All Telegram bot commands</li>
+                        </ul>
+                        <button class="btn btn-primary btn-block" onclick="upgradeTier('pro')">Upgrade to Pro</button>
+                    </div>
+                    <div class="pricing-card pricing-card-elite">
+                        <div class="pricing-name">Elite</div>
+                        <div class="pricing-price">$49.99<span>/month</span></div>
+                        <ul class="pricing-features">
+                            <li>Everything in Pro</li>
+                            <li>Daily AI coaching messages</li>
+                            <li>Competition prep mode</li>
+                            <li>Before/after photo comparison</li>
+                            <li>PDF progress reports</li>
+                            <li>Priority analysis queue</li>
+                        </ul>
+                        <button class="btn btn-secondary btn-block" onclick="upgradeTier('elite')">Upgrade to Elite</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="billing-pro-section" style="display:none">
+                <div class="pricing-card pricing-card-elite" style="max-width:420px">
+                    <div class="pricing-name">Elite</div>
+                    <div class="pricing-price">$49.99<span>/month</span></div>
+                    <ul class="pricing-features">
+                        <li>Everything in Pro</li>
+                        <li>Daily AI coaching messages</li>
+                        <li>Competition prep mode</li>
+                        <li>Before/after photo comparison</li>
+                        <li>PDF progress reports</li>
+                        <li>Priority analysis queue</li>
+                    </ul>
+                    <button class="btn btn-primary btn-block" onclick="upgradeTier('elite')">Upgrade to Elite</button>
+                </div>
+            </div>
+
+            <div id="billing-elite-section" style="display:none">
+                <div class="card" style="text-align:center;padding:2rem">
+                    <div style="font-size:2rem">👑</div>
+                    <h3 style="margin:.5rem 0">You're on Elite</h3>
+                    <p style="color:var(--text-muted)">You have full access to every feature. Thank you for your support!</p>
+                </div>
             </div>
         </section>
     </main>

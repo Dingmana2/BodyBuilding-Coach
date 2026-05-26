@@ -88,9 +88,11 @@ from claude_service import (
     analyze_body_photo,
     estimate_meal_macros,
     generate_comprehensive_plan,
+    generate_next_session_targets,
     generate_recovery_insight,
     generate_weekly_report,
     analyze_weak_points,
+    get_goal_system_prompt,
 )
 from research_service import refresh_all_research
 
@@ -190,6 +192,57 @@ def get_me(
     }
 
 
+def _get_user_tier(user_id: int, db: Session) -> str:
+    """Return subscription tier for the given user_id (default 'free')."""
+    if not user_id:
+        return "free"
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    return user.subscription_tier if user else "free"
+
+
+@app.get("/api/subscription")
+def get_subscription(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    tier = _get_user_tier(current_user_id, db)
+    features = {
+        "free": ["workout_logging", "checkins", "basic_stats", "1_plan_per_month"],
+        "pro": ["unlimited_photo_analysis", "weekly_reports", "garmin_sync", "progressive_overload", "weak_point_analysis", "meal_logging", "all_bot_commands"],
+        "elite": ["all_pro_features", "daily_ai_coaching", "show_prep_mode", "comparison_photos", "pdf_reports", "priority_analysis"],
+    }
+    tier_features = {k: (k == tier or (k == "free")) for k in features}
+    return {
+        "tier": tier,
+        "features_included": features.get(tier, features["free"]),
+        "upgrade_available": tier in ("free", "pro"),
+        "pro_price_monthly": 19.99,
+        "elite_price_monthly": 49.99,
+        "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY")),
+    }
+
+
+@app.post("/api/subscription/upgrade")
+async def upgrade_subscription(
+    request: Request,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    if not current_user_id:
+        raise HTTPException(status_code=401, detail="Sign in to upgrade.")
+    if not os.getenv("STRIPE_SECRET_KEY"):
+        raise HTTPException(
+            status_code=503,
+            detail="Billing is not configured yet. Add STRIPE_SECRET_KEY to enable payments.",
+        )
+    data = await request.json()
+    target_tier = data.get("tier", "pro")
+    if target_tier not in ("pro", "elite"):
+        raise HTTPException(status_code=400, detail="tier must be 'pro' or 'elite'.")
+    # Stripe checkout session creation goes here once STRIPE_SECRET_KEY is set
+    raise HTTPException(status_code=501, detail="Stripe integration coming soon. Add STRIPE_SECRET_KEY + price IDs.")
+
+
 # ── Profile ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/profile")
@@ -252,7 +305,26 @@ async def save_profile(
 # ── Body Analysis ─────────────────────────────────────────────────────────────
 
 @app.post("/api/analyze")
-async def analyze_photo(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
+async def analyze_photo(
+    request: Request,
+    file: UploadFile = File(...),
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    tier = _get_user_tier(current_user_id, db)
+    if tier == "free":
+        month_start = datetime.now(timezone.utc).strftime("%Y-%m-01")
+        monthly_count = (
+            db.query(models.BodyAnalysis)
+            .filter(models.BodyAnalysis.created_at >= datetime.fromisoformat(month_start))
+            .count()
+        )
+        if monthly_count >= 3:
+            raise HTTPException(
+                status_code=402,
+                detail="Free plan limit: 3 photo analyses per month. Upgrade to Pro for unlimited analyses.",
+            )
+
     # Reject oversized uploads before reading the body into RAM.
     content_length = request.headers.get("content-length")
     if content_length and int(content_length) > 20 * 1024 * 1024:
@@ -559,7 +631,11 @@ async def start_session(
 
 
 @app.post("/api/sessions/{session_id}/end")
-def end_session(session_id: int, db: Session = Depends(get_db)):
+async def end_session(
+    session_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     session = db.query(models.WorkoutSession).filter(models.WorkoutSession.id == session_id).first()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
@@ -567,11 +643,38 @@ def end_session(session_id: int, db: Session = Depends(get_db)):
     sets = db.query(models.SetLog).filter(models.SetLog.session_id == session_id).all()
     total_volume = sum(s.weight_kg * s.reps for s in sets)
     db.commit()
+
+    _update_streak(db, current_user_id, "workout")
+    workout_streak = _get_streak(db, current_user_id, "workout")
+    streak_count = workout_streak.current_streak if workout_streak else 1
+    if streak_count in (7, 14, 30, 60, 90):
+        _award_badge(db, current_user_id, f"{streak_count}_day_workout_streak")
+
+    next_session_tip = None
+    try:
+        profile = db.query(models.UserProfile).filter(
+            models.UserProfile.user_id == current_user_id
+        ).first() if current_user_id else None
+        sets_data = [
+            {"exercise_name": s.exercise_name, "weight_kg": s.weight_kg,
+             "reps": s.reps, "estimated_1rm": s.estimated_1rm,
+             "logged_at": s.logged_at.isoformat()}
+            for s in sets
+        ]
+        profile_dict = {"goal": profile.goal} if profile else None
+        next_session_tip = await asyncio.to_thread(
+            generate_next_session_targets, sets_data, None, profile_dict
+        )
+    except Exception:
+        pass
+
     return {
         "status": "ended",
         "set_count": len(sets),
         "total_volume_kg": round(total_volume, 1),
         "exercises": list({s.exercise_name for s in sets}),
+        "workout_streak": streak_count,
+        "next_session_targets": next_session_tip,
     }
 
 
@@ -758,7 +861,7 @@ def _update_streak(db: Session, chat_id: int, streak_type: str) -> None:
     streak = _get_streak(db, chat_id, streak_type)
     if not streak:
         db.add(models.UserStreak(
-            chat_id=current_user_id, streak_type=streak_type,
+            chat_id=chat_id, streak_type=streak_type,
             current_streak=1, longest_streak=1,
             last_activity_date=today, total_days_active=1,
         ))
@@ -783,7 +886,7 @@ def _award_badge(db: Session, chat_id: int, badge_type: str, metadata: dict | No
     if existing:
         return False
     db.add(models.Badge(
-        chat_id=current_user_id, badge_type=badge_type,
+        chat_id=chat_id, badge_type=badge_type,
         badge_metadata=json.dumps(metadata) if metadata else None,
     ))
     db.commit()
@@ -1000,6 +1103,12 @@ def list_reports(limit: int = 10, current_user_id: int = Depends(get_current_use
 
 @app.post("/api/reports/generate")
 async def generate_report(request: Request, current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    tier = _get_user_tier(current_user_id, db)
+    if tier == "free":
+        raise HTTPException(
+            status_code=402,
+            detail="Weekly AI reports require a Pro subscription ($19.99/month). Upgrade to unlock.",
+        )
     data = await request.json()
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
 
