@@ -2,6 +2,13 @@
 
 ## 2026-05-27
 
+### Bug fix: /fridge blocked event loop for 10 min — wrapped Claude API call in run_in_executor with 90s timeout
+**Files**: `telegram_bot.py`
+
+**What**: `_handle_fridge_photo()` was calling `get_anthropic_client().messages.create()` (a blocking sync call) directly inside an `async` function, freezing the entire asyncio event loop for up to 600 seconds (the Anthropic SDK's default timeout). Extracted the API call into a new sync helper `_fridge_api_call(img_b64, prompt) -> dict` with an explicit `timeout=90.0`, and replaced the direct call with `await asyncio.get_event_loop().run_in_executor(None, _fridge_api_call, img_b64, prompt)`. The event loop is now free to handle other messages while the API call runs in a thread pool.
+
+**Rollback**: Replace the `run_in_executor` call in `_handle_fridge_photo` with the original direct `messages.create()` call and remove `_fridge_api_call`.
+
 ### Feature: /fridge — scan fridge photo for macro-aligned recipe suggestions
 **Files**: `telegram_bot.py`
 

@@ -1561,6 +1561,26 @@ async def cmd_fridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+def _fridge_api_call(img_b64: str, prompt: str) -> dict:
+    """Sync helper — run in a thread via run_in_executor to avoid blocking the event loop."""
+    import re as _re
+    message = get_anthropic_client().messages.create(
+        model=ANALYSIS_MODEL,
+        max_tokens=1500,
+        timeout=90.0,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                {"type": "text", "text": prompt},
+            ],
+        }],
+    )
+    raw = message.content[0].text
+    json_match = _re.search(r"\{[\s\S]*\}", raw)
+    return json.loads(json_match.group()) if json_match else {}
+
+
 async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None:
     """Analyze a fridge/pantry photo and return macro-aligned recipe suggestions."""
     msg = await update.effective_chat.send_message("🔍 Scanning your fridge for ingredients…")
@@ -1603,21 +1623,9 @@ async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None
     )
 
     try:
-        message = get_anthropic_client().messages.create(
-            model=ANALYSIS_MODEL,
-            max_tokens=1500,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
-                    {"type": "text", "text": prompt},
-                ],
-            }],
+        result = await asyncio.get_event_loop().run_in_executor(
+            None, _fridge_api_call, img_b64, prompt
         )
-        raw = message.content[0].text
-        import re as _re
-        json_match = _re.search(r"\{[\s\S]*\}", raw)
-        result = json.loads(json_match.group()) if json_match else {}
     except Exception as e:
         print(f"Warning: fridge analysis failed: {e}")
         await msg.edit_text(
