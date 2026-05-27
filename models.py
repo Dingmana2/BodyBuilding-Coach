@@ -223,3 +223,13 @@ class TelegramLinkCode(Base):
     expires_at = Column(DateTime)
     used_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
+
+
+class CoachMemory(Base):
+    """Persistent coaching observations — PRs, recovery patterns, notes."""
+    __tablename__ = "coach_memories"
+    id = Column(Integer, primary_key=True)
+    chat_id = Column(Integer, index=True)
+    content = Column(Text, nullable=False)
+    memory_type = Column(String, default="observation")  # pr|recovery|note|observation
+    created_at = Column(DateTime, server_default=func.now())

@@ -182,6 +182,10 @@ def context_block(ctx: "CoachContext") -> str:
         if garmin_parts:
             lines.append(f"Garmin today: {', '.join(garmin_parts)}")
 
+    if ctx.recent_memories:
+        mem_items = "; ".join(m.content for m in ctx.recent_memories[:5])
+        lines.append(f"Coach memories: {mem_items}")
+
     result = "\n".join(lines)
     if len(result) > 6000:
         result = result[:5997] + "..."

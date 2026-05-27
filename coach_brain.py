@@ -119,6 +119,14 @@ class BodyAnalysisSnapshot:
 
 
 @dataclass(frozen=True)
+class MemorySnapshot:
+    memory_id: int
+    content: str
+    memory_type: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
 class CoachContext:
     """Complete athlete context passed to every domain method and prompt builder."""
     user_id: int
@@ -132,6 +140,7 @@ class CoachContext:
     goals: tuple[GoalSnapshot, ...]
     research_cache: dict[str, str]                  # topic → summary
     garmin_today: GarminSnapshot | None
+    recent_memories: tuple[MemorySnapshot, ...]     # top-K coaching memories
 
 
 # ── Result dataclasses ────────────────────────────────────────────────────────
@@ -348,6 +357,28 @@ def _load_last_analysis(db) -> BodyAnalysisSnapshot | None:
     )
 
 
+def _load_memories(db, chat_id: int | None, k: int = 5) -> list[MemorySnapshot]:
+    from models import CoachMemory
+    if not chat_id:
+        return []
+    rows = (
+        db.query(CoachMemory)
+        .filter(CoachMemory.chat_id == chat_id)
+        .order_by(CoachMemory.created_at.desc())
+        .limit(k)
+        .all()
+    )
+    return [
+        MemorySnapshot(
+            memory_id=r.id,
+            content=r.content,
+            memory_type=r.memory_type,
+            created_at=r.created_at,
+        )
+        for r in rows
+    ]
+
+
 def _load_research(db) -> dict[str, str]:
     from models import ResearchCache
     rows = db.query(ResearchCache).all()
@@ -414,6 +445,7 @@ async def build_context(db, user_id: int, chat_id: int | None = None) -> CoachCo
             goals=(),
             research_cache={},
             garmin_today=None,
+            recent_memories=(),
         )
 
     try:
@@ -430,6 +462,7 @@ async def build_context(db, user_id: int, chat_id: int | None = None) -> CoachCo
             goals=tuple(_load_goals(db, chat_id)),
             research_cache=_load_research(db),
             garmin_today=_load_garmin_today(chat_id),
+            recent_memories=tuple(_load_memories(db, chat_id)),
         )
     except Exception as e:
         raise CoachBrainError(f"Failed to load athlete context: {e}") from e

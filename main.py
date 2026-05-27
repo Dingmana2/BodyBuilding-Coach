@@ -1041,6 +1041,18 @@ async def log_set(
                 )
             )
 
+    if is_pr and current_user_id:
+        mem_content = (
+            f"New PR: {exercise} — {weight_kg}kg × {reps} reps "
+            f"(est. 1RM {estimated_1rm:.1f}kg)"
+        )
+        if prev_pr:
+            mem_content += f"; previous best was {prev_pr['estimated_1rm']:.1f}kg 1RM"
+        db.add(models.CoachMemory(
+            chat_id=current_user_id,
+            content=mem_content,
+            memory_type="pr",
+        ))
     db.commit()
     db.refresh(set_log)
     return {
@@ -1106,6 +1118,48 @@ def get_prs(
         }
         for r in rows
     ]
+
+
+@app.get("/api/memory")
+def list_memories(
+    limit: int = 20,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(models.CoachMemory)
+        .filter(models.CoachMemory.chat_id == current_user_id)
+        .order_by(models.CoachMemory.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return [
+        {"id": r.id, "content": r.content, "memory_type": r.memory_type,
+         "created_at": r.created_at.isoformat()}
+        for r in rows
+    ]
+
+
+@app.post("/api/memory")
+async def add_memory(
+    request: Request,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    data = await request.json()
+    content = (data.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+    mem = models.CoachMemory(
+        chat_id=current_user_id,
+        content=content[:500],
+        memory_type=data.get("memory_type", "note"),
+    )
+    db.add(mem)
+    db.commit()
+    db.refresh(mem)
+    return {"id": mem.id, "content": mem.content, "memory_type": mem.memory_type,
+            "created_at": mem.created_at.isoformat()}
 
 
 @app.get("/api/progress/plateaus")

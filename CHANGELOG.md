@@ -2,6 +2,21 @@
 
 ## 2026-05-27
 
+### Feature #8 — Athlete Memory: coach_memory Table + Context Injection
+**Files**: `models.py`, `main.py`, `coach_brain.py`, `prompt_builder.py`
+**What**:
+- Added `CoachMemory` model (`coach_memories` table): `(id, chat_id, content, memory_type, created_at)`. Created by `Base.metadata.create_all` (new table, no migration entry needed).
+- `GET /api/memory?limit=20` — list memories for current user.
+- `POST /api/memory` — store a custom memory (content, memory_type). Content capped at 500 chars.
+- Auto-write PR memories: in `POST /api/sessions/{id}/sets`, whenever a new PR is detected, a memory is written (`memory_type="pr"`) with the exercise, weight, reps, and estimated 1RM. Previous best included if it was an improvement.
+- Added `MemorySnapshot(memory_id, content, memory_type, created_at)` frozen dataclass to `coach_brain.py`.
+- Updated `CoachContext` to include `recent_memories: tuple[MemorySnapshot, ...]`.
+- Added `_load_memories(db, chat_id, k=5)` helper — returns the most recent K memories by `created_at DESC`.
+- `build_context()` now calls `_load_memories` and populates `recent_memories`.
+- `context_block()` in `prompt_builder.py` appends `Coach memories: <semi-colon separated>` when `ctx.recent_memories` is non-empty — injected into every AI call.
+**Rationale**: The coach had no memory between sessions. PR history lived only in `personal_records` (current best, not history). Memories give the AI conversational continuity — it can reference past PRs, patterns, and coaching notes.
+**Rollback**: Remove `CoachMemory` model; remove `GET/POST /api/memory` endpoints; remove PR memory write from `log_set`; remove `MemorySnapshot` + `recent_memories` from coach_brain; revert `context_block` to remove memory line.
+
 ### Feature #7 — Weekly Athlete Report: Sunday Auto-Job + Reports Tab
 **Files**: `models.py`, `main.py`, `static/app.js`, `static/index.html`
 **What**:
