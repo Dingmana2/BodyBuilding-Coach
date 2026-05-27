@@ -2295,6 +2295,7 @@ async def _process_media_group(update: Update, context: ContextTypes.DEFAULT_TYP
     user = get_user(chat_id)
     photos = context.bot_data.pop(mg_key, [])
     context.bot_data.pop(f"{mg_key}_sent", None)
+    context.bot_data.pop(f"{mg_key}_blocked", None)
 
     if not photos:
         return
@@ -2334,17 +2335,25 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
 
-    remaining = _check_cooldown(_analyze_cooldowns, chat_id, ANALYZE_COOLDOWN)
-    if remaining:
-        await update.message.reply_text(
-            f"⏳ Please wait {remaining}s before submitting another photo."
-        )
-        return
-
     # Album (media group) — buffer all photos then analyze together
     media_group_id = update.message.media_group_id
     if media_group_id:
         mg_key = f"mg_{chat_id}_{media_group_id}"
+
+        # Only check cooldown once per album (first photo of the group)
+        if mg_key not in context.bot_data and f"{mg_key}_blocked" not in context.bot_data:
+            remaining = _check_cooldown(_analyze_cooldowns, chat_id, ANALYZE_COOLDOWN)
+            if remaining:
+                context.bot_data[f"{mg_key}_blocked"] = True
+                await update.message.reply_text(
+                    f"⏳ Please wait {remaining}s before submitting another photo."
+                )
+                return
+
+        # Silently drop remaining photos from a cooldown-blocked album
+        if context.bot_data.get(f"{mg_key}_blocked"):
+            return
+
         photos = context.bot_data.setdefault(mg_key, [])
         photos.append(update.message.photo[-1])
         if not context.bot_data.get(f"{mg_key}_sent"):
@@ -2352,7 +2361,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             asyncio.create_task(_process_media_group(update, context, mg_key))
         return
 
-    # Single photo
+    # Single photo — cooldown applies normally
+    remaining = _check_cooldown(_analyze_cooldowns, chat_id, ANALYZE_COOLDOWN)
+    if remaining:
+        await update.message.reply_text(
+            f"⏳ Please wait {remaining}s before submitting another photo."
+        )
+        return
+
     msg = await update.message.reply_text("📸 Analyzing your physique… (20-40 seconds)")
     try:
         photo = update.message.photo[-1]

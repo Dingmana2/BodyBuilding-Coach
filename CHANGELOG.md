@@ -2,6 +2,15 @@
 
 ## 2026-05-27
 
+### Bug fix: Album cooldown fired on every photo, blocking photos 2 and 3
+**Files**: `telegram_bot.py`
+
+**What**: In `handle_photo`, the `_check_cooldown` call was at the top of the function — before the `media_group_id` check. Photo 1 of a 3-photo album would pass and record the cooldown timestamp; photos 2 and 3 arrived milliseconds later, hit the now-active cooldown, sent "⏳ Please wait 59s…" error messages, and returned early without being buffered. The deferred task ran with only 1 photo. Fix: moved cooldown check inside the media group branch (runs only for the first photo of each album) and inside the single-photo path. Added `_blocked` key to silently drop subsequent photos when an album is rejected, preventing duplicate error messages. Added cleanup of `_blocked` key in `_process_media_group`.
+
+**Rationale**: Confirmed bug from production screenshot — 3-photo album produced 2 cooldown errors and a "Front view only" analysis.
+
+**Rollback**: Revert `telegram_bot.py` to prior commit.
+
 ### Multi-Photo Progress Check-In (Telegram + Web)
 **Files**: `telegram_bot.py`, `claude_service.py`, `main.py`, `static/index.html`, `static/app.js`
 
