@@ -124,6 +124,34 @@
                     <div id="recovery-sparkline" style="align-self:center"></div>
                 </div>
                 <div id="recovery-tip" style="display:none;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:8px;font-size:13px;color:var(--text-muted)"></div>
+                <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+                    <button id="checkin-btn" class="btn-primary" onclick="openCheckinForm()" style="font-size:13px;padding:7px 16px">Log Check-In</button>
+                    <span id="checkin-done-badge" style="display:none;font-size:12px;color:var(--green);font-weight:600">✓ Logged today</span>
+                </div>
+                <div id="checkin-form-panel" style="display:none;margin-top:16px">
+                    <div style="display:grid;gap:14px">
+                        <div>
+                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">😴 Sleep Quality &nbsp;<span style="color:var(--gold);font-weight:700" id="ci-sleep-val">5</span>/10</label>
+                            <input type="range" id="ci-sleep" min="1" max="10" value="5" style="width:100%" oninput="document.getElementById('ci-sleep-val').textContent=this.value">
+                        </div>
+                        <div>
+                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">⚡ Energy Level &nbsp;<span style="color:var(--gold);font-weight:700" id="ci-energy-val">5</span>/10</label>
+                            <input type="range" id="ci-energy" min="1" max="10" value="5" style="width:100%" oninput="document.getElementById('ci-energy-val').textContent=this.value">
+                        </div>
+                        <div>
+                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🤕 Muscle Soreness &nbsp;<span style="color:var(--gold);font-weight:700" id="ci-soreness-val">5</span>/10</label>
+                            <input type="range" id="ci-soreness" min="1" max="10" value="5" style="width:100%" oninput="document.getElementById('ci-soreness-val').textContent=this.value">
+                        </div>
+                        <div>
+                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🧠 Stress Level &nbsp;<span style="color:var(--gold);font-weight:700" id="ci-stress-val">5</span>/10</label>
+                            <input type="range" id="ci-stress" min="1" max="10" value="5" style="width:100%" oninput="document.getElementById('ci-stress-val').textContent=this.value">
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:10px;margin-top:16px">
+                        <button id="ci-submit-btn" class="btn-primary" onclick="submitCheckin()" style="font-size:13px;padding:7px 16px">Submit</button>
+                        <button class="btn-secondary" onclick="closeCheckinForm()" style="font-size:13px;padding:7px 14px">Cancel</button>
+                    </div>
+                </div>
             </div>
 
             <div id="latest-analysis-card" style="display:none" class="card">

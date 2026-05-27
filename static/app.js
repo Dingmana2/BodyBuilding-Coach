@@ -38,6 +38,8 @@ const state = {
     sessionTimerInterval: null,
     sessionStartTime: null,
     _workoutExercises: [],
+    todayCheckinId: null,
+    latestCheckins: [],
 };
 
 /* ── Auth ── */
@@ -255,6 +257,7 @@ async function loadDashboard() {
         el.textContent = `${avg}/100`;
         el.style.color = color;
     }
+    state.latestCheckins = checkins;
     renderRecoveryWidget(summary, checkins);
     renderRetentionWidget(summary);
 }
@@ -361,20 +364,20 @@ function _sparklineSvg(scores, w = 180, h = 56) {
 
 function renderRecoveryWidget(summary, checkins) {
     const card = document.getElementById('recovery-card');
-    const avg = summary?.avg_recovery_7d;
-    if (avg == null && !checkins.length) { card.style.display = 'none'; return; }
-
     card.style.display = 'block';
 
+    const avg = summary?.avg_recovery_7d;
     if (avg != null) {
         const avgEl = document.getElementById('recovery-avg');
         avgEl.textContent = `${avg}/100`;
         avgEl.style.color = _scoreColor(avg);
     }
 
-    const ordered = [...checkins].reverse();
-    const scores = ordered.map(c => c.recovery_score ?? 0);
-    document.getElementById('recovery-sparkline').innerHTML = _sparklineSvg(scores);
+    if (checkins.length >= 2) {
+        const ordered = [...checkins].reverse();
+        const scores = ordered.map(c => c.recovery_score ?? 0);
+        document.getElementById('recovery-sparkline').innerHTML = _sparklineSvg(scores);
+    }
 
     const tip = checkins[0]?.coaching_tip;
     const tipEl = document.getElementById('recovery-tip');
@@ -383,6 +386,75 @@ function renderRecoveryWidget(summary, checkins) {
         tipEl.style.display = 'block';
     } else {
         tipEl.style.display = 'none';
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const todayCheckin = checkins.find(c => c.date === today);
+    const btn = document.getElementById('checkin-btn');
+    const badge = document.getElementById('checkin-done-badge');
+    if (todayCheckin) {
+        btn.textContent = "Edit Today's Check-In";
+        badge.style.display = 'inline';
+        state.todayCheckinId = todayCheckin.id;
+    } else {
+        btn.textContent = 'Log Check-In';
+        badge.style.display = 'none';
+        state.todayCheckinId = null;
+    }
+}
+
+/* ── Check-In Form ── */
+function openCheckinForm() {
+    const today = new Date().toISOString().slice(0, 10);
+    const todayCheckin = state.latestCheckins.find(c => c.date === today);
+    const keys = ['sleep', 'energy', 'soreness', 'stress'];
+    if (todayCheckin) {
+        keys.forEach(k => {
+            const val = todayCheckin[`${k}_score`] ?? 5;
+            document.getElementById(`ci-${k}`).value = val;
+            document.getElementById(`ci-${k}-val`).textContent = val;
+        });
+    } else {
+        keys.forEach(k => {
+            document.getElementById(`ci-${k}`).value = 5;
+            document.getElementById(`ci-${k}-val`).textContent = 5;
+        });
+    }
+    document.getElementById('checkin-form-panel').style.display = 'block';
+    document.getElementById('checkin-btn').style.display = 'none';
+}
+
+function closeCheckinForm() {
+    document.getElementById('checkin-form-panel').style.display = 'none';
+    document.getElementById('checkin-btn').style.display = '';
+}
+
+async function submitCheckin() {
+    const btn = document.getElementById('ci-submit-btn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+    const payload = {
+        sleep_score: parseInt(document.getElementById('ci-sleep').value),
+        energy_score: parseInt(document.getElementById('ci-energy').value),
+        soreness_score: parseInt(document.getElementById('ci-soreness').value),
+        stress_score: parseInt(document.getElementById('ci-stress').value),
+    };
+    try {
+        let result;
+        if (state.todayCheckinId) {
+            result = await api('PUT', `/checkins/${state.todayCheckinId}`, payload);
+        } else {
+            result = await api('POST', '/checkins', payload);
+        }
+        closeCheckinForm();
+        showToast(`Recovery logged — score: ${result.recovery_score}/100`);
+        invalidateCache('/dashboard/summary', '/checkins?limit=7');
+        await loadDashboard();
+    } catch (e) {
+        showToast(e.message || 'Failed to save check-in.', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Submit';
     }
 }
 

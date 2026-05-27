@@ -2,6 +2,23 @@
 
 ## 2026-05-27
 
+### Feature #11 — Web Check-In Form
+**Files**: `main.py`, `static/app.js`, `static/index.html`
+**What**:
+- Added "Log Check-In" button directly inside the Recovery Trend card on the Dashboard tab — always visible regardless of prior check-in history.
+- Clicking the button reveals an inline slider form (Sleep, Energy, Soreness, Stress — each 1–10) with live numeric readout; no modal or page change.
+- If user has already checked in today: button reads "Edit Today's Check-In", sliders pre-fill with current values, and the badge "✓ Logged today" is shown. Submitting calls `PUT /api/checkins/{id}` to update.
+- First-time daily check-in submits via `POST /api/checkins`; recovery score and coaching tip regenerated on both paths.
+- `POST /api/checkins` now upserts (no more 409 on same-day re-submit): moves scores and AI call before the duplicate check, updates the existing row if found.
+- New `PUT /api/checkins/{checkin_id}` endpoint: validates ownership + today-only constraint, regenerates recovery score and coaching tip.
+- On success: toast shows "Recovery logged — score: X/100", cache invalidated, dashboard refreshes automatically.
+- `renderRecoveryWidget()` updated to always show the recovery card (previously hidden when no check-ins existed), making the button always discoverable.
+- `state.latestCheckins` and `state.todayCheckinId` added to application state.
+
+**Rationale**: Non-Telegram users had no way to submit daily check-ins via the web app. This closes the feature parity gap and makes the recovery pipeline (scoring, streaks, lapse nudges) available to all users regardless of whether they use Telegram.
+
+**Rollback**: Revert `POST /api/checkins` upsert logic (restore 409 path), remove `PUT /api/checkins/{checkin_id}` endpoint, remove button/form HTML from `#recovery-card`, remove `openCheckinForm`, `closeCheckinForm`, `submitCheckin` from `app.js`, restore `renderRecoveryWidget` hide-when-empty logic.
+
 ### Feature #10 — Premium Polish: Comp Prep Mode, PDF Reports, Before/After View
 **Files**: `main.py`, `static/app.js`, `static/index.html`
 **What**:

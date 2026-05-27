@@ -1333,14 +1333,6 @@ async def create_checkin(request: Request, current_user_id: int = Depends(get_cu
     data = await request.json()
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
-    existing = (
-        db.query(models.DailyCheckIn)
-        .filter(models.DailyCheckIn.chat_id == current_user_id, models.DailyCheckIn.date == today)
-        .first()
-    )
-    if existing:
-        raise HTTPException(status_code=409, detail="Already checked in today.")
-
     sleep_score = int(data["sleep_score"])
     energy_score = int(data["energy_score"])
     soreness_score = int(data["soreness_score"])
@@ -1366,6 +1358,24 @@ async def create_checkin(request: Request, current_user_id: int = Depends(get_cu
     except Exception:
         recovery_score, coaching_tip = 50, "Listen to your body and train accordingly."
 
+    existing = (
+        db.query(models.DailyCheckIn)
+        .filter(models.DailyCheckIn.chat_id == current_user_id, models.DailyCheckIn.date == today)
+        .first()
+    )
+    if existing:
+        existing.sleep_score = sleep_score
+        existing.energy_score = energy_score
+        existing.soreness_score = soreness_score
+        existing.stress_score = stress_score
+        existing.recovery_score = recovery_score
+        existing.coaching_tip = coaching_tip
+        db.commit()
+        db.refresh(existing)
+        streak = _get_streak(db, current_user_id, "checkin")
+        streak_count = streak.current_streak if streak else 1
+        return {**_checkin_dict(existing), "streak": streak_count}
+
     checkin = models.DailyCheckIn(
         chat_id=current_user_id, date=today,
         sleep_score=sleep_score, energy_score=energy_score,
@@ -1386,6 +1396,55 @@ async def create_checkin(request: Request, current_user_id: int = Depends(get_cu
         _award_badge(db, current_user_id, f"{streak_count}_day_checkin_streak")
 
     return {**_checkin_dict(checkin), "streak": streak_count}
+
+
+@app.put("/api/checkins/{checkin_id}")
+async def update_checkin(checkin_id: int, request: Request,
+    current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
+    """Update today's check-in scores and regenerate recovery coaching tip."""
+    checkin = db.query(models.DailyCheckIn).filter(
+        models.DailyCheckIn.id == checkin_id,
+        models.DailyCheckIn.chat_id == current_user_id,
+    ).first()
+    if not checkin:
+        raise HTTPException(status_code=404, detail="Check-in not found.")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if checkin.date != today:
+        raise HTTPException(status_code=403, detail="Only today's check-in can be edited.")
+
+    data = await request.json()
+    checkin.sleep_score = int(data["sleep_score"])
+    checkin.energy_score = int(data["energy_score"])
+    checkin.soreness_score = int(data["soreness_score"])
+    checkin.stress_score = int(data["stress_score"])
+
+    profile = db.query(models.UserProfile).first()
+    profile_dict = None
+    if profile:
+        profile_dict = {"age": profile.age, "goal": profile.goal, "experience": profile.training_experience}
+
+    ctx_str = ""
+    try:
+        ctx = await build_context(db, current_user_id)
+        ctx_str = context_block(ctx)
+    except CoachBrainError:
+        pass
+
+    try:
+        recovery_score, coaching_tip = await asyncio.to_thread(
+            generate_recovery_insight,
+            checkin.sleep_score, checkin.energy_score,
+            checkin.soreness_score, checkin.stress_score,
+            profile_dict, ctx_str,
+        )
+    except Exception:
+        recovery_score, coaching_tip = 50, "Listen to your body and train accordingly."
+
+    checkin.recovery_score = recovery_score
+    checkin.coaching_tip = coaching_tip
+    db.commit()
+    db.refresh(checkin)
+    return _checkin_dict(checkin)
 
 
 @app.get("/api/checkins/streak")
