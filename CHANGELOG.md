@@ -2,6 +2,19 @@
 
 ## 2026-05-27
 
+### Angle/Pose Detection for Photo Analysis
+**Files**: `telegram_bot.py`, `claude_service.py`
+
+**What**:
+- `_analyze_photo()`: Claude now auto-detects the photo angle (`front`, `back`, `side_left`, `side_right`, `three_quarter`, `unknown`) and only scores muscles visible from that angle. The JSON schema gains `photo_angle` and `angle_notes` fields. Muscles not assessable from the current view are omitted from `muscle_development` entirely. Comparison context (when a prior analysis exists) references the previous angle and tells Claude whether to compare directly (same angle) or note new information (different angle).
+- `_format_analysis()`: Shows an angle-specific emoji + label at the top of the response (🔵 Front, 🔴 Back, 🟡 Side, 🟢 Three-quarter). Skips any muscle group where `score` is `null` or missing.
+- `cmd_progress()` photo history: Each entry now shows the angle in brackets, e.g. `2026-05-27 [back]: 16% BF | 7.1/10 ↗`.
+- `analyze_weak_points()` (`claude_service.py`): Now aggregates muscle scores across ALL stored analyses (not just the latest). Each muscle gets its score from the most recent analysis where it was actually visible. `areas_to_improve` lists are also merged and deduplicated. This means a front photo + back photo together produce a complete physique picture.
+
+**Rationale**: A back-view photo cannot assess chest development. This feature makes angle-awareness explicit so scores are accurate, comparisons are meaningful, and the coach can synthesize information from multiple viewing angles.
+
+**Rollback**: Revert `telegram_bot.py` and `claude_service.py` to prior commit. Existing `photo_angle`-less entries in `user["analyses"]` still work — the display code treats missing `photo_angle` as empty string, which shows no label.
+
 ### Photo Progress History — accumulate analyses over time
 **Files**: `telegram_bot.py`
 

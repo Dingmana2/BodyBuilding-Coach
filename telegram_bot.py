@@ -1259,7 +1259,9 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
                     arrow = ""
             else:
                 arrow = ""
-            photo_lines.append(f"  {dt}: {bf} BF | Score {score}/10{arrow}")
+            angle = a.get("photo_angle", "")
+            angle_label = f" [{angle.replace('_', ' ')}]" if angle else ""
+            photo_lines.append(f"  {dt}{angle_label}: {bf} BF | Score {score}/10{arrow}")
         lines.append("\n" + "\n".join(photo_lines))
 
     if len(lines) == 2:
@@ -2603,30 +2605,38 @@ def _analyze_photo(img_b64: str, profile: dict, prev: dict | None = None) -> dic
 
     comparison_ctx = ""
     if prev:
+        prev_angle = prev.get("photo_angle", "unknown")
         prev_areas = ", ".join(prev.get("areas_to_improve", [])[:2])
+        angle_note = (
+            "If this is the same angle as before, compare directly. "
+            "If a different angle, note what is newly visible rather than repeating the prior score."
+        )
         comparison_ctx = (
-            f"\nPrevious analysis for progress comparison — "
-            f"BF: {prev.get('body_fat_estimate', '?')}, "
-            f"score: {prev.get('overall_physique_score', '?')}/10"
+            f"\nPrevious analysis ({prev_angle} view) — "
+            f"BF: {prev.get('body_fat_estimate', '?')}, score: {prev.get('overall_physique_score', '?')}/10"
             + (f", priority areas: {prev_areas}" if prev_areas else "")
-            + ". In coach_message, briefly note any visible progress or regression vs that baseline."
+            + f". {angle_note}"
         )
 
     prompt = (
         "You are an expert fitness coach who works with athletes of all ages, genders, and "
         "experience levels — from complete beginners to competitive athletes. "
         f"Analyze this physique photo.{profile_ctx}{comparison_ctx}\n\n"
+        "First identify the photo angle/pose (front | back | side_left | side_right | three_quarter | unknown). "
+        "Only score muscle groups that are clearly visible from this angle — omit (leave out the key entirely) "
+        "any group that cannot be meaningfully assessed from this view. "
+        "Front view: chest/core/arms/quads assessable; lats/traps/hamstrings typically not. "
+        "Back view: back/shoulders/hamstrings/glutes assessable; chest/abs not. "
+        "Side view: posture/glutes/belly assessable; most others not.\n\n"
         "Return ONLY valid JSON with this exact structure:\n"
         '{\n'
+        '    "photo_angle": "front",\n'
+        '    "angle_notes": "Clear front view. Chest, abs, quads visible. Lats not assessable.",\n'
         '    "body_fat_estimate": "15-18%",\n'
         '    "body_fat_confidence": "medium",\n'
         '    "overall_physique_score": 7.2,\n'
         '    "muscle_development": {\n'
         '        "chest": {"score": 7, "notes": "Good upper chest, lower needs work"},\n'
-        '        "back": {"score": 6, "notes": "Width decent, thickness lacking"},\n'
-        '        "shoulders": {"score": 7, "notes": "Front delts strong, laterals lag"},\n'
-        '        "arms": {"score": 7, "notes": "Good bicep peak, tricep mass needed"},\n'
-        '        "legs": {"score": 5, "notes": "Significantly behind upper body"},\n'
         '        "core": {"score": 6, "notes": "Abs visible, obliques need work"}\n'
         '    },\n'
         '    "strengths": ["Good shoulder-to-waist ratio", "Chest fullness"],\n'
@@ -2867,16 +2877,25 @@ def _summarize_papers(topic: str, papers: list) -> str:
 # ── Formatters ────────────────────────────────────────────────────────────────
 
 def _format_analysis(a: dict) -> str:
+    angle = a.get("photo_angle", "")
+    _angle_emoji = {
+        "front": "🔵", "back": "🔴",
+        "side_left": "🟡", "side_right": "🟡", "three_quarter": "🟢",
+    }
+    angle_emoji = _angle_emoji.get(angle, "⚪")
+    angle_line = f"{angle_emoji} *{angle.replace('_', ' ').title()} view*\n" if angle else ""
+
     muscle = a.get("muscle_development", {})
     muscle_lines = "\n".join(
         f"  {k.capitalize()}: {v.get('score', '?')}/10 — {v.get('notes', '')}"
         for k, v in muscle.items()
+        if v.get("score") is not None
     )
     strengths = "\n".join(f"✅ {s}" for s in a.get("strengths", []))
     priorities = "\n".join(f"🎯 {s}" for s in a.get("priority_improvements", []))
 
     return (
-        f"📊 *Physique Analysis*\n\n"
+        f"📊 *Physique Analysis*\n{angle_line}\n"
         f"Body Fat: *{a.get('body_fat_estimate', '?')}* (confidence: {a.get('body_fat_confidence', '?')})\n"
         f"Score: *{a.get('overall_physique_score', '?')}/10*\n\n"
         f"*Muscle Development:*\n{muscle_lines}\n\n"

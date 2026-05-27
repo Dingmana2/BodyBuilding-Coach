@@ -606,9 +606,21 @@ def analyze_weak_points(analyses: list, set_logs: list, profile: dict | None = N
     if not analyses:
         return {"error": "No photo analyses available. Send a photo first."}
 
+    # Aggregate muscle scores across all angles — each muscle gets its score from
+    # the most recent analysis where it was actually visible (non-null score).
+    merged_muscle_scores: dict = {}
+    all_weak_areas: list = []
+    for a in analyses:
+        for muscle, data in a.get("muscle_development", {}).items():
+            if data.get("score") is not None:
+                merged_muscle_scores[muscle] = data
+        for area in a.get("areas_to_improve", []):
+            if area not in all_weak_areas:
+                all_weak_areas.append(area)
+
     latest = analyses[-1]
-    weak_from_photos = latest.get("areas_to_improve", [])
-    muscle_scores = latest.get("muscle_development", {})
+    weak_from_photos = all_weak_areas or latest.get("areas_to_improve", [])
+    muscle_scores = merged_muscle_scores or latest.get("muscle_development", {})
 
     volume_by_muscle: dict[str, int] = {}
     for s in set_logs:
