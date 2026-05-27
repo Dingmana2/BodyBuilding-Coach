@@ -90,6 +90,7 @@ class WorkoutSession(Base):
     started_at = Column(DateTime, server_default=func.now())
     ended_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)
+    next_session_targets = Column(Text, nullable=True)
 
 
 class SetLog(Base):

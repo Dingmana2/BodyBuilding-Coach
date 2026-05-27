@@ -127,6 +127,7 @@ def _migrate_db():
         ("user_profiles", "show_date", "DATE"),
         ("body_analyses", "body_fat_confidence", "VARCHAR"),
         ("workout_sessions", "user_id", "INTEGER REFERENCES users(id)"),
+        ("workout_sessions", "next_session_targets", "TEXT"),
     ]
     indexes = [
         "CREATE INDEX IF NOT EXISTS ix_daily_checkins_chat_date ON daily_checkins(chat_id, date)",
@@ -836,6 +837,10 @@ async def end_session(
     except Exception:
         pass
 
+    if next_session_tip:
+        session.next_session_targets = next_session_tip
+        db.commit()
+
     return {
         "status": "ended",
         "set_count": len(sets),
@@ -944,6 +949,7 @@ def get_session_history(
             "set_count": len(sets),
             "exercises": list({x.exercise_name for x in sets}),
             "total_volume_kg": round(sum(x.weight_kg * x.reps for x in sets), 1),
+            "next_session_targets": s.next_session_targets,
         })
     return result
 

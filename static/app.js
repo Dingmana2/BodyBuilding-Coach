@@ -898,6 +898,9 @@ async function loadWorkout() {
     renderSessionHistory(history);
     renderPRs(prs);
 
+    const lastTargets = history[0]?.next_session_targets;
+    _showNextSessionTargets(lastTargets || null);
+
     if (active.session) {
         state.activeSessionId = active.session.id;
         state.sessionStartTime = new Date(active.session.started_at);
@@ -989,13 +992,21 @@ async function endSession() {
         const streakStr = summary.workout_streak > 1 ? ` 🔥 ${summary.workout_streak}-day workout streak!` : '';
         showToast(`Session done! ${summary.set_count} sets${volStr}${streakStr}`);
         if (summary.next_session_targets) {
-            showToast(`Next session: ${summary.next_session_targets.slice(0, 100)}…`, 'info');
+            _showNextSessionTargets(summary.next_session_targets);
         }
         invalidateCache('/sessions/history');
         await loadWorkout();
     } catch (err) {
         showToast(`Failed to end session: ${err.message}`, 'error');
     }
+}
+
+function _showNextSessionTargets(targets) {
+    const card = document.getElementById('next-session-targets-card');
+    const text = document.getElementById('next-session-targets-text');
+    if (!targets) { card.style.display = 'none'; return; }
+    text.textContent = targets;
+    card.style.display = 'block';
 }
 
 async function logSet() {
@@ -1070,6 +1081,9 @@ function renderSessionHistory(history) {
                 ? Math.round((new Date(s.ended_at) - new Date(s.started_at)) / 60000) + ' min'
                 : '';
             const exStr = s.exercises.slice(0, 4).join(', ') + (s.exercises.length > 4 ? '…' : '');
+            const targetsHtml = s.next_session_targets
+                ? `<div style="margin-top:6px;font-size:12px;color:var(--gold);white-space:pre-line">${esc(s.next_session_targets)}</div>`
+                : '';
             return `
                 <li class="session-history-item">
                     <div style="font-weight:600;font-size:14px">${esc(formatDate(s.started_at))}</div>
@@ -1077,6 +1091,7 @@ function renderSessionHistory(history) {
                         ${esc(s.set_count)} sets · ${esc(s.total_volume_kg)}kg volume${dur ? ` · ${esc(dur)}` : ''}
                     </div>
                     ${exStr ? `<div style="font-size:12px;color:var(--text-muted)">${esc(exStr)}</div>` : ''}
+                    ${targetsHtml}
                 </li>
             `;
         }).join('')

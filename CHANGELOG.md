@@ -2,6 +2,18 @@
 
 ## 2026-05-27
 
+### Feature #4 — Progression Engine: Persistent Next-Session Targets
+**Files**: `models.py`, `main.py`, `static/app.js`, `static/index.html`
+**What**:
+- Added `next_session_targets = Column(Text, nullable=True)` to `WorkoutSession` model with idempotent `ALTER TABLE` migration in `_migrate_db()`.
+- `POST /api/sessions/{id}/end` now persists the `generate_next_session_targets()` result to `workout_sessions.next_session_targets` after generating it (previously computed but discarded).
+- `GET /api/sessions/history` now includes `next_session_targets` in each session dict.
+- Web workout tab shows a gold-bordered "Next Session Targets" card (`next-session-targets-card`) above the start-session card. Card is populated with the most recent session's targets on tab load, and refreshed immediately after a session ends (replacing the truncated 100-char toast).
+- Session history items now render `next_session_targets` inline in gold text below each session's metadata.
+- Removed the truncated `next_session_targets.slice(0,100)…` toast; added `_showNextSessionTargets(targets)` helper for idempotent show/hide.
+**Rationale**: The AI-generated targets were computed on every session end but immediately discarded — the toast truncated them to 100 chars and they vanished. This makes them persistent and visible at the start of the next workout.
+**Rollback**: Remove `next_session_targets` column from `WorkoutSession` model; remove migration entry; remove `if next_session_tip: session.next_session_targets` block; remove field from history response; remove `next-session-targets-card` div; revert `loadWorkout` and `renderSessionHistory`; restore the `slice(0,100)` toast; delete `_showNextSessionTargets`.
+
 ### Feature #3 — Recovery Score Web Dashboard Surface
 **Files**: `static/app.js`, `static/index.html`
 **What**:
