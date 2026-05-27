@@ -595,14 +595,63 @@ def _garmin_review_lines(garmin_data: dict) -> list[str]:
     if garmin_data.get("sleep_duration_hrs"):
         hrs = garmin_data["sleep_duration_hrs"]
         score = garmin_data.get("sleep_score_1_10", "?")
-        parts.append(f"Sleep {hrs:.1f}h ({score}/10)")
+        stage_parts = []
+        if garmin_data.get("deep_sleep_mins"):
+            stage_parts.append(f"Deep {garmin_data['deep_sleep_mins']}min")
+        if garmin_data.get("rem_sleep_mins"):
+            stage_parts.append(f"REM {garmin_data['rem_sleep_mins']}min")
+        stage_text = f" ({', '.join(stage_parts)})" if stage_parts else ""
+        parts.append(f"Sleep {hrs:.1f}h ({score}/10){stage_text}")
+    if garmin_data.get("body_battery_end") is not None:
+        parts.append(f"Body Battery {garmin_data['body_battery_end']}%")
     if garmin_data.get("hrv_ms"):
         parts.append(f"HRV {garmin_data['hrv_ms']:.0f}ms")
     if garmin_data.get("resting_hr_bpm"):
         parts.append(f"RHR {garmin_data['resting_hr_bpm']}bpm")
     if garmin_data.get("stress_score_1_10"):
         parts.append(f"Stress {garmin_data['stress_score_1_10']}/10")
+    if garmin_data.get("avg_spo2_pct"):
+        parts.append(f"SpO2 {garmin_data['avg_spo2_pct']:.0f}%")
+    if garmin_data.get("avg_respiration_rpm"):
+        parts.append(f"Resp {garmin_data['avg_respiration_rpm']:.0f}rpm")
+    if garmin_data.get("steps_yesterday"):
+        parts.append(f"Steps {garmin_data['steps_yesterday']:,}")
     return parts
+
+
+def _garmin_to_scores(garmin_data: dict, user: dict) -> dict[str, int]:
+    """Derive all four check-in scores from Garmin metrics and training history."""
+    # Sleep — Garmin score > duration estimate > neutral default
+    if garmin_data.get("sleep_score_1_10"):
+        sleep = garmin_data["sleep_score_1_10"]
+        # Bonus for good deep + REM sleep
+        if garmin_data.get("deep_sleep_mins", 0) > 90 and garmin_data.get("rem_sleep_mins", 0) > 60:
+            sleep = min(10, sleep + 1)
+    elif garmin_data.get("sleep_duration_hrs"):
+        hrs = garmin_data["sleep_duration_hrs"]
+        sleep = 2 if hrs < 5 else (4 if hrs < 6 else (6 if hrs < 7 else (8 if hrs < 8 else 9)))
+    else:
+        sleep = 6
+
+    # Energy — Body Battery is the best proxy; fall back to HRV
+    if garmin_data.get("body_battery_end") is not None:
+        energy = max(1, min(10, round(garmin_data["body_battery_end"] / 10)))
+    elif garmin_data.get("hrv_ms"):
+        hrv = garmin_data["hrv_ms"]
+        energy = 4 if hrv < 30 else (5 if hrv < 40 else (7 if hrv < 55 else 8))
+    else:
+        energy = 6
+
+    # Soreness — estimated from training load in the last 48h
+    cutoff_48h = str(_date.today() - timedelta(days=2))
+    recent = [s for s in user.get("set_logs", []) if s.get("date", "") >= cutoff_48h]
+    vol = sum(s.get("weight_kg", 0) * s.get("reps", 0) for s in recent)
+    soreness = 4 if vol > 5000 else (6 if vol > 2000 else 7)
+
+    # Stress — directly from Garmin
+    stress = garmin_data.get("stress_score_1_10") or 6
+
+    return {"sleep": sleep, "energy": energy, "soreness": soreness, "stress": stress}
 
 
 async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -644,56 +693,35 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     _all_steps = list(_STEP_LABELS.keys())  # ["sleep", "energy", "soreness", "stress"]
 
-    # Show Garmin review header if any useful metric is available (not just when sleep score exists)
+    # Garmin path — fully automatic when any useful metric is available
     _garmin_useful = garmin_data and any(
         garmin_data.get(k)
-        for k in ("sleep_score_1_10", "hrv_ms", "resting_hr_bpm", "stress_score_1_10")
+        for k in ("sleep_score_1_10", "sleep_duration_hrs", "hrv_ms",
+                  "resting_hr_bpm", "stress_score_1_10", "body_battery_end")
     )
-    if _garmin_useful:
-        sleep_score = garmin_data.get("sleep_score_1_10")
-        stress_score = garmin_data.get("stress_score_1_10")
+    if garmin_data:
+        if _garmin_useful:
+            # Derive all 4 scores automatically — zero questions asked
+            auto_scores = _garmin_to_scores(garmin_data, user)
+            workout_line = _workout_load_summary(user)
+            await _finish_checkin(
+                update, user, auto_scores,
+                garmin_data=garmin_data,
+                workout_summary=workout_line,
+                nutrition_summary=_nutrition_today_summary(user),
+                auto_filled=True,
+            )
+            return
+        else:
+            # Connected but watch hasn't synced yet
+            await update.message.reply_text(
+                "📡 *Garmin is connected but yesterday's data isn't available yet.*\n\n"
+                "Make sure your watch has synced to the Garmin Connect app, then try again.\n\n"
+                "Answering manually for now:",
+                parse_mode="Markdown",
+            )
 
-        stress_note = f"\n_Stress pre-filled: {stress_score}/10 from Garmin_" if stress_score else ""
-        pre_filled: dict[str, int] = {}
-        if sleep_score:
-            pre_filled["sleep"] = sleep_score
-        if stress_score:
-            pre_filled["stress"] = stress_score
-
-        garmin_parts = _garmin_review_lines(garmin_data)
-        workout_line = _workout_load_summary(user)
-        workout_text = f"\n🏋️ _{workout_line}_" if workout_line else ""
-
-        await update.message.reply_text(
-            f"📡 *Garmin review:*\n"
-            f"{'  |  '.join(garmin_parts)}{stress_note}"
-            f"{workout_text}\n\n"
-            "Just need a couple of scores from you:",
-            parse_mode="Markdown",
-        )
-
-        remaining = [s for s in _all_steps if s not in pre_filled]
-        user["active_command"] = "checkin"
-        user["command_state"] = {
-            "step": 0,
-            "data": pre_filled,
-            "remaining_steps": remaining,
-            "garmin_data": garmin_data,
-            "workout_summary": workout_line,
-            "nutrition_summary": _nutrition_today_summary(user),
-        }
-        _save_store()
-
-        first = remaining[0]
-        emoji, label, hint = _STEP_LABELS[first]
-        await update.message.reply_text(
-            f"{emoji} *{label}?* _{hint}_",
-            parse_mode="Markdown",
-            reply_markup=_score_keyboard(first),
-        )
-        return
-
-    # Normal multi-step flow — show inline keyboard for first step
+    # Manual multi-step flow (no Garmin or data unavailable)
     user["active_command"] = "checkin"
     user["command_state"] = {
         "step": 0,
@@ -764,6 +792,7 @@ async def _finish_checkin(
     garmin_data: dict | None = None,
     workout_summary: str = "",
     nutrition_summary: str = "",
+    auto_filled: bool = False,
 ) -> None:
     chat_id = update.effective_chat.id
     msg = await update.effective_chat.send_message("Scoring your recovery…")
@@ -872,11 +901,17 @@ async def _finish_checkin(
         nutr_display = nutrition_summary.replace("Nutrition today: ", "")
         nutrition_section = f"\n🍽️ *Nutrition:* {nutr_display}"
 
+    scores_line = (
+        "\n📲 _Auto-filled from Garmin_"
+        if auto_filled else
+        f"\n⚡ Energy: {data['energy']}/10  🤕 Soreness: {data['soreness']}/10"
+    )
+
     await msg.edit_text(
         f"✅ *Recovery Check-in*\n\n"
         f"{bar} Recovery Score: *{score}/100*{streak_text}"
-        f"{garmin_section}{load_section}{nutrition_section}\n\n"
-        f"⚡ Energy: {data['energy']}/10  🤕 Soreness: {data['soreness']}/10\n\n"
+        f"{garmin_section}{load_section}{nutrition_section}"
+        f"{scores_line}\n\n"
         f"💡 _{tip}_{deload_hint}",
         parse_mode="Markdown",
     )

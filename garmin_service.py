@@ -15,7 +15,7 @@ def test_login(email: str, password: str) -> None:
 
 
 def fetch_and_cache(chat_id: int, email: str, enc_pass: str) -> dict:
-    """Fetch yesterday's sleep/HRV/stress from Garmin Connect and write to cache."""
+    """Fetch yesterday's recovery metrics from Garmin Connect and write to cache."""
     from garminconnect import Garmin
     from crypto_utils import decrypt
 
@@ -36,6 +36,16 @@ def fetch_and_cache(chat_id: int, email: str, enc_pass: str) -> dict:
         overall = (scores.get("overall") or {}).get("value")
         if overall is not None:
             result["sleep_score_1_10"] = max(1, min(10, round(overall / 10)))
+        # Sleep stages
+        deep_secs = dto.get("deepSleepSeconds") or 0
+        rem_secs = dto.get("remSleepSeconds") or 0
+        light_secs = dto.get("lightSleepSeconds") or 0
+        if deep_secs:
+            result["deep_sleep_mins"] = round(deep_secs / 60)
+        if rem_secs:
+            result["rem_sleep_mins"] = round(rem_secs / 60)
+        if light_secs:
+            result["light_sleep_mins"] = round(light_secs / 60)
     except Exception:
         pass
 
@@ -70,6 +80,43 @@ def fetch_and_cache(chat_id: int, email: str, enc_pass: str) -> dict:
                 avg = sum(readings) / len(readings)
         if avg is not None and avg > 0:
             result["stress_score_1_10"] = max(1, min(10, round((100 - avg) / 10)))
+    except Exception:
+        pass
+
+    # Body Battery — end-of-day value (Garmin's own energy reserve metric, 0-100)
+    try:
+        bb_data = client.get_body_battery(yesterday, yesterday) or []
+        if isinstance(bb_data, list) and bb_data:
+            bb_val = bb_data[-1].get("value") if isinstance(bb_data[-1], dict) else None
+            if bb_val is not None:
+                result["body_battery_end"] = int(bb_val)
+    except Exception:
+        pass
+
+    # Respiratory rate during sleep
+    try:
+        resp = client.get_respiration_data(yesterday) or {}
+        avg_resp = resp.get("avgWakingRespirationValue") or resp.get("lowestRespirationValue")
+        if avg_resp:
+            result["avg_respiration_rpm"] = round(float(avg_resp), 1)
+    except Exception:
+        pass
+
+    # SpO2 (blood oxygen saturation)
+    try:
+        spo2 = client.get_pulse_ox_data(yesterday) or {}
+        avg_spo2 = spo2.get("averageSpO2")
+        if avg_spo2:
+            result["avg_spo2_pct"] = round(float(avg_spo2), 1)
+    except Exception:
+        pass
+
+    # Daily steps
+    try:
+        stats = client.get_stats(yesterday) or {}
+        steps = stats.get("totalSteps")
+        if steps:
+            result["steps_yesterday"] = int(steps)
     except Exception:
         pass
 

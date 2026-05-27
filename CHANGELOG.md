@@ -2,6 +2,13 @@
 
 ## 2026-05-27
 
+### Feature: Fully automatic /checkin from Garmin — max data, zero manual questions
+**Files**: `garmin_service.py`, `telegram_bot.py`
+
+**What**: When Garmin is connected, `/checkin` now requires zero manual input. All 4 recovery scores are auto-derived from watch data: sleep from Garmin sleep score/duration (+ deep/REM stage bonus), energy from Body Battery (new) or HRV fallback, soreness from last-48h training load, stress from Garmin stress score. `garmin_service.fetch_and_cache()` expanded with 5 new API calls: Body Battery (`get_body_battery`), sleep stages extracted from existing sleep call (deep/REM/light mins), respiratory rate (`get_respiration_data`), SpO2 (`get_pulse_ox_data`), daily steps (`get_stats`). All new fields surfaced in `_garmin_review_lines()` output and injected into the AI recovery scoring context. Final check-in message shows "📲 Auto-filled from Garmin" instead of manual score line. If Garmin is connected but watch hasn't synced yet (all fields null), shows a helpful "sync your watch" message and falls back to manual questions.
+
+**Rollback**: Revert `garmin_service.py` and `telegram_bot.py` to previous commits.
+
 ### Bug fix: /checkin dropped Garmin data when sleep score was missing; now pulls live
 **Files**: `telegram_bot.py`
 
