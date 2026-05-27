@@ -543,10 +543,15 @@ async def save_profile(
 @app.post("/api/analyze")
 async def analyze_photo(
     request: Request,
-    file: UploadFile = File(...),
+    files: list[UploadFile] = File(...),
     current_user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
+    if not files:
+        raise HTTPException(status_code=400, detail="No files provided.")
+    if len(files) > 5:
+        raise HTTPException(status_code=400, detail="Maximum 5 photos per analysis.")
+
     tier = _get_user_tier(current_user_id, db)
     if tier == "free":
         month_start = datetime.now(timezone.utc).strftime("%Y-%m-01")
@@ -561,24 +566,21 @@ async def analyze_photo(
                 detail="Free plan limit: 3 photo analyses per month. Upgrade to Pro for unlimited analyses.",
             )
 
-    # Reject oversized uploads before reading the body into RAM.
-    content_length = request.headers.get("content-length")
-    if content_length and int(content_length) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
-
-    ext = Path(file.filename or "photo.jpg").suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=400, detail=f"File type {ext} not supported. Use JPG, PNG, or WebP.")
-
-    filename = f"{uuid.uuid4()}{ext}"
-    filepath = UPLOAD_DIR / filename
-
-    content = await file.read()
-    if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(status_code=413, detail="File too large. Max 20MB.")
-
-    with open(filepath, "wb") as f:
-        f.write(content)
+    saved_paths: list[str] = []
+    saved_filenames: list[str] = []
+    for file in files:
+        ext = Path(file.filename or "photo.jpg").suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            raise HTTPException(status_code=400, detail=f"File type {ext} not supported. Use JPG, PNG, or WebP.")
+        content = await file.read()
+        if len(content) > 20 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="File too large. Max 20MB per photo.")
+        filename = f"{uuid.uuid4()}{ext}"
+        filepath = UPLOAD_DIR / filename
+        with open(filepath, "wb") as f:
+            f.write(content)
+        saved_paths.append(str(filepath))
+        saved_filenames.append(filename)
 
     profile = db.query(models.UserProfile).first()
     prev = (
@@ -588,14 +590,14 @@ async def analyze_photo(
     )
 
     try:
-        result = analyze_body_photo(str(filepath), profile, prev)
+        result = analyze_body_photo(saved_paths, profile, prev)
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
     analysis = models.BodyAnalysis(
-        photo_path=filename,
+        photo_path=saved_filenames[0],
         body_fat_estimate=result.get("body_fat_estimate"),
         overall_physique_score=result.get("overall_physique_score"),
         strengths=json.dumps(result.get("strengths", [])),
@@ -612,7 +614,8 @@ async def analyze_photo(
     return {
         "analysis_id": analysis.id,
         "analysis": result,
-        "photo_url": f"/uploads/{filename}",
+        "photo_url": f"/uploads/{saved_filenames[0]}",
+        "photo_urls": [f"/uploads/{fn}" for fn in saved_filenames],
         "created_at": analysis.created_at.isoformat(),
     }
 

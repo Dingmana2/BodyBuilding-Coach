@@ -185,13 +185,13 @@
                     onclick="document.getElementById('photo-input').click()"
                 >
                     <div class="drop-icon">📸</div>
-                    <div class="drop-text">Drop a photo here or click to select</div>
-                    <div class="drop-subtext">JPG, PNG, WebP • Max 20MB • Front or side pose recommended</div>
-                    <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" style="display:none" onchange="handleFileSelect(this)" />
+                    <div class="drop-text">Drop photos here or click to select</div>
+                    <div class="drop-subtext">JPG, PNG, WebP • Max 20MB each • Up to 3 angles (front, back, side)</div>
+                    <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" multiple style="display:none" onchange="handleFileSelect(this)" />
                 </div>
                 <div id="upload-preview" style="display:none">
-                    <img id="preview-img" class="preview-img" alt="Preview" />
-                    <button class="btn btn-primary" onclick="submitAnalysis()">Analyze This Photo</button>
+                    <div id="preview-strip" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+                    <button class="btn btn-primary" id="analyze-btn" onclick="submitAnalysis()">Analyze Photo</button>
                     <button class="btn btn-ghost" onclick="clearUpload()">Cancel</button>
                 </div>
             </div>

@@ -2,6 +2,21 @@
 
 ## 2026-05-27
 
+### Multi-Photo Progress Check-In (Telegram + Web)
+**Files**: `telegram_bot.py`, `claude_service.py`, `main.py`, `static/index.html`, `static/app.js`
+
+**What**:
+- **Telegram**: Sending an album (2-3 photos at once) is now handled as a single analysis. `handle_photo` detects `media_group_id`, buffers all photos in `context.bot_data` for 2 seconds, then `_process_media_group` downloads all images and calls `_analyze_photo` with the full list. Single-photo uploads are unchanged.
+- **`_analyze_photo(images_b64: list[str], ...)`**: Signature changed from `str` to `list[str]`. Builds one Claude image content block per photo, passes all before the text prompt. Multi-photo prompt includes a note telling Claude to analyze them together as one check-in and note each angle. `max_tokens` raised 1500 → 2000 for multi-image depth.
+- **`analyze_body_photo(image_paths, ...)`** (`claude_service.py`): Accepts `str` or `list[str]` (backward-compatible). Builds multiple image blocks for the Claude API call. Same multi-note injected into prompt when >1 photo.
+- **`POST /api/analyze`** (`main.py`): Parameter changed from `file: UploadFile` to `files: list[UploadFile]`. Saves each file, calls `analyze_body_photo` with all paths. Returns `photo_url` (first, backward-compat) and `photo_urls` (all). Max 5 photos per request.
+- **Web UI** (`index.html`): File input gains `multiple` attribute; drop zone text updated to mention "up to 3 angles".
+- **Web UI** (`app.js`): `state.pendingFile` → `state.pendingFiles[]`. `previewFiles()` renders a thumbnail strip for all selected images. Submit button label is "Analyze 3 Photos" when multiple are selected. `submitAnalysis` appends each file under the `files` key.
+
+**Rationale**: Users take 3 progress photos (front, back, side) per check-in. Previously each required a separate upload and a separate Claude call with no cross-angle awareness. Now all 3 are analyzed together in one call.
+
+**Rollback**: Revert all 5 files to prior commit. No DB schema changes.
+
 ### Angle/Pose Detection for Photo Analysis
 **Files**: `telegram_bot.py`, `claude_service.py`
 

@@ -134,9 +134,19 @@ def _extract_json(text: str) -> dict:
         )
 
 
-def analyze_body_photo(image_path: str, profile=None, previous_analysis=None) -> dict:
+def analyze_body_photo(image_paths, profile=None, previous_analysis=None) -> dict:
+    """Analyze one or more physique photos together. image_paths: str or list[str]."""
     client = _client()
-    img_data, media_type = _encode_image(image_path)
+    if isinstance(image_paths, str):
+        image_paths = [image_paths]
+
+    image_blocks = []
+    for path in image_paths:
+        img_data, media_type = _encode_image(path)
+        image_blocks.append({
+            "type": "image",
+            "source": {"type": "base64", "media_type": media_type, "data": img_data},
+        })
 
     profile_ctx = ""
     if profile and profile.age:
@@ -150,7 +160,6 @@ Athlete Profile:
 
     prev_ctx = ""
     if previous_analysis and previous_analysis.raw_analysis:
-        prev_data = json.loads(previous_analysis.raw_analysis)
         prev_ctx = f"""
 Previous Analysis (for comparison):
 - Body Fat: {previous_analysis.body_fat_estimate}
@@ -159,9 +168,14 @@ Previous Analysis (for comparison):
 - Areas to improve: {previous_analysis.areas_to_improve}
 """
 
-    prompt = f"""You are an elite physique coach and body composition expert with 20+ years of experience coaching competitive bodybuilders. Analyze this physique photo with the eye of a professional.
+    multi_note = (
+        f"I'm sending you {len(image_blocks)} photos from different angles of the same athlete. "
+        "Analyze them together as one combined progress check-in, noting the angle of each.\n\n"
+    ) if len(image_blocks) > 1 else ""
 
-{profile_ctx}
+    prompt = f"""You are an elite physique coach and body composition expert with 20+ years of experience coaching competitive bodybuilders. Analyze {'these physique photos' if len(image_blocks) > 1 else 'this physique photo'} with the eye of a professional.
+
+{multi_note}{profile_ctx}
 {prev_ctx}
 
 Provide a detailed, honest, and constructive assessment. Return ONLY valid JSON with this exact structure:
@@ -202,22 +216,10 @@ Be specific, honest, and actionable. Score muscle groups 1-10. Only return valid
     message = client.messages.create(
         model=ANALYSIS_MODEL,
         max_tokens=2000,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": media_type,
-                            "data": img_data,
-                        },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
+        messages=[{
+            "role": "user",
+            "content": [*image_blocks, {"type": "text", "text": prompt}],
+        }],
     )
 
     return _extract_json(message.content[0].text)

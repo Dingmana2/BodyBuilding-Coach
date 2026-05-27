@@ -30,7 +30,7 @@ function invalidateCache(...paths) {
 const state = {
     activeTab: 'dashboard',
     activePlanTab: 'workout',
-    pendingFile: null,
+    pendingFiles: [],
     currentPlan: null,
     analyses: [],
     activeSessionId: null,
@@ -463,48 +463,54 @@ async function submitCheckin() {
 /* ── Photo Upload & Analysis ── */
 function handleDrop(e) {
     e.preventDefault();
-    const file = e.dataTransfer?.files?.[0];
-    if (file) previewFile(file);
+    const files = Array.from(e.dataTransfer?.files || []);
+    if (files.length) previewFiles(files);
 }
 
 function handleFileSelect(input) {
-    if (input.files?.[0]) previewFile(input.files[0]);
+    const files = Array.from(input.files || []);
+    if (files.length) previewFiles(files);
 }
 
-function previewFile(file) {
-    state.pendingFile = file;
-    const reader = new FileReader();
-    reader.onload = (e) => {
-        document.getElementById('preview-img').src = e.target.result;
-        document.getElementById('drop-zone').style.display = 'none';
-        document.getElementById('upload-preview').style.display = 'block';
-    };
-    reader.readAsDataURL(file);
+function previewFiles(files) {
+    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+    const valid = files.filter(f => allowed.includes(f.type)).slice(0, 5);
+    if (!valid.length) { showToast('Please use JPG, PNG, or WebP images.', 'error'); return; }
+    state.pendingFiles = valid;
+    const strip = document.getElementById('preview-strip');
+    strip.innerHTML = '';
+    valid.forEach(f => {
+        const img = document.createElement('img');
+        img.style.cssText = 'height:80px;width:auto;border-radius:6px;object-fit:cover';
+        img.src = URL.createObjectURL(f);
+        strip.appendChild(img);
+    });
+    document.getElementById('analyze-btn').textContent =
+        valid.length > 1 ? `Analyze ${valid.length} Photos` : 'Analyze Photo';
+    document.getElementById('drop-zone').style.display = 'none';
+    document.getElementById('upload-preview').style.display = 'block';
 }
 
 function clearUpload() {
-    state.pendingFile = null;
+    state.pendingFiles = [];
     document.getElementById('photo-input').value = '';
+    document.getElementById('preview-strip').innerHTML = '';
     document.getElementById('drop-zone').style.display = 'block';
     document.getElementById('upload-preview').style.display = 'none';
 }
 
 async function submitAnalysis() {
-    if (!state.pendingFile) return;
-
-    const file = state.pendingFile;
-    const allowed = ['image/jpeg', 'image/png', 'image/webp'];
-    if (!allowed.includes(file.type)) {
-        showToast('Please use a JPG, PNG, or WebP image.', 'error');
-        return;
-    }
-    if (file.size > 20 * 1024 * 1024) {
-        showToast('File too large. Max 20MB.', 'error');
-        return;
-    }
+    const files = state.pendingFiles;
+    if (!files?.length) return;
 
     const formData = new FormData();
-    formData.append('file', file);
+    for (const f of files) {
+        if (f.size > 20 * 1024 * 1024) {
+            showToast('One or more photos exceed the 20MB limit.', 'error');
+            return;
+        }
+        formData.append('files', f);
+    }
 
     showLoading('Analyzing your physique with AI… This takes 20-40 seconds.');
     try {

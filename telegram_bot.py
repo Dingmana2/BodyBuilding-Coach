@@ -2288,6 +2288,48 @@ async def cmd_link_status(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 # ── Photo handler ─────────────────────────────────────────────────────────────
 
+async def _process_media_group(update: Update, context: ContextTypes.DEFAULT_TYPE, mg_key: str) -> None:
+    """Download and analyze all photos from a buffered media group together."""
+    await asyncio.sleep(2.0)  # wait for remaining album photos to arrive
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    photos = context.bot_data.pop(mg_key, [])
+    context.bot_data.pop(f"{mg_key}_sent", None)
+
+    if not photos:
+        return
+
+    msg = await update.effective_chat.send_message(
+        f"📸 Analyzing {len(photos)} photo{'s' if len(photos) != 1 else ''}… (20-40 seconds)"
+    )
+    try:
+        images_b64: list[str] = []
+        for photo in photos:
+            file = await context.bot.get_file(photo.file_id)
+            buf = BytesIO()
+            await file.download_to_memory(buf)
+            images_b64.append(base64.standard_b64encode(buf.getvalue()).decode("utf-8"))
+
+        prev = (user.get("analyses") or [None])[-1]
+        analysis = _analyze_photo(images_b64, user["profile"], prev=prev)
+        user["last_analysis"] = analysis
+        entry = {**analysis, "date": _today(), "photo_count": len(photos)}
+        user.setdefault("analyses", []).append(entry)
+        user["analyses"] = user["analyses"][-20:]
+        _save_store()
+
+        await msg.edit_text(_format_analysis(analysis), parse_mode="Markdown")
+        current_days = user["profile"].get("days", "4")
+        await update.effective_chat.send_message(
+            f"How many days per week do you want to train? _(currently {current_days})_\n\n"
+            "Tap a number to generate your plan instantly:",
+            parse_mode="Markdown",
+            reply_markup=_plan_days_keyboard(),
+        )
+    except Exception as e:
+        await msg.edit_text(f"❌ Analysis failed: {e}")
+
+
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
@@ -2299,18 +2341,28 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
         return
 
-    msg = await update.message.reply_text(
-        "📸 Analyzing your physique… (20-40 seconds)"
-    )
+    # Album (media group) — buffer all photos then analyze together
+    media_group_id = update.message.media_group_id
+    if media_group_id:
+        mg_key = f"mg_{chat_id}_{media_group_id}"
+        photos = context.bot_data.setdefault(mg_key, [])
+        photos.append(update.message.photo[-1])
+        if not context.bot_data.get(f"{mg_key}_sent"):
+            context.bot_data[f"{mg_key}_sent"] = True
+            asyncio.create_task(_process_media_group(update, context, mg_key))
+        return
+
+    # Single photo
+    msg = await update.message.reply_text("📸 Analyzing your physique… (20-40 seconds)")
     try:
-        photo = update.message.photo[-1]  # highest resolution
+        photo = update.message.photo[-1]
         file = await context.bot.get_file(photo.file_id)
         buf = BytesIO()
         await file.download_to_memory(buf)
         img_b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
 
         prev = (user.get("analyses") or [None])[-1]
-        analysis = _analyze_photo(img_b64, user["profile"], prev=prev)
+        analysis = _analyze_photo([img_b64], user["profile"], prev=prev)
         user["last_analysis"] = analysis
         entry = {**analysis, "date": _today()}
         user.setdefault("analyses", []).append(entry)
@@ -2592,7 +2644,8 @@ def _deep_merge(base: dict, updates: dict) -> None:
 
 # ── Claude: body analysis ─────────────────────────────────────────────────────
 
-def _analyze_photo(img_b64: str, profile: dict, prev: dict | None = None) -> dict:
+def _analyze_photo(images_b64: list[str], profile: dict, prev: dict | None = None) -> dict:
+    """Analyze one or more base64-encoded photos as a single coaching assessment."""
     profile_ctx = ""
     if profile:
         profile_ctx = (
@@ -2618,54 +2671,50 @@ def _analyze_photo(img_b64: str, profile: dict, prev: dict | None = None) -> dic
             + f". {angle_note}"
         )
 
+    multi_note = (
+        f"I'm sending you {len(images_b64)} photos from different angles of the same athlete. "
+        "Analyze them together as one combined progress check-in, noting the angle of each.\n\n"
+    ) if len(images_b64) > 1 else ""
+
+    photo_word = "these physique photos" if len(images_b64) > 1 else "this physique photo"
     prompt = (
         "You are an expert fitness coach who works with athletes of all ages, genders, and "
-        "experience levels — from complete beginners to competitive athletes. "
-        f"Analyze this physique photo.{profile_ctx}{comparison_ctx}\n\n"
-        "First identify the photo angle/pose (front | back | side_left | side_right | three_quarter | unknown). "
-        "Only score muscle groups that are clearly visible from this angle — omit (leave out the key entirely) "
-        "any group that cannot be meaningfully assessed from this view. "
-        "Front view: chest/core/arms/quads assessable; lats/traps/hamstrings typically not. "
-        "Back view: back/shoulders/hamstrings/glutes assessable; chest/abs not. "
-        "Side view: posture/glutes/belly assessable; most others not.\n\n"
+        f"experience levels — from complete beginners to competitive athletes. "
+        f"Analyze {photo_word}.{profile_ctx}{comparison_ctx}\n\n"
+        f"{multi_note}"
+        "Identify the photo angle/pose for each image (front | back | side_left | side_right | three_quarter | unknown). "
+        "Only score muscle groups that are clearly visible — omit any group that cannot be meaningfully assessed. "
+        "Front: chest/core/arms/quads assessable. Back: lats/traps/hamstrings assessable. Side: posture/glutes assessable.\n\n"
         "Return ONLY valid JSON with this exact structure:\n"
         '{\n'
         '    "photo_angle": "front",\n'
-        '    "angle_notes": "Clear front view. Chest, abs, quads visible. Lats not assessable.",\n'
+        '    "angle_notes": "Front + back views provided. Full upper/lower body coverage.",\n'
         '    "body_fat_estimate": "15-18%",\n'
         '    "body_fat_confidence": "medium",\n'
         '    "overall_physique_score": 7.2,\n'
         '    "muscle_development": {\n'
         '        "chest": {"score": 7, "notes": "Good upper chest, lower needs work"},\n'
-        '        "core": {"score": 6, "notes": "Abs visible, obliques need work"}\n'
+        '        "back": {"score": 6, "notes": "Width decent, thickness lacking"}\n'
         '    },\n'
         '    "strengths": ["Good shoulder-to-waist ratio", "Chest fullness"],\n'
         '    "areas_to_improve": ["Leg development", "Overall conditioning"],\n'
         '    "symmetry_notes": "Left shoulder slightly higher. Overall symmetry good.",\n'
         '    "priority_improvements": ["Most impactful change 1", "Most impactful change 2"],\n'
-        '    "coach_message": "Specific, motivating 2-sentence message for this athlete based on their experience level and goals"\n'
+        '    "coach_message": "Specific, motivating 2-sentence message for this athlete"\n'
         '}'
     )
 
+    image_blocks = [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": b64}}
+        for b64 in images_b64
+    ]
     message = get_anthropic_client().messages.create(
         model=ANALYSIS_MODEL,
-        max_tokens=1500,
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "image/jpeg",
-                            "data": img_b64,
-                        },
-                    },
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ],
+        max_tokens=2000,
+        messages=[{
+            "role": "user",
+            "content": [*image_blocks, {"type": "text", "text": prompt}],
+        }],
     )
 
     text = message.content[0].text
