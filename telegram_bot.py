@@ -283,6 +283,32 @@ def _get_session_exercises(user: dict) -> list:
     return day.get("exercises", []) if day else []
 
 
+# ── Check-in inline keyboard ──────────────────────────────────────────────────
+
+_STEP_LABELS: dict[str, tuple[str, str, str]] = {
+    "sleep":    ("😴", "Sleep quality",   "1=terrible, 10=perfect"),
+    "energy":   ("⚡", "Energy levels",   "1=drained, 10=energized"),
+    "soreness": ("🤕", "Muscle soreness", "1=very sore, 10=fresh"),
+    "stress":   ("🧠", "Stress level",    "1=very stressed, 10=calm"),
+}
+
+
+def _score_keyboard(step: str) -> InlineKeyboardMarkup:
+    """10-button (2 rows) inline keyboard for a 1-10 check-in score."""
+    row1 = [InlineKeyboardButton(str(i), callback_data=f"ci:{step}:{i}") for i in range(1, 6)]
+    row2 = [InlineKeyboardButton(str(i), callback_data=f"ci:{step}:{i}") for i in range(6, 11)]
+    return InlineKeyboardMarkup([row1, row2])
+
+
+def _checkins_this_week(user: dict) -> int:
+    """Count check-ins recorded in the last 7 days (bot JSON)."""
+    from datetime import date, timedelta
+    cutoff = str(date.today() - timedelta(days=7))
+    return sum(1 for c in user.get("checkins", []) if c.get("date", "") > cutoff)
+
+
+# ── Workout / plan day keyboards ──────────────────────────────────────────────
+
 def _days_keyboard(user: dict) -> InlineKeyboardMarkup:
     """Inline keyboard listing all plan days so the user can pick a different one."""
     days = user.get("last_plan", {}).get("workout", {}).get("days", []) if user.get("last_plan") else []
@@ -543,6 +569,18 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
 
+    # Rate limit: free users get 3 check-ins per rolling 7-day window
+    tier = user.get("subscription_tier", "free")
+    if tier == "free" and _checkins_this_week(user) >= 3:
+        await update.message.reply_text(
+            "⚠️ *Free plan limit reached*\n\n"
+            "You've done 3 check-ins this week (free plan limit).\n"
+            "Upgrade to Pro for unlimited daily check-ins plus weekly AI coaching reports.\n\n"
+            "Upgrade at the web app to unlock 🔓",
+            parse_mode="Markdown",
+        )
+        return
+
     # Allow inline: /checkin sleep=7 energy=6 soreness=5 stress=4
     if context.args:
         data: dict[str, int] = {}
@@ -566,6 +604,8 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         except Exception as e:
             print(f"Warning: Garmin get_cached failed for chat_id={chat_id}: {e}")
 
+    _all_steps = list(_STEP_LABELS.keys())  # ["sleep", "energy", "soreness", "stress"]
+
     if garmin_data and garmin_data.get("sleep_score_1_10"):
         sleep_score = garmin_data["sleep_score_1_10"]
         hrs = garmin_data.get("sleep_duration_hrs", "?")
@@ -585,9 +625,7 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             parse_mode="Markdown",
         )
 
-        all_steps = ["sleep", "energy", "soreness", "stress"]
-        remaining = [s for s in all_steps if s not in pre_filled]
-
+        remaining = [s for s in _all_steps if s not in pre_filled]
         user["active_command"] = "checkin"
         user["command_state"] = {
             "step": 0,
@@ -595,42 +633,44 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "remaining_steps": remaining,
             "garmin_data": garmin_data,
         }
+        _save_store()
 
-        _step_prompts = {
-            "energy": "⚡ *Energy levels?* Rate 1-10",
-            "soreness": "🤕 *Muscle soreness?* Rate 1-10\n_(1 = very sore, 10 = fresh)_",
-            "stress": "🧠 *Stress level?* Rate 1-10\n_(1 = very stressed, 10 = calm)_",
-        }
-        await update.message.reply_text(_step_prompts[remaining[0]], parse_mode="Markdown")
+        first = remaining[0]
+        emoji, label, hint = _STEP_LABELS[first]
+        await update.message.reply_text(
+            f"{emoji} *{label}?* _{hint}_",
+            parse_mode="Markdown",
+            reply_markup=_score_keyboard(first),
+        )
         return
 
-    # Normal multi-step flow
+    # Normal multi-step flow — show inline keyboard for first step
     user["active_command"] = "checkin"
     user["command_state"] = {
         "step": 0,
         "data": {},
-        "remaining_steps": ["sleep", "energy", "soreness", "stress"],
+        "remaining_steps": _all_steps,
     }
+    _save_store()
+    emoji, label, hint = _STEP_LABELS["sleep"]
     await update.message.reply_text(
-        "😴 *Sleep quality?* Rate 1-10\n_(1 = terrible, 10 = perfect)_",
+        f"{emoji} *{label}?* _{hint}_",
         parse_mode="Markdown",
+        reply_markup=_score_keyboard("sleep"),
     )
 
 
 async def _handle_checkin_step(update: Update, user: dict, text: str) -> None:
+    """Text fallback for check-in steps (used when user types instead of tapping a button)."""
     state = user["command_state"]
-    remaining = state.get("remaining_steps", ["sleep", "energy", "soreness", "stress"])
-
-    _step_prompts = {
-        "energy": "⚡ *Energy levels?* Rate 1-10",
-        "soreness": "🤕 *Muscle soreness?* Rate 1-10\n_(1 = very sore, 10 = fresh)_",
-        "stress": "🧠 *Stress level?* Rate 1-10\n_(1 = very stressed, 10 = calm)_",
-    }
+    remaining = state.get("remaining_steps", list(_STEP_LABELS.keys()))
 
     try:
         score = max(1, min(10, int(text.strip())))
     except ValueError:
-        await update.message.reply_text("Please enter a number from 1 to 10.")
+        await update.message.reply_text(
+            "Please enter a number from 1 to 10, or tap a button above.",
+        )
         return
 
     step = state["step"]
@@ -640,7 +680,12 @@ async def _handle_checkin_step(update: Update, user: dict, text: str) -> None:
 
     if state["step"] < len(remaining):
         next_key = remaining[state["step"]]
-        await update.message.reply_text(_step_prompts[next_key], parse_mode="Markdown")
+        emoji, label, hint = _STEP_LABELS[next_key]
+        await update.message.reply_text(
+            f"{emoji} *{label}?* _{hint}_",
+            parse_mode="Markdown",
+            reply_markup=_score_keyboard(next_key),
+        )
     else:
         user["active_command"] = None
         garmin_data = state.get("garmin_data")
@@ -656,7 +701,8 @@ def _get_bot_context_str(user: dict) -> str:
 
 
 async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: dict | None = None) -> None:
-    msg = await update.message.reply_text("Scoring your recovery…")
+    chat_id = update.effective_chat.id
+    msg = await update.effective_chat.send_message("Scoring your recovery…")
     try:
         from claude_service import generate_recovery_insight
         ctx_str = _get_bot_context_str(user)
@@ -686,6 +732,38 @@ async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: d
     # Keep only last 90 days
     user["checkins"] = user["checkins"][-90:]
     _save_store()
+
+    # Bridge to SQLite so build_context() and the web app can see bot check-ins
+    try:
+        from database import SessionLocal
+        from models import DailyCheckIn as _DailyCheckInModel
+        _db = SessionLocal()
+        try:
+            _existing = _db.query(_DailyCheckInModel).filter(
+                _DailyCheckInModel.chat_id == chat_id,
+                _DailyCheckInModel.date == entry["date"],
+            ).first()
+            if not _existing:
+                _row = _DailyCheckInModel(
+                    chat_id=chat_id,
+                    date=entry["date"],
+                    sleep_score=entry["sleep_score"],
+                    energy_score=entry["energy_score"],
+                    soreness_score=entry["soreness_score"],
+                    stress_score=entry["stress_score"],
+                    recovery_score=entry["recovery_score"],
+                    coaching_tip=entry["coaching_tip"],
+                    hrv_ms=entry.get("hrv_ms"),
+                    resting_hr_bpm=entry.get("resting_hr_bpm"),
+                    sleep_duration_hrs=entry.get("sleep_duration_hrs"),
+                    data_source=entry.get("data_source", "manual"),
+                )
+                _db.add(_row)
+                _db.commit()
+        finally:
+            _db.close()
+    except Exception as e:
+        print(f"Warning: Failed to write checkin to SQLite: {e}")
 
     bar = "🟢" if score >= 75 else ("🟡" if score >= 50 else "🔴")
     garmin_line = ""
@@ -727,9 +805,9 @@ async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: d
 
     total_checkins = len(user["checkins"])
     tier = user.get("subscription_tier", "free")
-    # Conversion nudge after 3rd check-in
+    # Conversion nudge after 3rd check-in total
     if total_checkins == 3 and tier == "free":
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             "📈 *3 check-ins done!*\n\n"
             "You're building a recovery tracking habit. "
             "Pro members get their full recovery trend analysis, "
@@ -739,7 +817,7 @@ async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: d
         )
     # Nudge at 7-day streak
     elif streak_count == 7 and tier == "free":
-        await update.message.reply_text(
+        await update.effective_chat.send_message(
             "🔥 *7-day streak!*\n\n"
             "You're in the top 10% for consistency. "
             "Pro users get automated weekly reports, "
@@ -2254,6 +2332,50 @@ async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAUL
         await context.bot.send_message(chat_id, f"❌ Plan generation failed: {e}")
 
 
+# ── Check-in callback handler ─────────────────────────────────────────────────
+
+async def handle_checkin_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles ci:{step}:{value} callbacks from the 1-10 score inline keyboards."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    parts = query.data.split(":")   # ["ci", step_key, value]
+    step_key = parts[1]
+    value = int(parts[2])
+
+    state = user.get("command_state") or {}
+    data = state.get("data", {})
+    data[step_key] = value
+    state["data"] = data
+    remaining = state.get("remaining_steps", list(_STEP_LABELS.keys()))
+
+    try:
+        idx = remaining.index(step_key)
+    except ValueError:
+        idx = len(remaining) - 1
+
+    if idx + 1 < len(remaining):
+        next_step = remaining[idx + 1]
+        state["step"] = idx + 1
+        user["command_state"] = state
+        _save_store()
+        emoji, label, hint = _STEP_LABELS[next_step]
+        await query.edit_message_text(
+            f"{emoji} *{label}?* _{hint}_",
+            parse_mode="Markdown",
+            reply_markup=_score_keyboard(next_step),
+        )
+    else:
+        user["active_command"] = None
+        user["command_state"] = {}
+        _save_store()
+        garmin_data = state.get("garmin_data")
+        await query.delete_message()
+        await _finish_checkin(update, user, data, garmin_data)
+
+
 # ── Text message handler (conversational coaching) ────────────────────────────
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2941,6 +3063,7 @@ def main() -> None:
     app.add_handler(CommandHandler("link_status", cmd_link_status))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(CallbackQueryHandler(handle_plan_days_callback, pattern=r"^plan:days:"))
+    app.add_handler(CallbackQueryHandler(handle_checkin_callback, pattern=r"^ci:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

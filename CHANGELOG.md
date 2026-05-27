@@ -2,6 +2,19 @@
 
 ## 2026-05-27
 
+### Feature #2 — Daily Check-ins: Inline Buttons + SQLite Persistence + Rate Limiting
+**Files**: `telegram_bot.py`
+**What**:
+- Added `_STEP_LABELS` dict, `_score_keyboard(step)`, `_checkins_this_week(user)` helpers.
+- `cmd_checkin` now shows a 1-10 inline keyboard (2 rows of 5) for the first step instead of a text prompt. Garmin pre-fill still works with remaining steps shown as inline keyboards. Text fallback (`/checkin sleep=7 energy=6 soreness=5 stress=4`) preserved.
+- Added `handle_checkin_callback` to process `ci:{step}:{value}` button taps, auto-advancing through all 4 steps then calling `_finish_checkin`.
+- Rate limit gate at the top of `cmd_checkin`: Free users are blocked after 3 check-ins in the last 7 days; Pro/Elite users proceed without restriction.
+- `_finish_checkin` now writes each bot check-in to the `daily_checkins` SQLite table (with duplicate guard on `chat_id + date`), bridging the bot→DB gap so `build_context()` and the web app can see bot check-ins. SQLite write failure is warned and non-fatal.
+- All `update.message.reply_text()` calls in `_finish_checkin` replaced with `update.effective_chat.send_message()` to make the function safe when called from both message and callback query contexts.
+- Registered `CallbackQueryHandler(handle_checkin_callback, pattern=r"^ci:")`.
+**Rationale**: Check-in UX was text-only (clunky for 1-10 scores). Bot check-ins never reached SQLite, breaking `build_context()` recovery data for bot users. Free-tier rate limit was missing.
+**Rollback**: Remove `handle_checkin_callback`, `_score_keyboard`, `_checkins_this_week`, `_STEP_LABELS`; revert `cmd_checkin` to text prompts; revert `_finish_checkin` to bot-JSON-only write and `update.message.reply_text`; remove `ci:` handler registration.
+
 ### Feature #1 — Coach Brain MVP
 **Files**: `coach_brain.py`, `prompt_builder.py`, `claude_service.py`, `main.py`, `telegram_bot.py`, `models.py`
 **What**: Every AI call now receives a full structured context snapshot of the athlete's last 7 days.
