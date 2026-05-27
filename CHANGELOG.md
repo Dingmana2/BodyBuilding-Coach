@@ -2,6 +2,13 @@
 
 ## 2026-05-27
 
+### Feature: /checkin shows Garmin review and scores recovery from watch + workouts + nutrition
+**Files**: `telegram_bot.py`
+
+**What**: Enhanced `/checkin` to surface all available objective data and use it to drive the recovery score. Three new private helpers (`_workout_load_summary`, `_nutrition_today_summary`, `_garmin_review_lines`) aggregate 7-day training load from `set_logs`, today's macros from `meal_logs`, and Garmin watch metrics (sleep, HRV, RHR, stress). When Garmin is connected the opening message now shows a full "📡 Garmin review:" block with all metrics and the 7-day load line, rather than just "Sleep X/10". The closing output is restructured into named sections (📡 Garmin, 🏋️ Load, 🍽️ Nutrition) that appear only when data is present. The AI recovery scoring call receives the enriched context string (Garmin HRV/RHR/sleep + workout load + today's nutrition) so the score reflects objective wearable data, not just four subjective sliders. Non-Garmin users see no change — all new params default to empty. `_handle_checkin_step` and `handle_checkin_callback` updated to thread `workout_summary` and `nutrition_summary` through from `command_state`.
+
+**Rollback**: Revert `telegram_bot.py` to the previous commit. No DB schema or external API changes.
+
 ### Bug fix: Album cooldown fired on every photo, blocking photos 2 and 3
 **Files**: `telegram_bot.py`
 

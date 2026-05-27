@@ -565,6 +565,46 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+def _workout_load_summary(user: dict) -> str:
+    """One-line summary of training load for the last 7 days."""
+    cutoff = str(_date.today() - timedelta(days=7))
+    recent = [s for s in user.get("set_logs", []) if s.get("date", "") >= cutoff]
+    if not recent:
+        return ""
+    volume = sum(s.get("weight_kg", 0) * s.get("reps", 0) for s in recent)
+    sessions = len({s.get("session_id") for s in recent if s.get("session_id") is not None})
+    return f"Training load 7d: {sessions} sessions, {volume:,.0f}kg total volume"
+
+
+def _nutrition_today_summary(user: dict) -> str:
+    """Today's macro totals from meal_logs, empty string if no meals logged today."""
+    today = _today()
+    today_meals = [m for m in user.get("meal_logs", []) if m.get("date") == today]
+    if not today_meals:
+        return ""
+    cals = round(sum(m.get("calories", 0) for m in today_meals))
+    prot = round(sum(m.get("protein_g", 0) for m in today_meals))
+    carbs = round(sum(m.get("carbs_g", 0) for m in today_meals))
+    fat = round(sum(m.get("fat_g", 0) for m in today_meals))
+    return f"Nutrition today: {cals} kcal | {prot}g protein | {carbs}g carbs | {fat}g fat"
+
+
+def _garmin_review_lines(garmin_data: dict) -> list[str]:
+    """Human-readable metric parts from a Garmin cache entry for display and context."""
+    parts: list[str] = []
+    if garmin_data.get("sleep_duration_hrs"):
+        hrs = garmin_data["sleep_duration_hrs"]
+        score = garmin_data.get("sleep_score_1_10", "?")
+        parts.append(f"Sleep {hrs:.1f}h ({score}/10)")
+    if garmin_data.get("hrv_ms"):
+        parts.append(f"HRV {garmin_data['hrv_ms']:.0f}ms")
+    if garmin_data.get("resting_hr_bpm"):
+        parts.append(f"RHR {garmin_data['resting_hr_bpm']}bpm")
+    if garmin_data.get("stress_score_1_10"):
+        parts.append(f"Stress {garmin_data['stress_score_1_10']}/10")
+    return parts
+
+
 async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
@@ -612,16 +652,20 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         hrv = garmin_data.get("hrv_ms")
         stress_score = garmin_data.get("stress_score_1_10")
 
-        hrv_text = f" | HRV: {int(hrv)}ms" if hrv else ""
         stress_note = f"\n_Stress pre-filled: {stress_score}/10 from Garmin_" if stress_score else ""
         pre_filled: dict[str, int] = {"sleep": sleep_score}
         if stress_score:
             pre_filled["stress"] = stress_score
 
+        garmin_parts = _garmin_review_lines(garmin_data)
+        workout_line = _workout_load_summary(user)
+        workout_text = f"\n🏋️ _{workout_line}_" if workout_line else ""
+
         await update.message.reply_text(
-            f"📡 *Garmin data pulled:*\n"
-            f"😴 Sleep: {hrs}hrs → score {sleep_score}/10{hrv_text}{stress_note}\n\n"
-            "I just need a couple more scores from you:",
+            f"📡 *Garmin review:*\n"
+            f"{'  |  '.join(garmin_parts)}{stress_note}"
+            f"{workout_text}\n\n"
+            "Just need 2 quick scores from you:",
             parse_mode="Markdown",
         )
 
@@ -632,6 +676,8 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "data": pre_filled,
             "remaining_steps": remaining,
             "garmin_data": garmin_data,
+            "workout_summary": workout_line,
+            "nutrition_summary": _nutrition_today_summary(user),
         }
         _save_store()
 
@@ -650,6 +696,8 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "step": 0,
         "data": {},
         "remaining_steps": _all_steps,
+        "workout_summary": _workout_load_summary(user),
+        "nutrition_summary": _nutrition_today_summary(user),
     }
     _save_store()
     emoji, label, hint = _STEP_LABELS["sleep"]
@@ -688,8 +736,12 @@ async def _handle_checkin_step(update: Update, user: dict, text: str) -> None:
         )
     else:
         user["active_command"] = None
-        garmin_data = state.get("garmin_data")
-        await _finish_checkin(update, user, state["data"], garmin_data)
+        await _finish_checkin(
+            update, user, state["data"],
+            garmin_data=state.get("garmin_data"),
+            workout_summary=state.get("workout_summary", ""),
+            nutrition_summary=state.get("nutrition_summary", ""),
+        )
 
 
 def _get_bot_context_str(user: dict) -> str:
@@ -701,12 +753,30 @@ def _get_bot_context_str(user: dict) -> str:
         return ""
 
 
-async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: dict | None = None) -> None:
+async def _finish_checkin(
+    update: Update,
+    user: dict,
+    data: dict,
+    garmin_data: dict | None = None,
+    workout_summary: str = "",
+    nutrition_summary: str = "",
+) -> None:
     chat_id = update.effective_chat.id
     msg = await update.effective_chat.send_message("Scoring your recovery…")
+
+    # Build context string enriched with today's objective data
+    ctx_str = _get_bot_context_str(user)
+    if garmin_data:
+        garmin_parts = _garmin_review_lines(garmin_data)
+        if garmin_parts:
+            ctx_str += f"\nGarmin today: {' | '.join(garmin_parts)}"
+    if workout_summary:
+        ctx_str += f"\n{workout_summary}"
+    if nutrition_summary:
+        ctx_str += f"\n{nutrition_summary}"
+
     try:
         from claude_service import generate_recovery_insight
-        ctx_str = _get_bot_context_str(user)
         score, tip = generate_recovery_insight(
             data["sleep"], data["energy"], data["soreness"], data["stress"],
             user["profile"] or None,
@@ -730,7 +800,6 @@ async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: d
         "data_source": "garmin" if garmin_data else "manual",
     }
     user["checkins"].append(entry)
-    # Keep only last 90 days
     user["checkins"] = user["checkins"][-90:]
     _save_store()
 
@@ -767,17 +836,6 @@ async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: d
         print(f"Warning: Failed to write checkin to SQLite: {e}")
 
     bar = "🟢" if score >= 75 else ("🟡" if score >= 50 else "🔴")
-    garmin_line = ""
-    if garmin_data:
-        hrv = garmin_data.get("hrv_ms")
-        rhr = garmin_data.get("resting_hr_bpm")
-        parts = []
-        if hrv:
-            parts.append(f"HRV {int(hrv)}ms")
-        if rhr:
-            parts.append(f"RHR {rhr}bpm")
-        if parts:
-            garmin_line = f"\n📡 Garmin: {' | '.join(parts)}"
 
     # Calculate current streak
     sorted_dates = sorted({c["date"] for c in user["checkins"]}, reverse=True)
@@ -790,17 +848,32 @@ async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: d
         else:
             break
 
-    streak_text = f"\n🔥 *{streak_count}-day streak!*" if streak_count >= 2 else ""
+    streak_text = f"  🔥 *{streak_count}-day streak!*" if streak_count >= 2 else ""
     deload_hint = ""
     if score < 50:
         deload_hint = "\n\n⚠️ _Recovery is low — consider a deload or active recovery session today._"
 
+    # Build optional data sections (only shown when data is present)
+    garmin_section = ""
+    if garmin_data:
+        garmin_parts = _garmin_review_lines(garmin_data)
+        if garmin_parts:
+            garmin_section = f"\n📡 *Garmin:* {' | '.join(garmin_parts)}"
+
+    load_section = f"\n🏋️ *Load:* _{workout_summary}_" if workout_summary else ""
+
+    nutrition_section = ""
+    if nutrition_summary:
+        # Strip the "Nutrition today: " prefix for compact display
+        nutr_display = nutrition_summary.replace("Nutrition today: ", "")
+        nutrition_section = f"\n🍽️ *Nutrition:* {nutr_display}"
+
     await msg.edit_text(
-        f"✅ *Check-in saved!*\n\n"
-        f"{bar} Recovery Score: *{score}/100*{streak_text}\n\n"
-        f"😴 Sleep: {data['sleep']}/10  ⚡ Energy: {data['energy']}/10\n"
-        f"🤕 Soreness: {data['soreness']}/10  🧠 Stress: {data['stress']}/10{garmin_line}\n\n"
-        f"_{tip}_{deload_hint}",
+        f"✅ *Recovery Check-in*\n\n"
+        f"{bar} Recovery Score: *{score}/100*{streak_text}"
+        f"{garmin_section}{load_section}{nutrition_section}\n\n"
+        f"⚡ Energy: {data['energy']}/10  🤕 Soreness: {data['soreness']}/10\n\n"
+        f"💡 _{tip}_{deload_hint}",
         parse_mode="Markdown",
     )
 
@@ -2468,9 +2541,13 @@ async def handle_checkin_callback(update: Update, context: ContextTypes.DEFAULT_
         user["active_command"] = None
         user["command_state"] = {}
         _save_store()
-        garmin_data = state.get("garmin_data")
         await query.delete_message()
-        await _finish_checkin(update, user, data, garmin_data)
+        await _finish_checkin(
+            update, user, data,
+            garmin_data=state.get("garmin_data"),
+            workout_summary=state.get("workout_summary", ""),
+            nutrition_summary=state.get("nutrition_summary", ""),
+        )
 
 
 # ── Text message handler (conversational coaching) ────────────────────────────
