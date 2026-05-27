@@ -158,7 +158,7 @@ def get_user(chat_id: int) -> dict:
             "meal_logs": [], "measurements": [], "session_counter": 0,
             "garmin_email": None, "garmin_pass_enc": None,
             "mfp_username": None, "mfp_pass_enc": None,
-            "units": "kg",
+            "units": "kg", "analyses": [],
         }
         for k, v in defaults.items():
             u.setdefault(k, v)
@@ -1243,6 +1243,25 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Sessions count
     lines.append(f"\n*Sessions logged:* {user['session_counter']}")
 
+    # Photo analysis history
+    analyses = user.get("analyses", [])
+    if analyses:
+        photo_lines = ["📸 *Photo Analyses:*"]
+        for i, a in enumerate(analyses):
+            score = a.get("overall_physique_score", "?")
+            bf = a.get("body_fat_estimate", "?")
+            dt = a.get("date", "?")
+            if i > 0:
+                prev_score = analyses[i - 1].get("overall_physique_score")
+                try:
+                    arrow = " ↗" if float(score) > float(prev_score) else (" ↘" if float(score) < float(prev_score) else "")
+                except (TypeError, ValueError):
+                    arrow = ""
+            else:
+                arrow = ""
+            photo_lines.append(f"  {dt}: {bf} BF | Score {score}/10{arrow}")
+        lines.append("\n" + "\n".join(photo_lines))
+
     if len(lines) == 2:
         lines.append("\nLog workouts with `/workout start` + `/logset`, check in daily with `/checkin`, and track weight with `/measurements weight=83kg`.")
 
@@ -2016,10 +2035,10 @@ async def cmd_weakpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     msg = await update.message.reply_text("🔬 Analyzing training imbalances…")
     try:
         from claude_service import analyze_weak_points
-        analyses = [user["last_analysis"]] if user["last_analysis"] else []
+        all_analyses = user.get("analyses") or ([user["last_analysis"]] if user["last_analysis"] else [])
         ctx_str = _get_bot_context_str(user)
         result = await asyncio.run_in_executor(
-            None, analyze_weak_points, analyses, recent_sets, user["profile"] or None, ctx_str
+            None, analyze_weak_points, all_analyses, recent_sets, user["profile"] or None, ctx_str
         )
         weak_pts = "\n".join(f"• {w}" for w in result.get("weak_points", []))
         vol_recs = result.get("volume_recommendations", {})
@@ -2288,8 +2307,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await file.download_to_memory(buf)
         img_b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
 
-        analysis = _analyze_photo(img_b64, user["profile"])
+        prev = (user.get("analyses") or [None])[-1]
+        analysis = _analyze_photo(img_b64, user["profile"], prev=prev)
         user["last_analysis"] = analysis
+        entry = {**analysis, "date": _today()}
+        user.setdefault("analyses", []).append(entry)
+        user["analyses"] = user["analyses"][-20:]
         _save_store()
 
         await msg.edit_text(_format_analysis(analysis), parse_mode="Markdown")
@@ -2567,7 +2590,7 @@ def _deep_merge(base: dict, updates: dict) -> None:
 
 # ── Claude: body analysis ─────────────────────────────────────────────────────
 
-def _analyze_photo(img_b64: str, profile: dict) -> dict:
+def _analyze_photo(img_b64: str, profile: dict, prev: dict | None = None) -> dict:
     profile_ctx = ""
     if profile:
         profile_ctx = (
@@ -2578,10 +2601,21 @@ def _analyze_photo(img_b64: str, profile: dict) -> dict:
             f"{profile.get('days','?')} training days/week"
         )
 
+    comparison_ctx = ""
+    if prev:
+        prev_areas = ", ".join(prev.get("areas_to_improve", [])[:2])
+        comparison_ctx = (
+            f"\nPrevious analysis for progress comparison — "
+            f"BF: {prev.get('body_fat_estimate', '?')}, "
+            f"score: {prev.get('overall_physique_score', '?')}/10"
+            + (f", priority areas: {prev_areas}" if prev_areas else "")
+            + ". In coach_message, briefly note any visible progress or regression vs that baseline."
+        )
+
     prompt = (
         "You are an expert fitness coach who works with athletes of all ages, genders, and "
         "experience levels — from complete beginners to competitive athletes. "
-        f"Analyze this physique photo.{profile_ctx}\n\n"
+        f"Analyze this physique photo.{profile_ctx}{comparison_ctx}\n\n"
         "Return ONLY valid JSON with this exact structure:\n"
         '{\n'
         '    "body_fat_estimate": "15-18%",\n'

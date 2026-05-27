@@ -2,6 +2,20 @@
 
 ## 2026-05-27
 
+### Photo Progress History — accumulate analyses over time
+**Files**: `telegram_bot.py`
+
+**What**:
+- `get_user()`: Added `"analyses": []` to the back-fill defaults so existing users get the new field on next startup.
+- `handle_photo()`: Appends each new analysis (plus `"date"`) to `user["analyses"]` (capped at 20). `user["last_analysis"]` is still updated for backward compatibility with plan generation.
+- `_analyze_photo()`: New optional `prev: dict | None` parameter. When a previous analysis is provided, the Claude prompt includes a comparison note so the coach message can describe visible progress or regression.
+- `cmd_progress()`: Added a **Photo Analyses** section showing all stored entries with date, BF%, physique score, and ↗/↘ direction arrows.
+- `cmd_weakpoints()`: Now passes `user["analyses"]` (all snapshots) to `analyze_weak_points()` instead of only wrapping the single `last_analysis`.
+
+**Rationale**: Each new photo previously overwrote the previous analysis. Users could not track their physique progress over time via the bot. The fix accumulates all analyses in bot JSON state and threads them through every feature that benefits from longitudinal data.
+
+**Rollback**: Revert `telegram_bot.py` to the prior commit. Existing `user["analyses"]` keys in `bot_state.json` are additive and harmless.
+
 ### Bot UX Fixes — Mobile-only user hardening
 **Files**: `telegram_bot.py`
 
