@@ -2,6 +2,42 @@
 
 ## 2026-05-27
 
+### Feature #14 — Body Measurements Web UI
+**Files**: `static/index.html`, `static/app.js`
+**What**:
+- Added Body Measurements log form to the Progress tab (below Strength Trends card) with fields: Weight, Waist, Chest, Arm (cm). Arm value is stored as both left and right.
+- `logMeasurement(event)` calls `POST /api/measurements`; on success clears fields, shows toast, re-renders measurement history table.
+- `renderMeasurements(data)` renders a date-sorted table with Weight / Waist / Chest / Arm columns.
+- `loadProgress()` now fetches `GET /api/measurements?limit=30` in parallel alongside the existing progress/plateaus calls.
+
+**Rationale**: `POST /api/measurements` and `GET /api/measurements` existed but were unreachable from the web app. Measurements power the 30-day weight-change calculation in `bot_json_context_block()` and are visible to the AI context.
+
+**Rollback**: Remove measurement form and `#measurements-history` div from Progress tab; remove `renderMeasurements` and `logMeasurement` from `app.js`; remove measurements from `loadProgress()` Promise.all.
+
+### Feature #13 — Goals Web UI
+**Files**: `static/index.html`, `static/app.js`
+**What**:
+- Added Goals card to the bottom of the Profile tab with a list of current goals (active/inactive badge) and a "Set Goal" form (goal type, target weight, target BF%, target date).
+- `renderGoals(goals)` renders each goal with type, target details, and ACTIVE/inactive badge.
+- `saveGoal(event)` calls `POST /api/goals`; deactivates prior goals of the same type (backend behavior), then re-renders the list.
+- `loadProfile()` now fetches `GET /api/goals` in parallel with profile and auth/me.
+
+**Rationale**: `GET /api/goals` and `POST /api/goals` existed but were web-invisible. Goals feed the `Active goal:` line in `context_block()` which shapes every AI recommendation.
+
+**Rollback**: Remove Goals card from Profile tab HTML; remove `renderGoals` and `saveGoal` from `app.js`; remove goals from `loadProfile()` Promise.all.
+
+### Feature #12 — Nutrition Tab (Meal Logging Web UI)
+**Files**: `static/index.html`, `static/app.js`
+**What**:
+- Added "Nutrition" nav tab with today's macro totals (kcal / Protein / Carbs / Fat), a meal log form, today's meal list, and a 30-entry recent history.
+- `logMeal(event)` calls `POST /api/meals`; if description is provided without manual macros, the backend calls `estimate_meal_macros()` and returns AI-estimated macros. Toast shows protein and source.
+- `loadNutrition()` calls `GET /api/meals/today` and `GET /api/meals?limit=30` in parallel; renders totals and both lists.
+- Tab registered in `showTab()` loaders as `nutrition: loadNutrition`.
+
+**Rationale**: Meal logging was Telegram-only. Non-Telegram users had no nutrition tracking. Protein compliance is the second most important AI context signal after recovery.
+
+**Rollback**: Remove Nutrition nav tab button and `#tab-nutrition` section from HTML; remove `loadNutrition` and `logMeal` from `app.js`; remove `nutrition` from tab loaders.
+
 ### Feature #11 — Web Check-In Form
 **Files**: `main.py`, `static/app.js`, `static/index.html`
 **What**:

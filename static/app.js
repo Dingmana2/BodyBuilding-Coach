@@ -175,6 +175,7 @@ function showTab(tab) {
         research: loadResearch,
         progress: loadProgress,
         profile: loadProfile,
+        nutrition: loadNutrition,
         reports: loadReports,
         billing: loadBilling,
     };
@@ -970,9 +971,10 @@ function togglePapers(topicId) {
 
 /* ── Progress ── */
 async function loadProgress() {
-    const [data, plateaus] = await Promise.all([
+    const [data, plateaus, measurements] = await Promise.all([
         cachedApi('GET', '/progress').catch(() => []),
         cachedApi('GET', '/progress/plateaus').catch(() => []),
+        api('GET', '/measurements?limit=30').catch(() => []),
     ]);
 
     const container = document.getElementById('progress-content');
@@ -1024,6 +1026,65 @@ async function loadProgress() {
     }
 
     renderPlateaus(plateaus);
+    renderMeasurements(measurements);
+}
+
+function renderMeasurements(data) {
+    const el = document.getElementById('measurements-history');
+    if (!data.length) {
+        el.innerHTML = '<p class="empty-state">No measurements logged yet.</p>';
+        return;
+    }
+    el.innerHTML = `
+        <table style="width:100%;font-size:13px;border-collapse:collapse">
+            <thead>
+                <tr style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.5px">
+                    <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">Date</th>
+                    <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">Weight</th>
+                    <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">Waist</th>
+                    <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">Chest</th>
+                    <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">Arm</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${data.map(m => `
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:8px">${esc(m.date)}</td>
+                        <td style="padding:8px;text-align:right;color:var(--gold)">${m.body_weight_kg != null ? `${m.body_weight_kg}kg` : '—'}</td>
+                        <td style="padding:8px;text-align:right">${m.waist_cm != null ? `${m.waist_cm}cm` : '—'}</td>
+                        <td style="padding:8px;text-align:right">${m.chest_cm != null ? `${m.chest_cm}cm` : '—'}</td>
+                        <td style="padding:8px;text-align:right">${m.left_arm_cm != null ? `${m.left_arm_cm}cm` : '—'}</td>
+                    </tr>
+                `).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+async function logMeasurement(event) {
+    event.preventDefault();
+    const weight = parseFloat(document.getElementById('m-weight').value) || null;
+    const waist = parseFloat(document.getElementById('m-waist').value) || null;
+    const chest = parseFloat(document.getElementById('m-chest').value) || null;
+    const arm = parseFloat(document.getElementById('m-arm').value) || null;
+
+    if (!weight && !waist && !chest && !arm) {
+        showToast('Enter at least one measurement.', 'error');
+        return;
+    }
+    try {
+        await api('POST', '/measurements', {
+            body_weight_kg: weight, waist_cm: waist, chest_cm: chest,
+            left_arm_cm: arm, right_arm_cm: arm,
+        });
+        ['m-weight', 'm-waist', 'm-chest', 'm-arm'].forEach(id => { document.getElementById(id).value = ''; });
+        showToast('Measurements logged!');
+        invalidateCache('/measurements?limit=30', '/dashboard/summary');
+        const updated = await api('GET', '/measurements?limit=30').catch(() => []);
+        renderMeasurements(updated);
+    } catch (e) {
+        showToast(e.message || 'Failed to log measurements.', 'error');
+    }
 }
 
 function renderPlateaus(data) {
@@ -1063,9 +1124,10 @@ function renderPlateaus(data) {
 
 /* ── Profile ── */
 async function loadProfile() {
-    const [profile, me] = await Promise.all([
+    const [profile, me, goals] = await Promise.all([
         cachedApi('GET', '/profile').catch(() => ({})),
         api('GET', '/auth/me').catch(() => null),
+        api('GET', '/goals').catch(() => []),
     ]);
 
     if (profile && profile.age) {
@@ -1076,6 +1138,8 @@ async function loadProfile() {
             if (el && profile[field] != null) el.value = profile[field];
         });
     }
+
+    renderGoals(goals);
 
     // Telegram link status
     if (me) {
@@ -1128,6 +1192,135 @@ async function saveProfile(event) {
         showToast('Profile saved!');
     } catch (err) {
         showToast(`Save failed: ${err.message}`, 'error');
+    }
+}
+
+/* ── Goals ── */
+function renderGoals(goals) {
+    const el = document.getElementById('goals-list');
+    if (!goals.length) {
+        el.innerHTML = '<p class="empty-state">No goals set yet.</p>';
+        return;
+    }
+    el.innerHTML = goals.map(g => {
+        const parts = [];
+        if (g.target_weight_kg) parts.push(`→ ${g.target_weight_kg}kg`);
+        if (g.target_bf_pct) parts.push(`→ ${g.target_bf_pct}% BF`);
+        if (g.target_date) parts.push(`by ${esc(g.target_date)}`);
+        const badge = g.is_active
+            ? `<span style="background:rgba(34,197,94,0.12);color:#22c55e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">ACTIVE</span>`
+            : `<span style="background:rgba(100,100,100,0.12);color:var(--text-muted);padding:2px 8px;border-radius:4px;font-size:11px">inactive</span>`;
+        return `
+            <div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">
+                <div>
+                    <div style="font-weight:600;font-size:14px;text-transform:uppercase;letter-spacing:0.5px">${esc(g.goal_type)}</div>
+                    ${parts.length ? `<div style="font-size:13px;color:var(--text-muted);margin-top:2px">${parts.join(' · ')}</div>` : ''}
+                </div>
+                ${badge}
+            </div>`;
+    }).join('');
+}
+
+async function saveGoal(event) {
+    event.preventDefault();
+    const form = event.target;
+    try {
+        await api('POST', '/goals', {
+            goal_type: form.goal_type.value,
+            target_weight_kg: parseFloat(form.target_weight_kg.value) || null,
+            target_bf_pct: parseFloat(form.target_bf_pct.value) || null,
+            target_date: form.target_date.value || null,
+        });
+        showToast('Goal set!');
+        form.target_weight_kg.value = '';
+        form.target_bf_pct.value = '';
+        form.target_date.value = '';
+        invalidateCache('/goals');
+        const goals = await api('GET', '/goals').catch(() => []);
+        renderGoals(goals);
+    } catch (e) {
+        showToast(e.message || 'Failed to save goal.', 'error');
+    }
+}
+
+/* ── Nutrition ── */
+async function loadNutrition() {
+    const [today, recent] = await Promise.all([
+        api('GET', '/meals/today').catch(() => ({ meals: [], totals: {} })),
+        api('GET', '/meals?limit=30').catch(() => []),
+    ]);
+
+    const t = today.totals || {};
+    document.getElementById('nt-calories').textContent = t.calories ? `${t.calories} kcal` : '—';
+    document.getElementById('nt-protein').textContent = t.protein_g ? `${t.protein_g}g` : '—';
+    document.getElementById('nt-carbs').textContent = t.carbs_g ? `${t.carbs_g}g` : '—';
+    document.getElementById('nt-fat').textContent = t.fat_g ? `${t.fat_g}g` : '—';
+
+    const todayList = document.getElementById('meals-today-list');
+    if (today.meals.length) {
+        todayList.innerHTML = today.meals.map(m => `
+            <div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                <div>
+                    <div style="font-weight:500;font-size:14px">${esc(m.description || 'Meal')}</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${m.macro_source === 'estimated' ? '~ AI-estimated' : 'manual'}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;font-size:13px">
+                    ${m.calories ? `<span style="color:var(--text-muted)">${m.calories} kcal</span>` : ''}
+                    ${m.protein_g ? `<span style="color:var(--gold);margin-left:8px">${m.protein_g}g P</span>` : ''}
+                </div>
+            </div>`).join('');
+    } else {
+        todayList.innerHTML = '<p class="empty-state">No meals logged today.</p>';
+    }
+
+    const histList = document.getElementById('meals-history-list');
+    if (recent.length) {
+        histList.innerHTML = recent.map(m => `
+            <div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:8px">
+                <div>
+                    <div style="font-size:13px;font-weight:500">${esc(m.description || 'Meal')}</div>
+                    <div style="font-size:11px;color:var(--text-muted)">${esc(m.date)}</div>
+                </div>
+                <div style="font-size:12px;color:var(--text-muted);text-align:right">
+                    ${m.calories ? `${m.calories} kcal` : ''}${m.protein_g ? ` · ${m.protein_g}g P` : ''}
+                </div>
+            </div>`).join('');
+    } else {
+        histList.innerHTML = '<p class="empty-state">No meals logged yet.</p>';
+    }
+}
+
+async function logMeal(event) {
+    event.preventDefault();
+    const btn = document.getElementById('meal-log-btn');
+    btn.disabled = true;
+    btn.textContent = 'Logging…';
+
+    const desc = document.getElementById('meal-desc').value.trim();
+    const kcal = parseFloat(document.getElementById('meal-kcal').value) || null;
+    const prot = parseFloat(document.getElementById('meal-protein').value) || null;
+    const carbs = parseFloat(document.getElementById('meal-carbs').value) || null;
+    const fat = parseFloat(document.getElementById('meal-fat').value) || null;
+
+    if (!desc && kcal === null && prot === null) {
+        showToast('Enter a description or macros.', 'error');
+        btn.disabled = false;
+        btn.textContent = 'Log Meal';
+        return;
+    }
+    try {
+        const result = await api('POST', '/meals', { description: desc, calories: kcal, protein_g: prot, carbs_g: carbs, fat_g: fat });
+        ['meal-desc', 'meal-kcal', 'meal-protein', 'meal-carbs', 'meal-fat'].forEach(id => { document.getElementById(id).value = ''; });
+        const src = result.macro_source === 'estimated' ? ' (AI-estimated)' : '';
+        const pStr = result.protein_g ? ` · ${result.protein_g}g protein` : '';
+        showToast(`Meal logged${pStr}${src}`);
+        invalidateCache('/dashboard/summary');
+        await loadNutrition();
+    } catch (e) {
+        showToast(e.message || 'Failed to log meal.', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Log Meal';
     }
 }
 

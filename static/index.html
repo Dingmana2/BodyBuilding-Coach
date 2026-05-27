@@ -21,6 +21,7 @@
                 <button class="nav-tab" data-tab="research" onclick="showTab('research')">Research</button>
                 <button class="nav-tab" data-tab="progress" onclick="showTab('progress')">Progress</button>
                 <button class="nav-tab" data-tab="profile" onclick="showTab('profile')">Profile</button>
+                <button class="nav-tab" data-tab="nutrition" onclick="showTab('nutrition')">Nutrition</button>
                 <button class="nav-tab" data-tab="reports" onclick="showTab('reports')">Reports</button>
                 <button class="nav-tab" data-tab="billing" onclick="showTab('billing')">Billing</button>
                 <div id="user-badge" class="user-badge" style="display:none">
@@ -347,6 +348,19 @@
                 <h3>Strength Trends (4 weeks)</h3>
                 <div id="plateaus-content"><p class="empty-state">No strength data yet. Log workouts to see trends.</p></div>
             </div>
+            <div class="card" style="margin-top:24px">
+                <h3>Body Measurements</h3>
+                <form id="measurement-form" onsubmit="logMeasurement(event)" style="margin-bottom:16px">
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+                        <div style="flex:1;min-width:90px"><label style="font-size:12px;color:var(--text-muted)">Weight (kg)</label><input type="number" id="m-weight" step="0.1" placeholder="85.0" style="width:100%" /></div>
+                        <div style="flex:1;min-width:90px"><label style="font-size:12px;color:var(--text-muted)">Waist (cm)</label><input type="number" id="m-waist" step="0.5" placeholder="82" style="width:100%" /></div>
+                        <div style="flex:1;min-width:90px"><label style="font-size:12px;color:var(--text-muted)">Chest (cm)</label><input type="number" id="m-chest" step="0.5" placeholder="100" style="width:100%" /></div>
+                        <div style="flex:1;min-width:90px"><label style="font-size:12px;color:var(--text-muted)">Arm (cm)</label><input type="number" id="m-arm" step="0.5" placeholder="38" style="width:100%" /></div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="font-size:13px;padding:7px 16px">Log Measurements</button>
+                </form>
+                <div id="measurements-history"><p class="empty-state">No measurements logged yet.</p></div>
+            </div>
         </section>
 
         <!-- PROFILE -->
@@ -438,6 +452,76 @@
                     </div>
                     <p id="telegram-link-error" class="form-error" style="display:none;margin-top:8px"></p>
                 </div>
+            </div>
+
+            <div class="card" style="margin-top:1.5rem">
+                <h3>Goals</h3>
+                <div id="goals-list" style="margin-bottom:16px"><p class="empty-state">No goals set yet.</p></div>
+                <form id="goals-form" onsubmit="saveGoal(event)">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Goal Type</label>
+                            <select name="goal_type">
+                                <option value="bulk">Bulk (mass gain)</option>
+                                <option value="cut">Cut (fat loss)</option>
+                                <option value="recomp">Recomp</option>
+                                <option value="strength">Strength</option>
+                                <option value="maintain">Maintain</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Target Weight (kg)</label>
+                            <input type="number" name="target_weight_kg" step="0.1" placeholder="e.g. 80" />
+                        </div>
+                        <div class="form-group">
+                            <label>Target Body Fat %</label>
+                            <input type="number" name="target_bf_pct" step="0.1" placeholder="e.g. 12" />
+                        </div>
+                        <div class="form-group">
+                            <label>Target Date</label>
+                            <input type="date" name="target_date" />
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary" style="margin-top:8px">Set Goal</button>
+                </form>
+            </div>
+        </section>
+
+        <!-- NUTRITION -->
+        <section id="tab-nutrition" class="tab-content">
+            <div class="page-header">
+                <h1>Nutrition</h1>
+                <p class="subtitle">Track meals and hit your macro targets</p>
+            </div>
+            <div class="card">
+                <h3>Today's Macros</h3>
+                <div style="display:flex;gap:24px;flex-wrap:wrap;margin:12px 0 20px">
+                    <div><div class="stat-label">Calories</div><div id="nt-calories" style="font-size:22px;font-weight:700">—</div></div>
+                    <div><div class="stat-label">Protein</div><div id="nt-protein" style="font-size:22px;font-weight:700;color:var(--gold)">—</div></div>
+                    <div><div class="stat-label">Carbs</div><div id="nt-carbs" style="font-size:22px;font-weight:700">—</div></div>
+                    <div><div class="stat-label">Fat</div><div id="nt-fat" style="font-size:22px;font-weight:700">—</div></div>
+                </div>
+                <form id="meal-form" onsubmit="logMeal(event)">
+                    <div class="form-group" style="margin-bottom:10px">
+                        <label>Meal description</label>
+                        <input type="text" id="meal-desc" placeholder="e.g. 200g chicken breast + rice · macros auto-estimated if not filled below" />
+                    </div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">kcal</label><input type="number" id="meal-kcal" min="0" step="1" placeholder="auto" style="width:100%" /></div>
+                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Protein (g)</label><input type="number" id="meal-protein" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
+                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Carbs (g)</label><input type="number" id="meal-carbs" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
+                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Fat (g)</label><input type="number" id="meal-fat" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
+                    </div>
+                    <button type="submit" id="meal-log-btn" class="btn btn-primary" style="font-size:13px;padding:7px 16px">Log Meal</button>
+                </form>
+            </div>
+            <div class="card" style="margin-top:16px">
+                <h3>Today's Meals</h3>
+                <div id="meals-today-list"><p class="empty-state">No meals logged today.</p></div>
+            </div>
+            <div class="card" style="margin-top:16px">
+                <h3>Recent Meals (last 30)</h3>
+                <div id="meals-history-list"><p class="empty-state">No meals logged yet.</p></div>
             </div>
         </section>
 
