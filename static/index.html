@@ -159,6 +159,14 @@
                 <h3>Latest Analysis</h3>
                 <div id="latest-analysis-content"></div>
             </div>
+            <div class="card" id="memory-card" style="margin-top:16px;display:none">
+                <h3>Coach Memory</h3>
+                <div id="memory-list" style="margin-bottom:14px"></div>
+                <form id="memory-form" onsubmit="addMemory(event)" style="display:flex;gap:8px">
+                    <input type="text" id="memory-input" placeholder="Add a coaching note…" style="flex:1" maxlength="500" />
+                    <button type="submit" class="btn btn-primary" style="font-size:13px;padding:7px 14px">Add</button>
+                </form>
+            </div>
         </section>
 
         <!-- ANALYSIS -->
@@ -452,6 +460,12 @@
                     </div>
                     <p id="telegram-link-error" class="form-error" style="display:none;margin-top:8px"></p>
                 </div>
+            </div>
+
+            <div class="card" style="margin-top:1.5rem">
+                <h3>Badges &amp; Streaks</h3>
+                <div id="badges-earned" style="margin-bottom:16px"><p class="empty-state">No badges yet — complete check-in and workout streaks to earn them.</p></div>
+                <div id="streaks-detail"></div>
             </div>
 
             <div class="card" style="margin-top:1.5rem">

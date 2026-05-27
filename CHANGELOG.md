@@ -2,6 +2,34 @@
 
 ## 2026-05-27
 
+### Feature #17 — Badges & Streaks Detail in Profile
+**Files**: `static/index.html`, `static/app.js`
+**What**:
+- Added Badges & Streaks card to the Profile tab (above Goals card).
+- `renderBadges(badges)` renders earned badges as pill tiles (🏅 icon, badge type label, earned date) from `GET /api/badges`.
+- `renderStreakDetail(streaks)` renders a table of all streak types (current, best, total days) from `GET /api/streaks`.
+- `loadBadgesAndStreaks()` fetches both in parallel; called from `loadProfile()`.
+
+**Rationale**: Badge and streak data existed in SQLite and were partially surfaced in the retention widget (count only). This exposes the full collection so users can see what they've earned and motivates streak maintenance.
+
+**Rollback**: Remove Badges & Streaks card from Profile HTML; remove `renderBadges`, `renderStreakDetail`, `loadBadgesAndStreaks` from `app.js`; remove `loadBadgesAndStreaks()` call from `loadProfile`.
+
+### Feature #16 — Coach Memory Web UI in Dashboard
+**Files**: `static/index.html`, `static/app.js`
+**What**:
+- Added Coach Memory card to the Dashboard tab (below Latest Analysis card). Hidden when no memories exist.
+- Shows up to 20 recent memories with type badge (PR/recovery/note/observation, color-coded), content, and timestamp.
+- "Add Note" inline form lets users add custom notes (memory_type="note") via `POST /api/memory`.
+- `loadMemory()` fetches `GET /api/memory`; called as a fire-and-forget side effect from `loadDashboard()`.
+
+**Rationale**: The `coach_memories` table was written automatically on PRs but never displayed. Showing the memory feed closes the feedback loop and lets users understand what context the AI has about them.
+
+**Rollback**: Remove `#memory-card` from Dashboard HTML; remove `loadMemory` and `addMemory` from `app.js`; remove `loadMemory()` call from `loadDashboard`.
+
+### Feature #15 — PRs Board (already existed, confirmed surfaced)
+**Files**: none (pre-existing)
+**What**: `GET /api/prs` was already fetched by `loadWorkout()` and rendered by `renderPRs()` into `#prs-list` in the Workout tab. No additional changes needed — confirmed surfaced.
+
 ### Feature #14 — Body Measurements Web UI
 **Files**: `static/index.html`, `static/app.js`
 **What**:

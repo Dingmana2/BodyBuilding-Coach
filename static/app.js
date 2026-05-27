@@ -261,6 +261,7 @@ async function loadDashboard() {
     state.latestCheckins = checkins;
     renderRecoveryWidget(summary, checkins);
     renderRetentionWidget(summary);
+    loadMemory();
 }
 
 function renderRetentionWidget(summary) {
@@ -1140,6 +1141,7 @@ async function loadProfile() {
     }
 
     renderGoals(goals);
+    loadBadgesAndStreaks();
 
     // Telegram link status
     if (me) {
@@ -1322,6 +1324,95 @@ async function logMeal(event) {
         btn.disabled = false;
         btn.textContent = 'Log Meal';
     }
+}
+
+/* ── Coach Memory ── */
+async function loadMemory() {
+    const memories = await api('GET', '/memory?limit=20').catch(() => []);
+    const card = document.getElementById('memory-card');
+    const list = document.getElementById('memory-list');
+    if (!memories.length) {
+        card.style.display = 'none';
+        return;
+    }
+    card.style.display = 'block';
+    const typeColor = { pr: 'var(--gold)', recovery: 'var(--green)', note: 'var(--blue)', observation: 'var(--text-muted)' };
+    list.innerHTML = memories.map(m => `
+        <div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;gap:10px;align-items:flex-start">
+            <span style="background:rgba(255,255,255,0.07);color:${typeColor[m.memory_type] || 'var(--text-muted)'};padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;flex-shrink:0;text-transform:uppercase">${esc(m.memory_type)}</span>
+            <div>
+                <div style="font-size:13px">${esc(m.content)}</div>
+                <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${esc(formatDate(m.created_at))}</div>
+            </div>
+        </div>`).join('');
+}
+
+async function addMemory(event) {
+    event.preventDefault();
+    const input = document.getElementById('memory-input');
+    const content = input.value.trim();
+    if (!content) return;
+    try {
+        await api('POST', '/memory', { content, memory_type: 'note' });
+        input.value = '';
+        showToast('Note added to coach memory.');
+        await loadMemory();
+    } catch (e) {
+        showToast(e.message || 'Failed to add note.', 'error');
+    }
+}
+
+/* ── Badges & Streaks ── */
+async function loadBadgesAndStreaks() {
+    const [badges, streaks] = await Promise.all([
+        api('GET', '/badges').catch(() => []),
+        api('GET', '/streaks').catch(() => ({})),
+    ]);
+    renderBadges(badges);
+    renderStreakDetail(streaks);
+}
+
+function renderBadges(badges) {
+    const el = document.getElementById('badges-earned');
+    if (!badges.length) {
+        el.innerHTML = '<p class="empty-state">No badges yet — complete check-in and workout streaks to earn them.</p>';
+        return;
+    }
+    const _badgeLabel = t => t.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+    el.innerHTML = `<div style="display:flex;flex-wrap:wrap;gap:8px">` +
+        badges.map(b => `
+            <div style="background:rgba(240,165,0,0.12);border:1px solid rgba(240,165,0,0.3);border-radius:8px;padding:8px 12px;text-align:center;min-width:100px">
+                <div style="font-size:20px">🏅</div>
+                <div style="font-size:12px;font-weight:600;color:var(--gold);margin-top:4px">${esc(_badgeLabel(b.badge_type))}</div>
+                <div style="font-size:10px;color:var(--text-muted);margin-top:2px">${esc(b.earned_at.slice(0, 10))}</div>
+            </div>`).join('') +
+        `</div>`;
+}
+
+function renderStreakDetail(streaks) {
+    const el = document.getElementById('streaks-detail');
+    const entries = Object.entries(streaks);
+    if (!entries.length) { el.innerHTML = ''; return; }
+    el.innerHTML = `
+        <table style="width:100%;font-size:13px;border-collapse:collapse;margin-top:14px">
+            <thead>
+                <tr style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.5px">
+                    <th style="padding:6px 8px;text-align:left;border-bottom:1px solid var(--border)">Type</th>
+                    <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">Current</th>
+                    <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">Best</th>
+                    <th style="padding:6px 8px;text-align:right;border-bottom:1px solid var(--border)">Total Days</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${entries.map(([type, s]) => `
+                    <tr style="border-bottom:1px solid var(--border)">
+                        <td style="padding:8px;font-weight:500;text-transform:capitalize">${esc(type.replace('_', ' '))}</td>
+                        <td style="padding:8px;text-align:right;color:var(--gold);font-weight:700">${s.current_streak}</td>
+                        <td style="padding:8px;text-align:right">${s.longest_streak}</td>
+                        <td style="padding:8px;text-align:right;color:var(--text-muted)">${s.total_days_active}</td>
+                    </tr>`).join('')}
+            </tbody>
+        </table>`;
 }
 
 /* ── Workout Logger ── */
