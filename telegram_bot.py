@@ -609,18 +609,6 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
 
-    # Rate limit: free users get 3 check-ins per rolling 7-day window
-    tier = user.get("subscription_tier", "free")
-    if tier == "free" and _checkins_this_week(user) >= 3:
-        await update.message.reply_text(
-            "⚠️ *Free plan limit reached*\n\n"
-            "You've done 3 check-ins this week (free plan limit).\n"
-            "Upgrade to Pro for unlimited daily check-ins plus weekly AI coaching reports.\n\n"
-            "Upgrade at the web app to unlock 🔓",
-            parse_mode="Markdown",
-        )
-        return
-
     # Allow inline: /checkin sleep=7 energy=6 soreness=5 stress=4
     if context.args:
         data: dict[str, int] = {}
@@ -893,29 +881,6 @@ async def _finish_checkin(
         parse_mode="Markdown",
     )
 
-    total_checkins = len(user["checkins"])
-    tier = user.get("subscription_tier", "free")
-    # Conversion nudge after 3rd check-in total
-    if total_checkins == 3 and tier == "free":
-        await update.effective_chat.send_message(
-            "📈 *3 check-ins done!*\n\n"
-            "You're building a recovery tracking habit. "
-            "Pro members get their full recovery trend analysis, "
-            "Garmin HRV sync, and weekly AI coaching reports.\n\n"
-            "Upgrade at the web app to unlock all features 🔓",
-            parse_mode="Markdown",
-        )
-    # Nudge at 7-day streak
-    elif streak_count == 7 and tier == "free":
-        await update.effective_chat.send_message(
-            "🔥 *7-day streak!*\n\n"
-            "You're in the top 10% for consistency. "
-            "Pro users get automated weekly reports, "
-            "progressive overload suggestions after every session, "
-            "and unlimited photo analyses.\n\n"
-            "Lock in your results with Pro — upgrade at the web app 🚀",
-            parse_mode="Markdown",
-        )
 
 
 async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1004,16 +969,6 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "Type /stats to see your PRs.",
             parse_mode="Markdown",
         )
-
-        # Freemium nudge: after 7th session suggest upgrading for reports
-        if user.get("session_counter", 0) % 7 == 0 and user.get("subscription_tier", "free") == "free":
-            await update.message.reply_text(
-                "📊 *7 sessions logged!*\n\n"
-                "Pro members get a weekly AI coaching report that summarizes your progress, "
-                "spots plateaus, and prioritizes your training. \n\n"
-                "Upgrade at the web app (Settings → Billing) to unlock it 🚀",
-                parse_mode="Markdown",
-            )
 
     else:
         # Show today's planned workout
