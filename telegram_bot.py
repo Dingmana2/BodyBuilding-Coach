@@ -641,8 +641,11 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         try:
             import garmin_service
             await update.effective_chat.send_action("typing")
-            garmin_data = garmin_service.fetch_and_cache(
-                chat_id, user["garmin_email"], user["garmin_pass_enc"]
+            # Run the blocking network call off the event loop so the bot stays responsive
+            garmin_data = await asyncio.get_event_loop().run_in_executor(
+                None,
+                garmin_service.fetch_and_cache,
+                chat_id, user["garmin_email"], user["garmin_pass_enc"],
             )
         except Exception as e:
             print(f"Warning: live Garmin fetch failed for chat_id={chat_id}: {e}")
