@@ -2,6 +2,16 @@
 
 ## 2026-05-27
 
+### Feature #6 — Weak-Point Analysis Web Surface
+**Files**: `main.py`, `static/app.js`, `static/index.html`
+**What**:
+- Added `POST /api/analysis/weak-points` endpoint. Gate: free users get HTTP 402 with upgrade message. Loads the 5 most recent body analyses + last 30 days of set_logs, then calls `analyze_weak_points()` with CoachContext prepended. Returns `{weak_points, volume_recommendations, priority_fix}`.
+- Added "Weak-Point Analysis" card at the bottom of the Analysis tab with an "Analyze Weak Points" button.
+- `generateWeakPoints()` calls the endpoint, renders a priority fix banner (gold border), bulleted weak points list, and per-muscle volume recommendation table.
+- No new DB schema changes.
+**Rationale**: The bot already had `/weakpoints` but the web app had no equivalent. The API function and data were already wired; only the endpoint and UI were missing.
+**Rollback**: Remove `POST /api/analysis/weak-points` endpoint; remove weak-points card from `index.html`; delete `generateWeakPoints()` from `app.js`.
+
 ### Feature #5 — Plateau Detection: Rolling 4-Week 1RM Trend Analysis
 **Files**: `main.py`, `static/app.js`, `static/index.html`
 **What**:

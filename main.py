@@ -558,6 +558,59 @@ def list_analyses(limit: int = 20, db: Session = Depends(get_db)):
     ]
 
 
+@app.post("/api/analysis/weak-points")
+async def get_weak_points(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    tier = _get_user_tier(current_user_id, db)
+    if tier == "free":
+        raise HTTPException(
+            status_code=402,
+            detail="Weak-point analysis requires a Pro subscription ($19.99/month). Upgrade to unlock.",
+        )
+    analyses_rows = (
+        db.query(models.BodyAnalysis)
+        .order_by(models.BodyAnalysis.created_at.desc())
+        .limit(5)
+        .all()
+    )
+    if not analyses_rows:
+        raise HTTPException(status_code=404, detail="No body analyses found. Upload a photo first.")
+    analyses_data = [json.loads(r.raw_analysis) if r.raw_analysis else {} for r in analyses_rows]
+
+    thirty_days_ago = datetime.now(timezone.utc) - timedelta(days=30)
+    sessions = db.query(models.WorkoutSession).filter(
+        models.WorkoutSession.chat_id == current_user_id,
+        models.WorkoutSession.started_at >= thirty_days_ago,
+    ).all()
+    set_logs_data = []
+    if sessions:
+        session_ids = [s.id for s in sessions]
+        sets = db.query(models.SetLog).filter(
+            models.SetLog.session_id.in_(session_ids)
+        ).all()
+        set_logs_data = [{"exercise_name": s.exercise_name} for s in sets]
+
+    profile = db.query(models.UserProfile).first()
+    profile_dict = {"goal": profile.goal, "experience": profile.training_experience} if profile else None
+
+    ctx_str = ""
+    try:
+        ctx = await build_context(db, current_user_id)
+        ctx_str = context_block(ctx)
+    except CoachBrainError:
+        pass
+
+    try:
+        result = await asyncio.to_thread(
+            analyze_weak_points, analyses_data, set_logs_data, profile_dict, ctx_str
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Weak-point analysis failed: {e}")
+    return result
+
+
 # ── Plans ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/plan/generate")

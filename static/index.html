@@ -142,6 +142,17 @@
                 <h3>Analysis History</h3>
                 <div id="analyses-list"><p class="empty-state">No analyses yet. Upload your first photo above.</p></div>
             </div>
+
+            <div class="card" style="margin-top:20px">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+                    <div>
+                        <h3 style="margin:0">Weak-Point Analysis</h3>
+                        <p style="font-size:13px;color:var(--text-muted);margin-top:4px">Cross-references photo muscle scores with your training volume to find imbalances</p>
+                    </div>
+                    <button class="btn btn-ghost" onclick="generateWeakPoints()">Analyze Weak Points</button>
+                </div>
+                <div id="weak-points-result" style="display:none"></div>
+            </div>
         </section>
 
         <!-- PLANS -->

@@ -474,6 +474,39 @@ function showHistoryAnalysis(id) {
     document.getElementById('analysis-result').scrollIntoView({ behavior: 'smooth' });
 }
 
+async function generateWeakPoints() {
+    showLoading('Analyzing muscle imbalances against your training volume…');
+    try {
+        const result = await api('POST', '/analysis/weak-points');
+        hideLoading();
+        const weakHtml = (result.weak_points || [])
+            .map(p => `<li style="margin-bottom:6px">${esc(p)}</li>`).join('');
+        const volHtml = Object.entries(result.volume_recommendations || {})
+            .map(([m, r]) => `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
+                    <span style="font-weight:600;text-transform:capitalize">${esc(m)}</span>
+                    <span style="color:var(--text-muted);font-size:13px">${esc(r)}</span>
+                </div>`).join('');
+        document.getElementById('weak-points-result').innerHTML = `
+            ${result.priority_fix ? `
+                <div style="background:rgba(240,165,0,0.08);border:1px solid rgba(240,165,0,0.3);border-radius:8px;padding:14px;margin-bottom:16px">
+                    <div class="stat-label" style="margin-top:0;color:var(--gold)">Priority Fix</div>
+                    <p style="margin-top:4px">${esc(result.priority_fix)}</p>
+                </div>` : ''}
+            ${weakHtml ? `
+                <div class="section-label">Identified Weak Points</div>
+                <ul style="margin:8px 0 16px 16px;color:var(--text-muted);font-size:14px">${weakHtml}</ul>` : ''}
+            ${volHtml ? `
+                <div class="section-label">Volume Recommendations</div>
+                <div style="margin-bottom:8px">${volHtml}</div>` : ''}
+        `;
+        document.getElementById('weak-points-result').style.display = 'block';
+    } catch (err) {
+        hideLoading();
+        showToast(`Weak-point analysis failed: ${err.message}`, 'error');
+    }
+}
+
 /* ── Plans ── */
 async function generatePlan() {
     showLoading('Generating your personalized plan based on analysis + latest research… (30-60 seconds)');
