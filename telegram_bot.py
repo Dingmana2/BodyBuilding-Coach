@@ -635,25 +635,37 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             await _finish_checkin(update, user, data)
             return
 
-    # Check for Garmin pre-fill (yesterday's cached data)
+    # Live Garmin fetch — always pull fresh data at check-in time, fall back to cache
     garmin_data = None
-    if user.get("garmin_email"):
+    if user.get("garmin_email") and user.get("garmin_pass_enc"):
         try:
             import garmin_service
-            garmin_data = garmin_service.get_cached(chat_id)
+            await update.effective_chat.send_action("typing")
+            garmin_data = garmin_service.fetch_and_cache(
+                chat_id, user["garmin_email"], user["garmin_pass_enc"]
+            )
         except Exception as e:
-            print(f"Warning: Garmin get_cached failed for chat_id={chat_id}: {e}")
+            print(f"Warning: live Garmin fetch failed for chat_id={chat_id}: {e}")
+            try:
+                garmin_data = garmin_service.get_cached(chat_id)
+            except Exception:
+                pass
 
     _all_steps = list(_STEP_LABELS.keys())  # ["sleep", "energy", "soreness", "stress"]
 
-    if garmin_data and garmin_data.get("sleep_score_1_10"):
-        sleep_score = garmin_data["sleep_score_1_10"]
-        hrs = garmin_data.get("sleep_duration_hrs", "?")
-        hrv = garmin_data.get("hrv_ms")
+    # Show Garmin review header if any useful metric is available (not just when sleep score exists)
+    _garmin_useful = garmin_data and any(
+        garmin_data.get(k)
+        for k in ("sleep_score_1_10", "hrv_ms", "resting_hr_bpm", "stress_score_1_10")
+    )
+    if _garmin_useful:
+        sleep_score = garmin_data.get("sleep_score_1_10")
         stress_score = garmin_data.get("stress_score_1_10")
 
         stress_note = f"\n_Stress pre-filled: {stress_score}/10 from Garmin_" if stress_score else ""
-        pre_filled: dict[str, int] = {"sleep": sleep_score}
+        pre_filled: dict[str, int] = {}
+        if sleep_score:
+            pre_filled["sleep"] = sleep_score
         if stress_score:
             pre_filled["stress"] = stress_score
 
@@ -665,7 +677,7 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             f"📡 *Garmin review:*\n"
             f"{'  |  '.join(garmin_parts)}{stress_note}"
             f"{workout_text}\n\n"
-            "Just need 2 quick scores from you:",
+            "Just need a couple of scores from you:",
             parse_mode="Markdown",
         )
 
@@ -696,6 +708,7 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "step": 0,
         "data": {},
         "remaining_steps": _all_steps,
+        "garmin_data": garmin_data,
         "workout_summary": _workout_load_summary(user),
         "nutrition_summary": _nutrition_today_summary(user),
     }

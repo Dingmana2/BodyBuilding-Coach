@@ -2,6 +2,13 @@
 
 ## 2026-05-27
 
+### Bug fix: /checkin dropped Garmin data when sleep score was missing; now pulls live
+**Files**: `telegram_bot.py`
+
+**What**: Two bugs caused the 📡 Garmin section to never appear. (1) `cmd_checkin` only entered the Garmin-aware path when `sleep_score_1_10` was present — if the cache had HRV/RHR/stress but no sleep score (common right after connecting, before the watch syncs), the code fell through to the normal 4-question flow and `garmin_data` was never stored in `command_state`, so `_finish_checkin` received `None`. Fix: relaxed the gate to any useful Garmin metric (`sleep_score_1_10 OR hrv_ms OR resting_hr_bpm OR stress_score_1_10`), and added `garmin_data` to the fallback command_state dict too. (2) `/checkin` only read from the stale 6am cache — fix: now calls `fetch_and_cache()` live (with typing indicator) at check-in time so the user always gets current watch data; falls back to the cache on network error.
+
+**Rollback**: Revert `telegram_bot.py` to the previous commit. No DB or API changes.
+
 ### Feature: /checkin shows Garmin review and scores recovery from watch + workouts + nutrition
 **Files**: `telegram_bot.py`
 
