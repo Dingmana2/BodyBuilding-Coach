@@ -46,6 +46,12 @@ ANALYZE_COOLDOWN = 60   # 1 minute between photo analyses
 _plan_cooldowns: dict[int, float] = {}
 _analyze_cooldowns: dict[int, float] = {}
 
+
+def esc(text: str) -> str:
+    """Escape special chars for Telegram legacy Markdown mode."""
+    return str(text).replace("_", r"\_").replace("*", r"\*").replace("`", r"\`").replace("[", r"\[")
+
+
 # ── State persistence ─────────────────────────────────────────────────────────
 # User data is saved to a JSON file so it survives bot restarts / redeploys.
 # On Railway, mount a volume at /data and set DATA_DIR=/data in env vars.
@@ -1642,24 +1648,30 @@ async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None
         )
         return
 
-    ingr_text = ", ".join(ingredients[:15]) + ("…" if len(ingredients) > 15 else "")
-    lines = [f"🛒 *Spotted:* {ingr_text}\n"]
-    for i, r in enumerate(recipes[:3], 1):
-        m = r.get("macros", {})
-        ingr_list = ", ".join(r.get("ingredients", []))
-        lines.append(
-            f"*{i}. {esc(r.get('name', 'Recipe'))}*\n"
-            f"🥩 {m.get('protein_g', '?')}g protein  🔥 {m.get('calories', '?')} kcal  "
-            f"🍚 {m.get('carbs_g', '?')}g carbs  🫒 {m.get('fat_g', '?')}g fat\n"
-            f"📋 {ingr_list}\n"
-            f"👨‍🍳 _{r.get('prep', '')}_\n"
-            f"⏱ {r.get('meal_timing', '')} — {r.get('why_it_fits', '')}\n"
-        )
+    try:
+        ingr_text = ", ".join(ingredients[:15]) + ("…" if len(ingredients) > 15 else "")
+        lines = [f"🛒 *Spotted:* {esc(ingr_text)}\n"]
+        for i, r in enumerate(recipes[:3], 1):
+            m = r.get("macros", {})
+            ingr_list = esc(", ".join(r.get("ingredients", [])))
+            lines.append(
+                f"*{i}. {esc(r.get('name', 'Recipe'))}*\n"
+                f"🥩 {m.get('protein_g', '?')}g protein  🔥 {m.get('calories', '?')} kcal  "
+                f"🍚 {m.get('carbs_g', '?')}g carbs  🫒 {m.get('fat_g', '?')}g fat\n"
+                f"📋 {ingr_list}\n"
+                f"👨‍🍳 _{esc(r.get('prep', ''))}_\n"
+                f"⏱ {esc(r.get('meal_timing', ''))} — {esc(r.get('why_it_fits', ''))}\n"
+            )
 
-    await msg.edit_text(
-        "🍽️ *Fridge Recipe Suggestions*\n\n" + "\n".join(lines),
-        parse_mode="Markdown",
-    )
+        await msg.edit_text(
+            "🍽️ *Fridge Recipe Suggestions*\n\n" + "\n".join(lines),
+            parse_mode="Markdown",
+        )
+    except Exception as e:
+        print(f"Warning: fridge formatting/send failed: {e}")
+        await msg.edit_text(
+            "⚠️ Got the analysis back but couldn't format it. Please try again."
+        )
 
 
 async def cmd_macros(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

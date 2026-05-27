@@ -2,6 +2,13 @@
 
 ## 2026-05-27
 
+### Bug fix: /fridge showed "Scanning…" forever — NameError on undefined `esc()` silently swallowed
+**Files**: `telegram_bot.py`
+
+**What**: After the API call returned successfully, the formatting code called `esc()` (a Markdown-escape helper) which was never defined or imported anywhere in the file. This raised a `NameError` that was not caught by any try/except, leaving the "Scanning your fridge…" message frozen forever with no error shown. Fix: (1) Added `esc(text: str) -> str` at module level (escapes `_`, `*`, `` ` ``, `[` for Telegram legacy Markdown). (2) Applied `esc()` to all dynamic Claude-generated fields in the recipe output (name, ingredients, prep, timing, why_it_fits). (3) Wrapped the entire formatting + `edit_text` call in a try/except so any future message-send failure degrades to a clean error instead of a frozen message.
+
+**Rollback**: Remove the `esc` function definition and revert the formatting block in `_handle_fridge_photo`.
+
 ### Bug fix: /fridge blocked event loop for 10 min — wrapped Claude API call in run_in_executor with 90s timeout
 **Files**: `telegram_bot.py`
 
