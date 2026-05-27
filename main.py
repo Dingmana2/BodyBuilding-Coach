@@ -5,10 +5,12 @@ import hmac
 import json
 import os
 import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -128,6 +130,8 @@ def _migrate_db():
         ("body_analyses", "body_fat_confidence", "VARCHAR"),
         ("workout_sessions", "user_id", "INTEGER REFERENCES users(id)"),
         ("workout_sessions", "next_session_targets", "TEXT"),
+        ("weekly_reports", "next_week_focus", "TEXT"),
+        ("weekly_reports", "adherence_rating", "VARCHAR"),
     ]
     indexes = [
         "CREATE INDEX IF NOT EXISTS ix_daily_checkins_chat_date ON daily_checkins(chat_id, date)",
@@ -156,7 +160,81 @@ _migrate_db()
 UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
-app = FastAPI(title="BodyBuilding Coach AI", version="1.0.0")
+
+async def _auto_weekly_reports() -> None:
+    """Sunday 8:00 UTC: generate weekly reports for all Pro/Elite users who don't have one yet."""
+    from database import SessionLocal
+    monday = (datetime.now(timezone.utc) - timedelta(days=datetime.now(timezone.utc).weekday())).strftime("%Y-%m-%d")
+    db = SessionLocal()
+    try:
+        pro_users = db.query(models.User).filter(
+            models.User.subscription_tier.in_(["pro", "elite"]),
+            models.User.is_active == True,
+        ).all()
+        for user in pro_users:
+            existing = db.query(models.WeeklyReport).filter(
+                models.WeeklyReport.chat_id == user.id,
+                models.WeeklyReport.week_start == monday,
+            ).first()
+            if existing:
+                continue
+            try:
+                seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+                sessions = db.query(models.WorkoutSession).filter(
+                    models.WorkoutSession.chat_id == user.id,
+                    models.WorkoutSession.ended_at != None,
+                    models.WorkoutSession.started_at >= datetime.fromisoformat(seven_days_ago),
+                ).all()
+                checkins = db.query(models.DailyCheckIn).filter(
+                    models.DailyCheckIn.chat_id == user.id,
+                    models.DailyCheckIn.date >= seven_days_ago,
+                ).all()
+                meals = db.query(models.MealLog).filter(
+                    models.MealLog.chat_id == user.id,
+                    models.MealLog.date >= seven_days_ago,
+                ).all()
+                prs = db.query(models.PersonalRecord).filter(
+                    models.PersonalRecord.chat_id == user.id,
+                ).order_by(models.PersonalRecord.achieved_at.desc()).limit(10).all()
+                profile = db.query(models.UserProfile).filter(
+                    models.UserProfile.user_id == user.id
+                ).first()
+                profile_dict = {"goal": profile.goal, "experience": profile.training_experience} if profile else None
+                sessions_data = [{"id": s.id, "started_at": s.started_at.isoformat()} for s in sessions]
+                checkins_data = [{"recovery_score": c.recovery_score} for c in checkins]
+                meals_data = [{"protein_g": m.protein_g} for m in meals]
+                prs_data = [{"exercise_name": p.exercise_name, "weight_kg": p.weight_kg, "reps": p.reps} for p in prs]
+                report_data = await asyncio.to_thread(
+                    generate_weekly_report, sessions_data, checkins_data, meals_data, prs_data, profile_dict
+                )
+                report = models.WeeklyReport(
+                    chat_id=user.id, week_start=monday,
+                    sessions_count=len(sessions),
+                    avg_recovery=report_data.get("avg_recovery"),
+                    prs_count=len(prs_data),
+                    avg_protein_g=report_data.get("avg_protein_g"),
+                    ai_insights=json.dumps(report_data.get("insights", [])),
+                    next_week_focus=report_data.get("next_week_focus"),
+                    adherence_rating=report_data.get("adherence_rating"),
+                )
+                db.add(report)
+                db.commit()
+            except Exception as e:
+                print(f"Warning: Auto-report failed for user {user.id}: {e}")
+    finally:
+        db.close()
+
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    scheduler = AsyncIOScheduler()
+    scheduler.add_job(_auto_weekly_reports, "cron", day_of_week="sun", hour=8, minute=0)
+    scheduler.start()
+    yield
+    scheduler.shutdown()
+
+
+app = FastAPI(title="BodyBuilding Coach AI", version="1.0.0", lifespan=_lifespan)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
@@ -1388,6 +1466,8 @@ def list_reports(limit: int = 10, current_user_id: int = Depends(get_current_use
             "avg_recovery": r.avg_recovery, "prs_count": r.prs_count,
             "avg_protein_g": r.avg_protein_g,
             "ai_insights": json.loads(r.ai_insights) if r.ai_insights else [],
+            "next_week_focus": r.next_week_focus,
+            "adherence_rating": r.adherence_rating,
             "created_at": r.created_at.isoformat(),
         }
         for r in rows
@@ -1458,6 +1538,8 @@ async def generate_report(request: Request, current_user_id: int = Depends(get_c
         avg_recovery=report_data.get("avg_recovery"), prs_count=len(prs_data),
         avg_protein_g=report_data.get("avg_protein_g"),
         ai_insights=json.dumps(report_data.get("insights", [])),
+        next_week_focus=report_data.get("next_week_focus"),
+        adherence_rating=report_data.get("adherence_rating"),
     )
     db.add(report)
     db.commit()

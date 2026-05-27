@@ -21,6 +21,7 @@
                 <button class="nav-tab" data-tab="research" onclick="showTab('research')">Research</button>
                 <button class="nav-tab" data-tab="progress" onclick="showTab('progress')">Progress</button>
                 <button class="nav-tab" data-tab="profile" onclick="showTab('profile')">Profile</button>
+                <button class="nav-tab" data-tab="reports" onclick="showTab('reports')">Reports</button>
                 <button class="nav-tab" data-tab="billing" onclick="showTab('billing')">Billing</button>
                 <div id="user-badge" class="user-badge" style="display:none">
                     <span id="user-email-short"></span>
@@ -377,6 +378,16 @@
                     <p id="telegram-link-error" class="form-error" style="display:none;margin-top:8px"></p>
                 </div>
             </div>
+        </section>
+
+        <!-- REPORTS -->
+        <section id="tab-reports" class="tab-content">
+            <div class="page-header">
+                <h1>Weekly Reports</h1>
+                <p class="subtitle">AI-generated coaching summaries — auto-delivered every Sunday (Pro+)</p>
+                <button class="btn btn-primary" onclick="generateReport()">Generate Report Now</button>
+            </div>
+            <div id="reports-list"><p class="empty-state">No reports yet. Reports are auto-generated every Sunday for Pro users, or click "Generate Report Now" above.</p></div>
         </section>
 
         <!-- BILLING -->

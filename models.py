@@ -174,6 +174,8 @@ class WeeklyReport(Base):
     prs_count = Column(Integer, default=0)
     avg_protein_g = Column(Float, nullable=True)
     ai_insights = Column(Text)              # JSON array of insight strings
+    next_week_focus = Column(Text, nullable=True)
+    adherence_rating = Column(String, nullable=True)
     created_at = Column(DateTime, server_default=func.now())
 
 

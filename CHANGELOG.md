@@ -2,6 +2,19 @@
 
 ## 2026-05-27
 
+### Feature #7 — Weekly Athlete Report: Sunday Auto-Job + Reports Tab
+**Files**: `models.py`, `main.py`, `static/app.js`, `static/index.html`
+**What**:
+- Added `next_week_focus = Column(Text, nullable=True)` and `adherence_rating = Column(String, nullable=True)` to `WeeklyReport` model; idempotent migrations added.
+- Updated `POST /api/reports/generate` to persist both new fields.
+- Updated `GET /api/reports` to return `next_week_focus` and `adherence_rating` in each report dict.
+- Added `_auto_weekly_reports()` async function: Sunday 8:00 UTC, iterates all active Pro/Elite users, skips users who already have a report for the current ISO week, generates + stores a report for each. Errors per-user are non-fatal (logged as warnings).
+- Added `_lifespan(app)` FastAPI asynccontextmanager that starts/stops an `AsyncIOScheduler` with the Sunday cron job. `app = FastAPI(..., lifespan=_lifespan)`.
+- Added "Reports" nav tab and `<section id="tab-reports">` with Generate button.
+- Added `generateReport()` (calls `POST /api/reports/generate`, refreshes list) and `loadReports()` (renders report cards with adherence badge, stats row, coaching insights list, next-week focus banner).
+**Rationale**: Reports were generated on demand but never auto-triggered and never displayed in the web UI. The Sunday job makes Pro+ feel like a real coaching product. The UI completes the web-side feature parity.
+**Rollback**: Remove `_auto_weekly_reports`, `_lifespan`; revert `app = FastAPI(...)` to remove lifespan; remove `asynccontextmanager` and `AsyncIOScheduler` imports; remove new columns from model and migration list; revert `GET /api/reports` and `POST /api/reports/generate`; remove Reports tab from HTML + `loadReports`/`generateReport` from JS.
+
 ### Feature #6 — Weak-Point Analysis Web Surface
 **Files**: `main.py`, `static/app.js`, `static/index.html`
 **What**:

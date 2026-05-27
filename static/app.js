@@ -173,6 +173,7 @@ function showTab(tab) {
         research: loadResearch,
         progress: loadProgress,
         profile: loadProfile,
+        reports: loadReports,
         billing: loadBilling,
     };
     if (loaders[tab]) loaders[tab]();
@@ -1224,6 +1225,60 @@ function startSessionTimer() {
 function stopSessionTimer() {
     clearInterval(state.sessionTimerInterval);
     state.sessionTimerInterval = null;
+}
+
+/* ── Reports ── */
+async function generateReport() {
+    showLoading('Generating your weekly AI coaching report… (15-30 seconds)');
+    try {
+        const report = await api('POST', '/reports/generate');
+        invalidateCache('/reports');
+        hideLoading();
+        showToast('Weekly report generated!');
+        await loadReports();
+    } catch (err) {
+        hideLoading();
+        showToast(`Report failed: ${err.message}`, 'error');
+    }
+}
+
+async function loadReports() {
+    const reports = await cachedApi('GET', '/reports').catch(() => []);
+    const container = document.getElementById('reports-list');
+    if (!reports.length) {
+        container.innerHTML = '<p class="empty-state">No reports yet. Reports are auto-generated every Sunday for Pro users, or click "Generate Report Now" above.</p>';
+        return;
+    }
+    container.innerHTML = reports.map(r => {
+        const insightsHtml = (r.ai_insights || [])
+            .map(i => `<li style="margin-bottom:6px;color:var(--text-muted);font-size:14px">${esc(i)}</li>`).join('');
+        const ratingColor = r.adherence_rating === 'Excellent' ? 'var(--green)'
+            : r.adherence_rating === 'Good' ? 'var(--gold)'
+            : r.adherence_rating ? 'var(--red)' : 'var(--text-muted)';
+        return `
+            <div class="card" style="margin-bottom:16px">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+                    <div>
+                        <div style="font-weight:700;font-size:16px">Week of ${esc(r.week_start)}</div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(formatDate(r.created_at))}</div>
+                    </div>
+                    ${r.adherence_rating ? `<span style="padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600;background:rgba(240,165,0,0.1);color:${ratingColor}">${esc(r.adherence_rating)}</span>` : ''}
+                </div>
+                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px">
+                    ${r.sessions_count != null ? `<div><div class="stat-label">Sessions</div><div style="font-size:18px;font-weight:700">${esc(r.sessions_count)}</div></div>` : ''}
+                    ${r.avg_recovery != null ? `<div><div class="stat-label">Avg Recovery</div><div style="font-size:18px;font-weight:700;color:${r.avg_recovery >= 70 ? 'var(--green)' : r.avg_recovery >= 50 ? 'var(--gold)' : 'var(--red)'}">${esc(r.avg_recovery)}/100</div></div>` : ''}
+                    ${r.avg_protein_g != null ? `<div><div class="stat-label">Avg Protein</div><div style="font-size:18px;font-weight:700">${esc(r.avg_protein_g)}g</div></div>` : ''}
+                    ${r.prs_count ? `<div><div class="stat-label">New PRs</div><div style="font-size:18px;font-weight:700;color:var(--gold)">${esc(r.prs_count)}</div></div>` : ''}
+                </div>
+                ${insightsHtml ? `<div class="section-label">Coaching Insights</div><ul style="margin:8px 0 12px 16px">${insightsHtml}</ul>` : ''}
+                ${r.next_week_focus ? `
+                    <div style="background:rgba(240,165,0,0.07);border:1px solid rgba(240,165,0,0.25);border-radius:8px;padding:12px">
+                        <div class="stat-label" style="margin-top:0;color:var(--gold)">Next Week Focus</div>
+                        <p style="font-size:14px;margin-top:4px">${esc(r.next_week_focus)}</p>
+                    </div>` : ''}
+            </div>
+        `;
+    }).join('');
 }
 
 /* ── Billing ── */
