@@ -58,6 +58,10 @@
                     <div class="stat-label">Daily Protein</div>
                     <div class="stat-value" id="stat-protein">—</div>
                 </div>
+                <div class="stat-card">
+                    <div class="stat-label">Recovery Score</div>
+                    <div class="stat-value" id="stat-recovery">—</div>
+                </div>
             </div>
 
             <div class="action-grid">
@@ -81,6 +85,19 @@
                     <div class="action-title">View Progress</div>
                     <div class="action-desc">Compare body photos and track your improvements</div>
                 </div>
+            </div>
+
+            <div id="recovery-card" class="card" style="display:none">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px">
+                    <div>
+                        <h3 style="margin-bottom:4px">Recovery Trend</h3>
+                        <div class="stat-label">7-Day Average</div>
+                        <div id="recovery-avg" style="font-size:28px;font-weight:700;margin-top:4px">—</div>
+                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">out of 100</div>
+                    </div>
+                    <div id="recovery-sparkline" style="align-self:center"></div>
+                </div>
+                <div id="recovery-tip" style="display:none;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:8px;font-size:13px;color:var(--text-muted)"></div>
             </div>
 
             <div id="latest-analysis-card" style="display:none" class="card">

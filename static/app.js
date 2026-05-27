@@ -206,9 +206,11 @@ function showToast(msg, type = 'success') {
 
 /* ── Dashboard ── */
 async function loadDashboard() {
-    const [health, plan] = await Promise.all([
+    const [health, plan, summary, checkins] = await Promise.all([
         cachedApi('GET', '/health').catch(() => ({ api_key_configured: false })),
         cachedApi('GET', '/plan/current').catch(() => null),
+        cachedApi('GET', '/dashboard/summary').catch(() => null),
+        cachedApi('GET', '/checkins?limit=7').catch(() => []),
     ]);
 
     document.getElementById('setup-banner').style.display =
@@ -243,6 +245,64 @@ async function loadDashboard() {
                 </div>
             `;
         }
+    }
+
+    if (summary?.avg_recovery_7d != null) {
+        const avg = summary.avg_recovery_7d;
+        const color = avg >= 70 ? 'var(--green)' : avg >= 50 ? 'var(--gold)' : 'var(--red)';
+        const el = document.getElementById('stat-recovery');
+        el.textContent = `${avg}/100`;
+        el.style.color = color;
+    }
+    renderRecoveryWidget(summary, checkins);
+}
+
+function _scoreColor(score) {
+    return score >= 70 ? 'var(--green)' : score >= 50 ? 'var(--gold)' : 'var(--red)';
+}
+
+function _sparklineSvg(scores, w = 180, h = 56) {
+    if (scores.length < 2) return '';
+    const pad = 6;
+    const n = scores.length;
+    const xs = scores.map((_, i) => pad + (i / (n - 1)) * (w - 2 * pad));
+    const ys = scores.map(v => h - pad - (v / 100) * (h - 2 * pad));
+    const pathD = xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+    const last = scores[scores.length - 1];
+    const stroke = last >= 70 ? '#22c55e' : last >= 50 ? '#f0a500' : '#ef4444';
+    const dots = xs.map((x, i) =>
+        `<circle cx="${x.toFixed(1)}" cy="${ys[i].toFixed(1)}" r="3" fill="${stroke}" opacity="0.85"/>`
+    ).join('');
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
+        <path d="${pathD}" fill="none" stroke="${stroke}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
+        ${dots}
+    </svg>`;
+}
+
+function renderRecoveryWidget(summary, checkins) {
+    const card = document.getElementById('recovery-card');
+    const avg = summary?.avg_recovery_7d;
+    if (avg == null && !checkins.length) { card.style.display = 'none'; return; }
+
+    card.style.display = 'block';
+
+    if (avg != null) {
+        const avgEl = document.getElementById('recovery-avg');
+        avgEl.textContent = `${avg}/100`;
+        avgEl.style.color = _scoreColor(avg);
+    }
+
+    const ordered = [...checkins].reverse();
+    const scores = ordered.map(c => c.recovery_score ?? 0);
+    document.getElementById('recovery-sparkline').innerHTML = _sparklineSvg(scores);
+
+    const tip = checkins[0]?.coaching_tip;
+    const tipEl = document.getElementById('recovery-tip');
+    if (tip) {
+        tipEl.textContent = tip;
+        tipEl.style.display = 'block';
+    } else {
+        tipEl.style.display = 'none';
     }
 }
 

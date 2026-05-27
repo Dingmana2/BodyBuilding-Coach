@@ -2,6 +2,17 @@
 
 ## 2026-05-27
 
+### Feature #3 — Recovery Score Web Dashboard Surface
+**Files**: `static/app.js`, `static/index.html`
+**What**:
+- Added a 5th stat card "Recovery Score" to the dashboard stats grid, populated from `GET /api/dashboard/summary → avg_recovery_7d`; color-coded green ≥70, gold 50–69, red <50.
+- Added a "Recovery Trend" card on the dashboard showing the 7-day average score and a pure-SVG sparkline of the last 7 check-in recovery scores (oldest→newest, color matches threshold bands).
+- Added the latest coaching tip below the sparkline when present.
+- `loadDashboard()` now fetches `/dashboard/summary` and `/checkins?limit=7` in the existing `Promise.all` (both cached at 30s, no new network round-trips on re-render).
+- Added `_sparklineSvg(scores, w, h)` helper (zero dependencies — raw SVG path + circles) and `renderRecoveryWidget(summary, checkins)` renderer. Both skip gracefully when no check-in data exists.
+**Rationale**: `recovery_score` was computed and stored in `daily_checkins` but invisible in the web UI. `/api/dashboard/summary` already returned `avg_recovery_7d`; the frontend just never used it.
+**Rollback**: Remove `stat-recovery` card from `index.html` stats-grid; remove `recovery-card` div from `index.html`; revert `loadDashboard()` to two-item `Promise.all`; delete `_sparklineSvg`, `_scoreColor`, `renderRecoveryWidget` from `app.js`.
+
 ### Feature #2 — Daily Check-ins: Inline Buttons + SQLite Persistence + Rate Limiting
 **Files**: `telegram_bot.py`
 **What**:
