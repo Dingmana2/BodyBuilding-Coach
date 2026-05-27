@@ -2,6 +2,21 @@
 
 ## 2026-05-27
 
+### Bot UX Fixes — Mobile-only user hardening
+**Files**: `telegram_bot.py`
+
+**What**:
+- `_get_bot_context_str()`: log exception with `print(f"Warning: bot context build failed: {e}")` instead of silently swallowing it — coach no longer loses athlete context without any trace.
+- `cmd_meal`: send `typing` chat action before the placeholder message so Telegram shows "typing…" during the 5-10 s AI/Nutritionix lookup.
+- `cmd_weakpoints`: removed hard requirement for a prior physique photo. Now falls back to set-log + PRs data for training-imbalance analysis; only blocks if there is genuinely no data at all (no sets, no PRs, no analysis).
+- `_chat_with_coach`: when `plan_update` or `plan_regen` JSON blocks are malformed, append an explicit user-facing warning instead of silently dropping the update. User now sees "_Plan change detected but couldn't be applied — type /plan to regenerate._"
+
+**Rationale**: User is mobile/Telegram-only. Silent failures degraded every coaching interaction; these four fixes restore observable feedback for all failure modes.
+
+**Rollback**: Revert `telegram_bot.py` to previous commit.
+
+
+
 ### Phase 5 — Final Test + Polish Pass
 **Files**: `main.py`, `tests/conftest.py` (new), `tests/test_api.py` (new), `.env.example`, `README.md` (new), `RELEASE_NOTES.md` (new), `NEXT_STEPS.md` (new)
 

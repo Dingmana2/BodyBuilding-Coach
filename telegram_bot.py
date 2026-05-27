@@ -696,7 +696,8 @@ def _get_bot_context_str(user: dict) -> str:
     """Return a rich context string for AI prompts built from bot JSON user data."""
     try:
         return bot_json_context_block(user)
-    except Exception:
+    except Exception as e:
+        print(f"Warning: bot context build failed: {e}")
         return ""
 
 
@@ -1392,7 +1393,8 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
 
     description = " ".join(context.args)
-    msg = await update.message.reply_text("🍽️ Looking up macros…")
+    await update.effective_chat.send_action("typing")
+    msg = await update.message.reply_text("🍽️ Estimating macros…")
 
     try:
         from nutrition_service import lookup_food_macros
@@ -2000,19 +2002,21 @@ async def cmd_weakpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
 
-    if not user["last_analysis"]:
+    cutoff = str(_date.today() - timedelta(days=30))
+    recent_sets = [s for s in user["set_logs"] if s.get("date", "") >= cutoff]
+
+    if not user["last_analysis"] and not recent_sets and not user["prs"]:
         await update.message.reply_text(
-            "No physique analysis yet. Send a photo first and I'll identify your weak points. 📸"
+            "📊 Not enough data yet.\n\n"
+            "Log some sets with /log or /logset, then I can identify your training imbalances.\n"
+            "Send a photo for a full physique assessment too. 📸"
         )
         return
 
     msg = await update.message.reply_text("🔬 Analyzing training imbalances…")
     try:
         from claude_service import analyze_weak_points
-        analyses = [user["last_analysis"]]
-        # Last 30 days of set logs
-        cutoff = str(_date.today().replace(day=max(1, _date.today().day - 30)))
-        recent_sets = [s for s in user["set_logs"] if s.get("date", "") >= cutoff]
+        analyses = [user["last_analysis"]] if user["last_analysis"] else []
         ctx_str = _get_bot_context_str(user)
         result = await asyncio.run_in_executor(
             None, analyze_weak_points, analyses, recent_sets, user["profile"] or None, ctx_str
@@ -2536,7 +2540,7 @@ def _chat_with_coach(text: str, user: dict, context_str: str = "") -> tuple[str,
         try:
             plan_update = json.loads(match.group(1).strip())
         except json.JSONDecodeError:
-            pass
+            full_reply += "\n\n⚠️ _Plan change detected but couldn't be applied — type /plan to regenerate._"
         full_reply = re.sub(r"```plan_update[\s\S]*?```", "", full_reply).strip()
 
     plan_regen = None
@@ -2545,7 +2549,7 @@ def _chat_with_coach(text: str, user: dict, context_str: str = "") -> tuple[str,
         try:
             plan_regen = json.loads(match_regen.group(1).strip())
         except json.JSONDecodeError:
-            pass
+            full_reply += "\n\n⚠️ _Plan regeneration requested but couldn't be parsed — type `/plan new` to regenerate._"
         full_reply = re.sub(r"```plan_regenerate[\s\S]*?```", "", full_reply).strip()
 
     history.append({"role": "assistant", "content": full_reply})
