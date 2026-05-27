@@ -2,6 +2,22 @@
 
 ## 2026-05-27
 
+### Phase 5 — Final Test + Polish Pass
+**Files**: `main.py`, `tests/conftest.py` (new), `tests/test_api.py` (new), `.env.example`, `README.md` (new), `RELEASE_NOTES.md` (new), `NEXT_STEPS.md` (new)
+
+**What**:
+- Removed unused `JSONResponse` import from `main.py` (identified via orphan code audit).
+- Updated `.env.example` to cover all 7 env vars the code actually reads: `ANTHROPIC_API_KEY`, `SECRET_KEY`, `BOT_SECRET`, `TELEGRAM_BOT_TOKEN`, `API_BASE_URL`, `DATA_DIR`, `STRIPE_SECRET_KEY`.
+- Created `tests/conftest.py` + `tests/test_api.py`: 38 automated tests covering auth flow, profile, check-in upsert, PUT edit, meals (manual + AI-estimated), measurements, goals (deactivation logic), coach memory, session lifecycle (start → log sets → PR detection → end → history), streaks, badges, dashboard summary, and subscription. All AI calls mocked — tests run offline.
+- `python -m pytest tests/ -v` → **38/38 passed**.
+- Created `README.md` — setup, env vars, test instructions, deployment guide, Telegram command reference.
+- Created `RELEASE_NOTES.md` — user-facing summary of all v1.0.0 features, breaking changes (none), and known limitations.
+- Created `NEXT_STEPS.md` — prioritised backlog (P0 security, P1 product gaps, P2 QoL, P3 architecture).
+
+**Rationale**: Phase 5 final-polish pass per spec — test coverage, dead-code cleanup, env var audit, and ship-ready documentation.
+
+**Rollback**: Delete `tests/` directory, revert `main.py` JSONResponse removal, revert `.env.example` to prior version, delete `README.md`, `RELEASE_NOTES.md`, `NEXT_STEPS.md`.
+
 ### Feature #17 — Badges & Streaks Detail in Profile
 **Files**: `static/index.html`, `static/app.js`
 **What**:
