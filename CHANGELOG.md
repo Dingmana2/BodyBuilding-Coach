@@ -2,6 +2,17 @@
 
 ## 2026-05-27
 
+### Feature #5 — Plateau Detection: Rolling 4-Week 1RM Trend Analysis
+**Files**: `main.py`, `static/app.js`, `static/index.html`
+**What**:
+- Added `GET /api/progress/plateaus?weeks=4` endpoint. Loads `set_logs` via sessions owned by the user for the past N weeks, groups weekly max estimated 1RM per exercise, flags exercises where the last 3 weeks show <2% 1RM change as stalled.
+- Returns `[{exercise, stalled, weeks_stalled, weekly_trend, current_1rm, peak_1rm}]` sorted: stalled exercises first, then by peak 1RM.
+- Added "Strength Trends (4 weeks)" card to the Progress tab. Each exercise row shows the weekly 1RM trend (`118 → 120 → 120 → 120`), current est. 1RM in gold, and a PLATEAU / PROGRESSING badge.
+- `loadProgress()` now fetches plateaus in the same `Promise.all` as photos.
+- No new DB tables or columns — computed entirely from existing `set_logs` and `workout_sessions`.
+**Rationale**: Plateau detection was listed in the feature queue. `set_logs` already stores per-set `estimated_1rm` + `logged_at`, giving enough signal to detect multi-week 1RM stalls without any schema changes.
+**Rollback**: Remove `GET /api/progress/plateaus` endpoint; remove "Strength Trends" card from `index.html`; revert `loadProgress()` to single fetch; delete `renderPlateaus()`.
+
 ### Feature #4 — Progression Engine: Persistent Next-Session Targets
 **Files**: `models.py`, `main.py`, `static/app.js`, `static/index.html`
 **What**:

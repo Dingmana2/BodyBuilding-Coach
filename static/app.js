@@ -785,26 +785,64 @@ function togglePapers(topicId) {
 
 /* ── Progress ── */
 async function loadProgress() {
-    const data = await cachedApi('GET', '/progress').catch(() => []);
-    const container = document.getElementById('progress-content');
+    const [data, plateaus] = await Promise.all([
+        cachedApi('GET', '/progress').catch(() => []),
+        cachedApi('GET', '/progress/plateaus').catch(() => []),
+    ]);
 
+    const container = document.getElementById('progress-content');
     if (data.length < 1) {
         container.innerHTML = '<p class="empty-state">No progress data yet. Upload at least two body photos to see your progress.</p>';
+    } else {
+        const cards = data.map((entry, i) => `
+            <div class="progress-card">
+                <img src="${esc(entry.photo_url)}" alt="Progress photo ${i + 1}" loading="lazy" />
+                <div class="progress-card-info">
+                    <div class="progress-date">${esc(formatDate(entry.created_at))}</div>
+                    <div class="progress-bf">${esc(entry.body_fat_estimate) || '—'}</div>
+                    <div style="font-size:13px;color:var(--text-muted)">Score: ${esc(entry.overall_physique_score) || '—'}/10</div>
+                </div>
+            </div>
+        `).join('');
+        container.innerHTML = `<div class="progress-grid">${cards}</div>`;
+    }
+
+    renderPlateaus(plateaus);
+}
+
+function renderPlateaus(data) {
+    const container = document.getElementById('plateaus-content');
+    if (!data.length) {
+        container.innerHTML = '<p class="empty-state">No strength data yet. Log workouts to see trends.</p>';
         return;
     }
 
-    const cards = data.map((entry, i) => `
-        <div class="progress-card">
-            <img src="${esc(entry.photo_url)}" alt="Progress photo ${i + 1}" loading="lazy" />
-            <div class="progress-card-info">
-                <div class="progress-date">${esc(formatDate(entry.created_at))}</div>
-                <div class="progress-bf">${esc(entry.body_fat_estimate) || '—'}</div>
-                <div style="font-size:13px;color:var(--text-muted)">Score: ${esc(entry.overall_physique_score) || '—'}/10</div>
-            </div>
-        </div>
-    `).join('');
+    container.innerHTML = data.map(ex => {
+        const badge = ex.stalled
+            ? `<span style="background:rgba(239,68,68,0.15);color:#ef4444;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">PLATEAU</span>`
+            : `<span style="background:rgba(34,197,94,0.12);color:#22c55e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">PROGRESSING</span>`;
 
-    container.innerHTML = `<div class="progress-grid">${cards}</div>`;
+        const trendDots = ex.weekly_trend.map((v, i) => {
+            const isLast = i === ex.weekly_trend.length - 1;
+            return `<span style="font-size:${isLast ? '15px' : '13px'};font-weight:${isLast ? '700' : '400'};color:${isLast && ex.stalled ? '#ef4444' : 'var(--text-muted)'}">${v}</span>`;
+        }).join(' → ');
+
+        return `
+            <div style="padding:12px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+                <div>
+                    <div style="font-weight:600;font-size:14px">${esc(ex.exercise)}</div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:3px">${trendDots} kg est. 1RM</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <div style="text-align:right">
+                        <div style="font-size:18px;font-weight:700;color:var(--gold)">${esc(ex.current_1rm)}kg</div>
+                        <div style="font-size:11px;color:var(--text-muted)">current est. 1RM</div>
+                    </div>
+                    ${badge}
+                </div>
+            </div>
+        `;
+    }).join('');
 }
 
 /* ── Profile ── */

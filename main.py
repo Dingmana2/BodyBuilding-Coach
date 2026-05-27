@@ -977,6 +977,64 @@ def get_prs(
     ]
 
 
+@app.get("/api/progress/plateaus")
+def get_plateaus(
+    weeks: int = 4,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Return per-exercise weekly 1RM trend for the past N weeks.
+
+    Exercises where the last 3 weeks show <2% 1RM change are flagged as stalled.
+    """
+    from collections import defaultdict
+    cutoff = datetime.now(timezone.utc) - timedelta(weeks=weeks)
+    sessions = db.query(models.WorkoutSession).filter(
+        models.WorkoutSession.chat_id == current_user_id,
+        models.WorkoutSession.started_at >= cutoff,
+        models.WorkoutSession.ended_at != None,
+    ).all()
+    if not sessions:
+        return []
+    session_ids = [s.id for s in sessions]
+    sets = db.query(models.SetLog).filter(
+        models.SetLog.session_id.in_(session_ids)
+    ).all()
+
+    by_exercise_week: dict[str, dict[str, float]] = defaultdict(dict)
+    for s in sets:
+        if not s.estimated_1rm:
+            continue
+        week_key = s.logged_at.strftime("%Y-W%W")
+        ex = s.exercise_name
+        prev = by_exercise_week[ex].get(week_key, 0)
+        if s.estimated_1rm > prev:
+            by_exercise_week[ex][week_key] = s.estimated_1rm
+
+    result = []
+    for exercise, week_data in by_exercise_week.items():
+        weekly = [v for _, v in sorted(week_data.items())]
+        if len(weekly) < 2:
+            continue
+        stalled = False
+        if len(weekly) >= 3:
+            last3 = weekly[-3:]
+            peak = max(last3)
+            if peak > 0 and (peak - min(last3)) / peak < 0.02:
+                stalled = True
+        result.append({
+            "exercise": exercise,
+            "stalled": stalled,
+            "weeks_stalled": 3 if stalled else 0,
+            "weekly_trend": [round(v, 1) for v in weekly],
+            "current_1rm": round(weekly[-1], 1),
+            "peak_1rm": round(max(weekly), 1),
+        })
+
+    result.sort(key=lambda x: (-int(x["stalled"]), -x["peak_1rm"]))
+    return result
+
+
 # ── Shared helpers ────────────────────────────────────────────────────────────
 
 def _checkin_dict(r) -> dict:
