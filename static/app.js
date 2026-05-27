@@ -256,6 +256,70 @@ async function loadDashboard() {
         el.style.color = color;
     }
     renderRecoveryWidget(summary, checkins);
+    renderRetentionWidget(summary);
+}
+
+function renderRetentionWidget(summary) {
+    if (!summary) return;
+    const card = document.getElementById('retention-card');
+    let hasContent = false;
+
+    const workoutStreak = summary.streaks?.workout ?? 0;
+    const checkinStreak = summary.streaks?.checkin ?? 0;
+
+    if (workoutStreak > 0) {
+        document.getElementById('workout-streak-val').textContent = `${workoutStreak} day${workoutStreak !== 1 ? 's' : ''}`;
+        document.getElementById('workout-streak-sub').textContent = '🏋️ keep it up!';
+        document.getElementById('workout-streak-block').style.display = 'block';
+        hasContent = true;
+    }
+    if (checkinStreak > 0) {
+        document.getElementById('checkin-streak-val').textContent = `${checkinStreak} day${checkinStreak !== 1 ? 's' : ''}`;
+        document.getElementById('checkin-streak-sub').textContent = '📊 consistency wins';
+        document.getElementById('checkin-streak-block').style.display = 'block';
+        hasContent = true;
+    }
+    if (summary.badges_count > 0) {
+        document.getElementById('badges-val').textContent = summary.badges_count;
+        document.getElementById('badges-block').style.display = 'block';
+        hasContent = true;
+    }
+    if (summary.sessions_this_week != null) {
+        document.getElementById('sessions-week-val').textContent = summary.sessions_this_week;
+        document.getElementById('sessions-week-block').style.display = 'block';
+        hasContent = true;
+    }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const nudge = document.getElementById('lapse-nudge');
+    if (summary.last_workout_date) {
+        const daysSince = Math.floor((Date.now() - new Date(summary.last_workout_date)) / 86400000);
+        if (daysSince >= 4) {
+            nudge.textContent = `🔔 It's been ${daysSince} days since your last workout — your streak is at risk!`;
+            nudge.style.background = 'rgba(239,68,68,0.1)';
+            nudge.style.color = '#ef4444';
+            nudge.style.display = 'block';
+            hasContent = true;
+        } else if (daysSince >= 2) {
+            nudge.textContent = `💪 ${daysSince} days since last workout — keep the momentum going!`;
+            nudge.style.background = 'rgba(240,165,0,0.1)';
+            nudge.style.color = 'var(--gold)';
+            nudge.style.display = 'block';
+            hasContent = true;
+        }
+    }
+    if (summary.last_checkin_date && summary.last_checkin_date < today) {
+        const daysSince = Math.floor((Date.now() - new Date(summary.last_checkin_date)) / 86400000);
+        if (daysSince >= 2 && !nudge.style.display?.includes('block')) {
+            nudge.textContent = `📊 Check in today to maintain your recovery data streak!`;
+            nudge.style.background = 'rgba(59,130,246,0.1)';
+            nudge.style.color = 'var(--blue)';
+            nudge.style.display = 'block';
+            hasContent = true;
+        }
+    }
+
+    card.style.display = hasContent ? 'block' : 'none';
 }
 
 function _scoreColor(score) {
@@ -1061,8 +1125,11 @@ async function endSession() {
         state.selectedExercise = null;
         showNoSession();
         const volStr = summary.total_volume_kg > 0 ? ` · ${summary.total_volume_kg}kg volume` : '';
-        const streakStr = summary.workout_streak > 1 ? ` 🔥 ${summary.workout_streak}-day workout streak!` : '';
+        const streakStr = summary.workout_streak > 1 ? ` 🔥 ${summary.workout_streak}-day streak!` : '';
         showToast(`Session done! ${summary.set_count} sets${volStr}${streakStr}`);
+        if ([7, 14, 30, 60, 90].includes(summary.workout_streak)) {
+            setTimeout(() => showToast(`🏆 Milestone! ${summary.workout_streak}-day workout streak achieved!`, 'success'), 1500);
+        }
         if (summary.next_session_targets) {
             _showNextSessionTargets(summary.next_session_targets);
         }

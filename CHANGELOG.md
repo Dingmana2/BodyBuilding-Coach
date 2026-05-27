@@ -2,6 +2,17 @@
 
 ## 2026-05-27
 
+### Feature #9 — Retention Systems: Streaks, Lapse Nudges, Milestone Celebrations
+**Files**: `main.py`, `static/app.js`, `static/index.html`
+**What**:
+- `GET /api/dashboard/summary` now returns `last_workout_date` and `last_checkin_date` (from latest `workout_sessions.ended_at` and `daily_checkins.date`).
+- Added `retention-card` to dashboard HTML: shows workout streak (gold), check-in streak (green), badges count, sessions this week, and a lapse nudge banner.
+- Lapse nudge logic: ≥4 days since last workout → red "streak at risk" banner; 2-3 days → gold "keep the momentum" banner; ≥2 days since last check-in (and no workout nudge) → blue "check in today" banner.
+- `renderRetentionWidget(summary)` function reads `summary.streaks`, `summary.badges_count`, `summary.sessions_this_week`, `summary.last_workout_date`, `summary.last_checkin_date`.
+- `endSession()` now shows a celebration toast for milestone streak values (7, 14, 30, 60, 90 days) 1.5s after the session-done toast.
+**Rationale**: Streak data was computed and stored but never surfaced in the web UI. Users had no visibility into their consistency stats or any nudge to return after a lapse.
+**Rollback**: Remove `retention-card` from `index.html`; remove `renderRetentionWidget` and milestone toast from `app.js`; revert `dashboard_summary` to remove `last_workout_date`/`last_checkin_date` fields and last_session/last_checkin_row queries.
+
 ### Feature #8 — Athlete Memory: coach_memory Table + Context Injection
 **Files**: `models.py`, `main.py`, `coach_brain.py`, `prompt_builder.py`
 **What**:

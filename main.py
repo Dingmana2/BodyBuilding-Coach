@@ -1724,6 +1724,19 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
 
     badges = db.query(models.Badge).filter(models.Badge.chat_id == current_user_id).count()
 
+    last_session = (
+        db.query(models.WorkoutSession)
+        .filter(models.WorkoutSession.chat_id == current_user_id, models.WorkoutSession.ended_at != None)
+        .order_by(models.WorkoutSession.ended_at.desc())
+        .first()
+    )
+    last_checkin_row = (
+        db.query(models.DailyCheckIn)
+        .filter(models.DailyCheckIn.chat_id == current_user_id)
+        .order_by(models.DailyCheckIn.date.desc())
+        .first()
+    )
+
     return {
         "streaks": streaks,
         "prs_count": prs_count,
@@ -1734,6 +1747,8 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
         "today_calories": round(sum(m.calories or 0 for m in today_meals)),
         "latest_bf": latest_analysis.body_fat_estimate if latest_analysis else None,
         "latest_score": latest_analysis.overall_physique_score if latest_analysis else None,
+        "last_workout_date": last_session.ended_at.strftime("%Y-%m-%d") if last_session else None,
+        "last_checkin_date": last_checkin_row.date if last_checkin_row else None,
     }
 
 
