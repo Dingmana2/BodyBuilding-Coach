@@ -2,6 +2,13 @@
 
 ## 2026-05-27
 
+### Feature: /fridge — scan fridge photo for macro-aligned recipe suggestions
+**Files**: `telegram_bot.py`
+
+**What**: New `/fridge` command puts the bot in `awaiting_fridge_photo` state and prompts the user to send a fridge/pantry photo. `handle_photo()` intercepts the next photo before the physique analysis path and routes it to `_handle_fridge_photo()`, which sends the image to Claude (vision) with the user's current diet plan (calories, protein, carbs, fat, foods_to_prioritize, foods_to_limit, meal_timing, goal) and asks for 3 recipes using only the visible ingredients. Each recipe includes: name, ingredient list, macros (calories/protein/carbs/fat), 2-sentence prep method, meal timing, and one sentence explaining why it fits the plan. Existing photo analysis flow is completely unaffected — only routes to fridge handler when the active command is set.
+
+**Rollback**: Remove `cmd_fridge`, `_handle_fridge_photo`, the routing block in `handle_photo`, and the two handler registration lines.
+
 ### Feature: Fully automatic /checkin from Garmin — max data, zero manual questions
 **Files**: `garmin_service.py`, `telegram_bot.py`
 

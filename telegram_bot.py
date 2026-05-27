@@ -1536,6 +1536,124 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
 
+async def cmd_fridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Prompt user to send a fridge/pantry photo for macro-aligned recipe suggestions."""
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    user["active_command"] = "awaiting_fridge_photo"
+    _save_store()
+
+    diet = (user.get("last_plan") or {}).get("diet") or {}
+    plan_note = ""
+    if diet.get("calories"):
+        plan_note = (
+            f"\n\n_Your targets: {diet['calories']} kcal | "
+            f"{diet.get('protein_g', '?')}g protein | "
+            f"{diet.get('carbs_g', '?')}g carbs | "
+            f"{diet.get('fat_g', '?')}g fat_"
+        )
+
+    await update.message.reply_text(
+        "📷 *Send me a photo of your fridge or pantry*\n\n"
+        "I'll identify what's in there and suggest recipes that hit your macro targets."
+        f"{plan_note}",
+        parse_mode="Markdown",
+    )
+
+
+async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None:
+    """Analyze a fridge/pantry photo and return macro-aligned recipe suggestions."""
+    msg = await update.effective_chat.send_message("🔍 Scanning your fridge for ingredients…")
+    diet = (user.get("last_plan") or {}).get("diet") or {}
+    profile = user.get("profile") or {}
+
+    cal = diet.get("calories", "?")
+    prot = diet.get("protein_g", "?")
+    carbs = diet.get("carbs_g", "?")
+    fat = diet.get("fat_g", "?")
+    goal = profile.get("goal", "general fitness")
+    prioritize = ", ".join(diet.get("foods_to_prioritize") or []) or "whole foods"
+    avoid = ", ".join(diet.get("foods_to_limit") or []) or "ultra-processed foods"
+    timing = diet.get("meal_timing", "")
+
+    try:
+        cal_per_meal = round(int(cal) / 3)
+        prot_per_meal = round(int(prot) / 3)
+        per_meal_str = f"~{cal_per_meal} kcal, ~{prot_per_meal}g protein per meal"
+    except (TypeError, ValueError):
+        per_meal_str = "balanced macros per meal"
+
+    prompt = (
+        "Analyze this fridge/pantry photo.\n"
+        "1. List every food item or ingredient you can see.\n"
+        "2. Suggest 3 recipes using ONLY those ingredients that best fit this athlete's plan:\n"
+        f"   Goal: {goal}\n"
+        f"   Per meal target: {per_meal_str}\n"
+        f"   Daily: {cal} kcal | {prot}g protein | {carbs}g carbs | {fat}g fat\n"
+        f"   Prioritize: {prioritize}\n"
+        f"   Avoid: {avoid}\n"
+        f"   {timing}\n\n"
+        "Return ONLY valid JSON (no markdown, no explanation):\n"
+        '{"ingredients_spotted": ["item1", "item2"], "recipes": ['
+        '{"name": "...", "ingredients": ["200g chicken breast", "1 cup rice"], '
+        '"macros": {"calories": 520, "protein_g": 48, "carbs_g": 40, "fat_g": 9}, '
+        '"prep": "Short 2-sentence cooking method.", '
+        '"meal_timing": "Post-workout", "why_it_fits": "One sentence."}'
+        "]}"
+    )
+
+    try:
+        message = get_anthropic_client().messages.create(
+            model=ANALYSIS_MODEL,
+            max_tokens=1500,
+            messages=[{
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                    {"type": "text", "text": prompt},
+                ],
+            }],
+        )
+        raw = message.content[0].text
+        import re as _re
+        json_match = _re.search(r"\{[\s\S]*\}", raw)
+        result = json.loads(json_match.group()) if json_match else {}
+    except Exception as e:
+        print(f"Warning: fridge analysis failed: {e}")
+        await msg.edit_text(
+            "⚠️ Couldn't analyze the photo. Make sure it's a clear fridge/pantry image and try again."
+        )
+        return
+
+    ingredients = result.get("ingredients_spotted", [])
+    recipes = result.get("recipes", [])
+    if not recipes:
+        await msg.edit_text(
+            "📷 I couldn't identify enough ingredients to suggest recipes. "
+            "Try a clearer photo with more items visible."
+        )
+        return
+
+    ingr_text = ", ".join(ingredients[:15]) + ("…" if len(ingredients) > 15 else "")
+    lines = [f"🛒 *Spotted:* {ingr_text}\n"]
+    for i, r in enumerate(recipes[:3], 1):
+        m = r.get("macros", {})
+        ingr_list = ", ".join(r.get("ingredients", []))
+        lines.append(
+            f"*{i}. {esc(r.get('name', 'Recipe'))}*\n"
+            f"🥩 {m.get('protein_g', '?')}g protein  🔥 {m.get('calories', '?')} kcal  "
+            f"🍚 {m.get('carbs_g', '?')}g carbs  🫒 {m.get('fat_g', '?')}g fat\n"
+            f"📋 {ingr_list}\n"
+            f"👨‍🍳 _{r.get('prep', '')}_\n"
+            f"⏱ {r.get('meal_timing', '')} — {r.get('why_it_fits', '')}\n"
+        )
+
+    await msg.edit_text(
+        "🍽️ *Fridge Recipe Suggestions*\n\n" + "\n".join(lines),
+        parse_mode="Markdown",
+    )
+
+
 async def cmd_macros(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
@@ -2414,6 +2532,18 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
 
+    # Route to fridge analysis if that command is pending
+    if user.get("active_command") == "awaiting_fridge_photo":
+        user["active_command"] = None
+        _save_store()
+        photo = update.message.photo[-1]
+        file = await context.bot.get_file(photo.file_id)
+        buf = BytesIO()
+        await file.download_to_memory(buf)
+        img_b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
+        await _handle_fridge_photo(update, user, img_b64)
+        return
+
     # Album (media group) — buffer all photos then analyze together
     media_group_id = update.message.media_group_id
     if media_group_id:
@@ -3251,6 +3381,7 @@ def main() -> None:
     app.add_handler(CommandHandler("progress", cmd_progress))
     app.add_handler(CommandHandler("measurements", cmd_measurements))
     app.add_handler(CommandHandler("meal", cmd_meal))
+    app.add_handler(CommandHandler("fridge", cmd_fridge))
     app.add_handler(CommandHandler("macros", cmd_macros))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("reminders", cmd_reminders))
@@ -3292,6 +3423,7 @@ def main() -> None:
             BotCommand("measurements", "Log body measurements"),
             BotCommand("weight",       "Quick body-weight log: /weight 84.5"),
             BotCommand("meal",         "Log a meal and get macros"),
+            BotCommand("fridge",       "Scan fridge photo → macro-matched recipes"),
             BotCommand("macros",       "Today's macro totals"),
             BotCommand("goals",        "Set or view a target (weight, date…)"),
             BotCommand("streak",       "Check-in & workout streak"),
