@@ -319,6 +319,21 @@ function renderRetentionWidget(summary) {
         }
     }
 
+    if (summary.days_to_show != null) {
+        const d = summary.days_to_show;
+        const compNudge = document.getElementById('lapse-nudge');
+        const compText = d <= 0
+            ? '🏆 Show day! Good luck today!'
+            : d <= 7 ? `🚨 ${d} day${d !== 1 ? 's' : ''} to show — peak week protocols active!`
+            : d <= 30 ? `⚡ ${d} days to show — stay sharp!`
+            : `📅 ${d} days to show — comp prep in progress`;
+        compNudge.textContent = compText;
+        compNudge.style.background = d <= 7 ? 'rgba(239,68,68,0.12)' : 'rgba(240,165,0,0.1)';
+        compNudge.style.color = d <= 7 ? '#ef4444' : 'var(--gold)';
+        compNudge.style.display = 'block';
+        hasContent = true;
+    }
+
     card.style.display = hasContent ? 'block' : 'none';
 }
 
@@ -891,6 +906,7 @@ async function loadProgress() {
     const container = document.getElementById('progress-content');
     if (data.length < 1) {
         container.innerHTML = '<p class="empty-state">No progress data yet. Upload at least two body photos to see your progress.</p>';
+        document.getElementById('comparison-card').style.display = 'none';
     } else {
         const cards = data.map((entry, i) => `
             <div class="progress-card">
@@ -903,6 +919,36 @@ async function loadProgress() {
             </div>
         `).join('');
         container.innerHTML = `<div class="progress-grid">${cards}</div>`;
+
+        if (data.length >= 2) {
+            const first = data[0];
+            const last = data[data.length - 1];
+            const bfChange = (first.body_fat_estimate && last.body_fat_estimate)
+                ? `${esc(first.body_fat_estimate)} → ${esc(last.body_fat_estimate)}`
+                : null;
+            const scoreChange = (first.overall_physique_score && last.overall_physique_score)
+                ? `${esc(first.overall_physique_score)} → ${esc(last.overall_physique_score)}/10`
+                : null;
+            const _photoCard = (label, entry) => `
+                <div style="flex:1;min-width:160px;max-width:260px;text-align:center">
+                    <div style="font-size:11px;font-weight:700;color:var(--text-muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:1px">${label}</div>
+                    <img src="${esc(entry.photo_url)}" style="width:100%;border-radius:8px;object-fit:cover;aspect-ratio:3/4" loading="lazy" />
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:6px">${esc(formatDate(entry.created_at))}</div>
+                    <div style="font-size:14px;font-weight:600;color:var(--gold)">${esc(entry.body_fat_estimate) || '—'}</div>
+                </div>`;
+            document.getElementById('comparison-content').innerHTML =
+                _photoCard('Before', first) +
+                `<div style="flex:0;display:flex;align-items:center;padding:0 8px;font-size:22px;color:var(--text-muted)">→</div>` +
+                _photoCard('Now', last) +
+                (bfChange || scoreChange ? `
+                    <div style="flex:1;min-width:120px;display:flex;flex-direction:column;justify-content:center;gap:12px">
+                        ${bfChange ? `<div><div class="stat-label">Body Fat</div><div style="font-size:14px;color:var(--green)">${bfChange}</div></div>` : ''}
+                        ${scoreChange ? `<div><div class="stat-label">Physique Score</div><div style="font-size:14px;color:var(--gold)">${scoreChange}</div></div>` : ''}
+                    </div>` : '');
+            document.getElementById('comparison-card').style.display = 'block';
+        } else {
+            document.getElementById('comparison-card').style.display = 'none';
+        }
     }
 
     renderPlateaus(plateaus);
@@ -952,7 +998,7 @@ async function loadProfile() {
 
     if (profile && profile.age) {
         const form = document.getElementById('profile-form');
-        const fields = ['age', 'gender', 'height_cm', 'weight_kg', 'goal', 'training_experience', 'training_days_per_week', 'dietary_restrictions'];
+        const fields = ['age', 'gender', 'height_cm', 'weight_kg', 'goal', 'training_experience', 'training_days_per_week', 'dietary_restrictions', 'show_date'];
         fields.forEach(field => {
             const el = form.querySelector(`[name="${field}"]`);
             if (el && profile[field] != null) el.value = profile[field];
@@ -1001,6 +1047,7 @@ async function saveProfile(event) {
         training_experience: form.training_experience.value || null,
         training_days_per_week: parseInt(form.training_days_per_week.value) || null,
         dietary_restrictions: form.dietary_restrictions.value || null,
+        show_date: form.show_date?.value || null,
     };
 
     try {
@@ -1309,6 +1356,35 @@ async function generateReport() {
     }
 }
 
+const _reportsById = {};
+
+function printReport(id) {
+    const r = _reportsById[id];
+    if (!r) return;
+    const win = window.open('', '_blank', 'width=800,height=700');
+    const insightsHtml = (r.ai_insights || []).map(i => `<li style="margin-bottom:8px">${i}</li>`).join('');
+    win.document.write(`<!DOCTYPE html><html><head><title>Weekly Report — Week of ${r.week_start}</title>
+    <style>body{font-family:sans-serif;max-width:700px;margin:40px auto;color:#111}
+    h1{font-size:22px}h2{font-size:16px;margin-top:24px;border-bottom:1px solid #ddd}
+    .stats{display:flex;gap:32px;margin:16px 0}.stat{text-align:center}
+    .stat-label{font-size:11px;color:#888;text-transform:uppercase}.stat-val{font-size:22px;font-weight:700}
+    .focus{background:#fffbe6;border:1px solid #f0c000;border-radius:8px;padding:14px;margin-top:16px}
+    @media print{body{margin:20px}}</style></head><body>
+    <h1>Weekly Coaching Report</h1>
+    <p style="color:#666">Week of ${esc(r.week_start)} ${r.adherence_rating ? `· <strong>${esc(r.adherence_rating)}</strong>` : ''}</p>
+    <div class="stats">
+        ${r.sessions_count != null ? `<div class="stat"><div class="stat-val">${r.sessions_count}</div><div class="stat-label">Sessions</div></div>` : ''}
+        ${r.avg_recovery != null ? `<div class="stat"><div class="stat-val">${r.avg_recovery}/100</div><div class="stat-label">Avg Recovery</div></div>` : ''}
+        ${r.avg_protein_g != null ? `<div class="stat"><div class="stat-val">${r.avg_protein_g}g</div><div class="stat-label">Avg Protein</div></div>` : ''}
+        ${r.prs_count ? `<div class="stat"><div class="stat-val">${r.prs_count}</div><div class="stat-label">New PRs</div></div>` : ''}
+    </div>
+    ${insightsHtml ? `<h2>Coaching Insights</h2><ul>${insightsHtml}</ul>` : ''}
+    ${r.next_week_focus ? `<div class="focus"><strong>Next Week Focus:</strong><br>${esc(r.next_week_focus)}</div>` : ''}
+    </body></html>`);
+    win.document.close();
+    win.print();
+}
+
 async function loadReports() {
     const reports = await cachedApi('GET', '/reports').catch(() => []);
     const container = document.getElementById('reports-list');
@@ -1316,6 +1392,7 @@ async function loadReports() {
         container.innerHTML = '<p class="empty-state">No reports yet. Reports are auto-generated every Sunday for Pro users, or click "Generate Report Now" above.</p>';
         return;
     }
+    reports.forEach(r => { _reportsById[r.id] = r; });
     container.innerHTML = reports.map(r => {
         const insightsHtml = (r.ai_insights || [])
             .map(i => `<li style="margin-bottom:6px;color:var(--text-muted);font-size:14px">${esc(i)}</li>`).join('');
@@ -1329,7 +1406,10 @@ async function loadReports() {
                         <div style="font-weight:700;font-size:16px">Week of ${esc(r.week_start)}</div>
                         <div style="font-size:12px;color:var(--text-muted);margin-top:2px">${esc(formatDate(r.created_at))}</div>
                     </div>
-                    ${r.adherence_rating ? `<span style="padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600;background:rgba(240,165,0,0.1);color:${ratingColor}">${esc(r.adherence_rating)}</span>` : ''}
+                    <div style="display:flex;align-items:center;gap:8px">
+                        ${r.adherence_rating ? `<span style="padding:4px 12px;border-radius:20px;font-size:13px;font-weight:600;background:rgba(240,165,0,0.1);color:${ratingColor}">${esc(r.adherence_rating)}</span>` : ''}
+                        <button class="btn btn-ghost btn-sm" onclick="printReport(${r.id})">PDF</button>
+                    </div>
                 </div>
                 <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px">
                     ${r.sessions_count != null ? `<div><div class="stat-label">Sessions</div><div style="font-size:18px;font-weight:700">${esc(r.sessions_count)}</div></div>` : ''}

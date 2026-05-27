@@ -502,6 +502,7 @@ def get_profile(
         "dietary_restrictions": profile.dietary_restrictions,
         "equipment_available": profile.equipment_available,
         "injuries": profile.injuries,
+        "show_date": str(profile.show_date) if profile.show_date else None,
     }
 
 
@@ -531,6 +532,8 @@ async def save_profile(
     profile.dietary_restrictions = data.get("dietary_restrictions")
     profile.equipment_available = data.get("equipment_available")
     profile.injuries = data.get("injuries")
+    if data.get("show_date"):
+        profile.show_date = data["show_date"]
     db.commit()
     return {"status": "saved"}
 
@@ -1737,6 +1740,18 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
         .first()
     )
 
+    user_profile = (
+        db.query(models.UserProfile)
+        .filter(models.UserProfile.user_id == current_user_id)
+        .first()
+    ) if current_user_id else None
+
+    days_to_show = None
+    if user_profile and user_profile.show_date and user_profile.goal == "prep":
+        from datetime import date as _date
+        show_d = user_profile.show_date if isinstance(user_profile.show_date, _date) else _date.fromisoformat(str(user_profile.show_date))
+        days_to_show = (show_d - _date.today()).days
+
     return {
         "streaks": streaks,
         "prs_count": prs_count,
@@ -1749,6 +1764,7 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
         "latest_score": latest_analysis.overall_physique_score if latest_analysis else None,
         "last_workout_date": last_session.ended_at.strftime("%Y-%m-%d") if last_session else None,
         "last_checkin_date": last_checkin_row.date if last_checkin_row else None,
+        "days_to_show": days_to_show,
     }
 
 

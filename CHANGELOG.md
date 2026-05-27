@@ -2,6 +2,28 @@
 
 ## 2026-05-27
 
+### Feature #10 — Premium Polish: Comp Prep Mode, PDF Reports, Before/After View
+**Files**: `main.py`, `static/app.js`, `static/index.html`
+**What**:
+
+**Comp prep countdown**:
+- `GET /api/dashboard/summary` now returns `days_to_show: int | None` — computed from `UserProfile.show_date` when `goal == "prep"`.
+- `renderRetentionWidget` shows a countdown banner: ≤7 days → red urgency; ≤30d → gold "stay sharp"; >30d → gold info. "Show day!" message on day-of.
+- Profile form now includes a `show_date` (date input) field for competition show date.
+- `POST /api/profile` saves `show_date`; `GET /api/profile` returns it.
+
+**PDF reports (print-to-PDF)**:
+- `printReport(id)` opens a print-formatted HTML window (portrait, clean typography) and calls `window.print()`. User selects "Save as PDF" from the browser print dialog. No external library.
+- Reports are stored in `_reportsById` map on load; print button calls `printReport(r.id)` by integer key (no JSON-in-HTML).
+- Each report card in the Reports tab now has a "PDF" button.
+
+**Before/After photo comparison**:
+- Progress tab now shows a "Before vs Now" card (hidden when <2 analyses) with the oldest and newest photo side by side (3:4 aspect ratio, arrow separator), plus body fat and physique score change columns.
+- `loadProgress()` populates the comparison card from `data[0]` (oldest) and `data[data.length-1]` (newest).
+
+**No new dependencies** — PDF via browser print, photo comparison via CSS flexbox.
+**Rollback**: Remove `days_to_show` from `dashboard_summary` + revert show_date profile changes; delete `printReport`/`_reportsById`/PDF button; remove comparison-card from `index.html` + revert `loadProgress()`.
+
 ### Feature #9 — Retention Systems: Streaks, Lapse Nudges, Milestone Celebrations
 **Files**: `main.py`, `static/app.js`, `static/index.html`
 **What**:
