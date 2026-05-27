@@ -31,6 +31,7 @@ from telegram.ext import (
 load_dotenv()
 
 from claude_service import ANALYSIS_MODEL, SUMMARY_MODEL, epley_1rm, get_anthropic_client  # noqa: E402 — after load_dotenv()
+from prompt_builder import bot_json_context_block
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -646,13 +647,23 @@ async def _handle_checkin_step(update: Update, user: dict, text: str) -> None:
         await _finish_checkin(update, user, state["data"], garmin_data)
 
 
+def _get_bot_context_str(user: dict) -> str:
+    """Return a rich context string for AI prompts built from bot JSON user data."""
+    try:
+        return bot_json_context_block(user)
+    except Exception:
+        return ""
+
+
 async def _finish_checkin(update: Update, user: dict, data: dict, garmin_data: dict | None = None) -> None:
     msg = await update.message.reply_text("Scoring your recovery…")
     try:
         from claude_service import generate_recovery_insight
+        ctx_str = _get_bot_context_str(user)
         score, tip = generate_recovery_insight(
             data["sleep"], data["energy"], data["soreness"], data["stress"],
             user["profile"] or None,
+            ctx_str,
         )
     except Exception:
         score = round((data["sleep"] + data["energy"] + (11 - data["soreness"]) + (11 - data["stress"])) / 4 * 10)
@@ -1924,8 +1935,9 @@ async def cmd_weakpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # Last 30 days of set logs
         cutoff = str(_date.today().replace(day=max(1, _date.today().day - 30)))
         recent_sets = [s for s in user["set_logs"] if s.get("date", "") >= cutoff]
+        ctx_str = _get_bot_context_str(user)
         result = await asyncio.run_in_executor(
-            None, analyze_weak_points, analyses, recent_sets, user["profile"] or None
+            None, analyze_weak_points, analyses, recent_sets, user["profile"] or None, ctx_str
         )
         weak_pts = "\n".join(f"• {w}" for w in result.get("weak_points", []))
         vol_recs = result.get("volume_recommendations", {})
@@ -1970,8 +1982,10 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         checkins_data = [{"recovery_score": c.get("recovery_score", 0)} for c in recent_checkins]
         meals_data = [{"protein_g": m.get("protein_g", 0)} for m in recent_meals]
 
+        ctx_str = _get_bot_context_str(user)
         result = await asyncio.get_event_loop().run_in_executor(
-            None, generate_weekly_report, sessions_data, checkins_data, meals_data, prs_list, user["profile"] or None
+            None, generate_weekly_report, sessions_data, checkins_data, meals_data, prs_list,
+            user["profile"] or None, ctx_str
         )
 
         insights = result.get("insights", [])
@@ -2220,11 +2234,12 @@ async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAUL
     _save_store()
 
     await query.edit_message_text(f"🧬 Building your {days}-day plan… (30-60 seconds)")
+    ctx_str = _get_bot_context_str(user)
     try:
         if user["last_analysis"]:
-            plan = _generate_plan(user["last_analysis"], user["profile"])
+            plan = _generate_plan(user["last_analysis"], user["profile"], ctx_str)
         else:
-            plan = _generate_plan_from_profile(user["profile"])
+            plan = _generate_plan_from_profile(user["profile"], ctx_str)
         user["last_plan"] = plan
         _save_store()
         await query.delete_message()
@@ -2306,7 +2321,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     msg = await update.message.reply_text("💬 Thinking…")
     try:
-        reply, plan_update, plan_regen = _chat_with_coach(text, user)
+        ctx_str = _get_bot_context_str(user)
+        reply, plan_update, plan_regen = _chat_with_coach(text, user, ctx_str)
 
         if plan_regen:
             for k, v in plan_regen.items():
@@ -2338,7 +2354,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await msg.edit_text(f"❌ Something went wrong: {e}")
 
 
-def _chat_with_coach(text: str, user: dict) -> tuple[str, dict | None]:
+def _chat_with_coach(text: str, user: dict, context_str: str = "") -> tuple[str, dict | None]:
     profile = user["profile"]
     plan = user["last_plan"]
     history = user["conversation_history"]
@@ -2351,10 +2367,12 @@ def _chat_with_coach(text: str, user: dict) -> tuple[str, dict | None]:
         f"Current plan summary: {json.dumps(plan, indent=None)[:1500]}"
         if plan else "No plan generated yet — suggest they type /plan or send a photo."
     )
+    ctx_section = f"Athlete recent history:\n{context_str}\n\n" if context_str else ""
 
     system = (
         "You are a personal fitness and nutrition coach. You give specific, "
         "evidence-based advice tailored to the individual.\n\n"
+        f"{ctx_section}"
         f"Athlete profile: {profile_str}\n"
         f"{plan_str}\n\n"
         "Support every fitness level (complete beginner to advanced), any age, any gender, any goal. "
@@ -2490,7 +2508,7 @@ def _analyze_photo(img_b64: str, profile: dict) -> dict:
 
 # ── Claude: plan generation ───────────────────────────────────────────────────
 
-def _build_plan_prompt(profile: dict, analysis: dict | None, days: int) -> str:
+def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_str: str = "") -> str:
     profile_ctx = (
         f"Age: {profile.get('age', 'not specified')} | "
         f"Gender: {profile.get('gender', 'not specified')} | "
@@ -2513,10 +2531,12 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int) -> str:
     else:
         body_ctx = "No photo analysis — build the plan entirely from the profile stats above."
 
+    ctx_section = f"ATHLETE RECENT HISTORY:\n{context_str}\n\n" if context_str else ""
     return (
         "You are an expert strength coach and sports nutritionist who works with all populations — "
         "beginners to advanced athletes, all ages (teens to 70+), all genders, all goals "
         "(fat loss, muscle gain, general health, sport performance, recomp).\n\n"
+        f"{ctx_section}"
         f"ATHLETE: {profile_ctx}\n"
         f"{body_ctx}\n\n"
         "Tailor EVERYTHING to this specific athlete. A beginner gets simpler movements and lower volume. "
@@ -2582,9 +2602,9 @@ def _parse_plan_response(text: str) -> dict:
     return json.loads(text.strip())
 
 
-def _generate_plan(analysis: dict, profile: dict) -> dict:
+def _generate_plan(analysis: dict, profile: dict, context_str: str = "") -> dict:
     days = int(profile.get("days", 4))
-    prompt = _build_plan_prompt(profile, analysis, days)
+    prompt = _build_plan_prompt(profile, analysis, days, context_str)
     message = get_anthropic_client().messages.create(
         model=ANALYSIS_MODEL,
         max_tokens=5000,
@@ -2593,9 +2613,9 @@ def _generate_plan(analysis: dict, profile: dict) -> dict:
     return _parse_plan_response(message.content[0].text)
 
 
-def _generate_plan_from_profile(profile: dict) -> dict:
+def _generate_plan_from_profile(profile: dict, context_str: str = "") -> dict:
     days = int(profile.get("days", 3))
-    prompt = _build_plan_prompt(profile, None, days)
+    prompt = _build_plan_prompt(profile, None, days, context_str)
     message = get_anthropic_client().messages.create(
         model=ANALYSIS_MODEL,
         max_tokens=5000,

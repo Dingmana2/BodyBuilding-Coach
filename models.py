@@ -86,6 +86,7 @@ class WorkoutSession(Base):
     __tablename__ = "workout_sessions"
     id = Column(Integer, primary_key=True)
     chat_id = Column(Integer, index=True)   # Telegram chat_id; 0 for web app
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     started_at = Column(DateTime, server_default=func.now())
     ended_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)

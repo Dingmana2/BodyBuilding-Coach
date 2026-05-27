@@ -111,6 +111,8 @@ from claude_service import (
     get_goal_system_prompt,
 )
 from research_service import refresh_all_research
+from coach_brain import build_context, CoachBrainError
+from prompt_builder import context_block
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -124,6 +126,7 @@ def _migrate_db():
         ("user_profiles", "injuries", "TEXT"),
         ("user_profiles", "show_date", "DATE"),
         ("body_analyses", "body_fat_confidence", "VARCHAR"),
+        ("workout_sessions", "user_id", "INTEGER REFERENCES users(id)"),
     ]
     indexes = [
         "CREATE INDEX IF NOT EXISTS ix_daily_checkins_chat_date ON daily_checkins(chat_id, date)",
@@ -131,6 +134,7 @@ def _migrate_db():
         "CREATE INDEX IF NOT EXISTS ix_meal_logs_chat_date ON meal_logs(chat_id, date)",
         "CREATE INDEX IF NOT EXISTS ix_body_measurements_chat_date ON body_measurements(chat_id, date)",
         "CREATE INDEX IF NOT EXISTS ix_prs_chat_exercise_1rm ON personal_records(chat_id, exercise_name, estimated_1rm)",
+        "CREATE INDEX IF NOT EXISTS ix_workout_sessions_user_id ON workout_sessions(user_id)",
     ]
     with engine.connect() as conn:
         for table, column, col_type in migrations:
@@ -556,7 +560,10 @@ def list_analyses(limit: int = 20, db: Session = Depends(get_db)):
 # ── Plans ─────────────────────────────────────────────────────────────────────
 
 @app.post("/api/plan/generate")
-async def generate_plan(db: Session = Depends(get_db)):
+async def generate_plan(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     analysis = (
         db.query(models.BodyAnalysis)
         .order_by(models.BodyAnalysis.created_at.desc())
@@ -571,11 +578,18 @@ async def generate_plan(db: Session = Depends(get_db)):
     profile = db.query(models.UserProfile).first()
     research_cache = db.query(models.ResearchCache).all()
 
+    ctx_str = ""
+    try:
+        ctx = await build_context(db, current_user_id)
+        ctx_str = context_block(ctx)
+    except CoachBrainError:
+        pass
+
     try:
         # Run the synchronous Claude call in a thread pool so it doesn't block
         # the event loop while waiting for the ~30-60s API response.
         plan = await asyncio.to_thread(
-            generate_comprehensive_plan, analysis, research_cache, profile
+            generate_comprehensive_plan, analysis, research_cache, profile, ctx_str
         )
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
@@ -773,7 +787,11 @@ async def start_session(
         models.WorkoutSession.chat_id == current_user_id,
         models.WorkoutSession.ended_at == None,
     ).update({"ended_at": datetime.now(timezone.utc)})
-    session = models.WorkoutSession(chat_id=current_user_id, notes=data.get("notes"))
+    session = models.WorkoutSession(
+        chat_id=current_user_id,
+        user_id=current_user_id if current_user_id else None,
+        notes=data.get("notes"),
+    )
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -1081,9 +1099,17 @@ async def create_checkin(request: Request, current_user_id: int = Depends(get_cu
     if profile:
         profile_dict = {"age": profile.age, "goal": profile.goal, "experience": profile.training_experience}
 
+    ctx_str = ""
+    try:
+        ctx = await build_context(db, current_user_id)
+        ctx_str = context_block(ctx)
+    except CoachBrainError:
+        pass
+
     try:
         recovery_score, coaching_tip = await asyncio.to_thread(
-            generate_recovery_insight, sleep_score, energy_score, soreness_score, stress_score, profile_dict
+            generate_recovery_insight, sleep_score, energy_score, soreness_score, stress_score,
+            profile_dict, ctx_str
         )
     except Exception:
         recovery_score, coaching_tip = 50, "Listen to your body and train accordingly."
@@ -1294,9 +1320,17 @@ async def generate_report(request: Request, current_user_id: int = Depends(get_c
     meals_data = [{"protein_g": m.protein_g} for m in meals]
     prs_data = [{"exercise_name": p.exercise_name, "weight_kg": p.weight_kg, "reps": p.reps} for p in prs]
 
+    ctx_str = ""
+    try:
+        ctx = await build_context(db, current_user_id)
+        ctx_str = context_block(ctx)
+    except CoachBrainError:
+        pass
+
     try:
         report_data = await asyncio.to_thread(
-            generate_weekly_report, sessions_data, checkins_data, meals_data, prs_data, profile_dict
+            generate_weekly_report, sessions_data, checkins_data, meals_data, prs_data,
+            profile_dict, ctx_str
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Report generation failed: {e}")
