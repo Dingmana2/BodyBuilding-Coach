@@ -165,6 +165,7 @@ def get_user(chat_id: int) -> dict:
             "mfp_username": None,
             "mfp_pass_enc": None,
             "units": "kg",            # display unit: "kg" or "lbs"
+            "streak_freezes": [],
         }
     else:
         # Back-fill fields added in later versions
@@ -175,7 +176,7 @@ def get_user(chat_id: int) -> dict:
             "meal_logs": [], "measurements": [], "session_counter": 0,
             "garmin_email": None, "garmin_pass_enc": None,
             "mfp_username": None, "mfp_pass_enc": None,
-            "units": "kg", "analyses": [],
+            "units": "kg", "analyses": [], "streak_freezes": [],
         }
         for k, v in defaults.items():
             u.setdefault(k, v)
@@ -303,10 +304,11 @@ def _get_session_exercises(user: dict) -> list:
 # ── Check-in inline keyboard ──────────────────────────────────────────────────
 
 _STEP_LABELS: dict[str, tuple[str, str, str]] = {
-    "sleep":    ("😴", "Sleep quality",   "1=terrible, 10=perfect"),
-    "energy":   ("⚡", "Energy levels",   "1=drained, 10=energized"),
-    "soreness": ("🤕", "Muscle soreness", "1=very sore, 10=fresh"),
-    "stress":   ("🧠", "Stress level",    "1=very stressed, 10=calm"),
+    "sleep":      ("😴", "Sleep quality",         "1=terrible, 10=perfect"),
+    "energy":     ("⚡", "Energy levels",         "1=drained, 10=energized"),
+    "soreness":   ("🤕", "Muscle soreness (DOMS)", "1=very sore, 10=fresh"),
+    "joint_pain": ("🦴", "Joint / sharp pain",    "1=painful, 10=pain-free"),
+    "stress":     ("🧠", "Stress level",           "1=very stressed, 10=calm"),
 }
 
 
@@ -516,7 +518,9 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "Weight: lbs *or* kg — `165lbs` or `75kg`\n"
             "Goals: `bulk` · `cut` · `recomp` · `maintain` · `health` · `performance`\n"
             "Experience: `beginner` · `intermediate` · `advanced`\n"
-            "Gender: anything — male, female, non-binary, etc.",
+            "Gender: anything — male, female, non-binary, etc.\n\n"
+            "Injuries/limitations (optional — improves plan safety):\n"
+            "`/profile injuries=bad_left_knee` or `/profile injuries=lower_back_pain`",
             parse_mode="Markdown",
         )
         return
@@ -633,6 +637,8 @@ def _garmin_review_lines(garmin_data: dict) -> list[str]:
         parts.append(f"Resp {garmin_data['avg_respiration_rpm']:.0f}rpm")
     if garmin_data.get("steps_yesterday"):
         parts.append(f"Steps {garmin_data['steps_yesterday']:,}")
+    if garmin_data.get("vo2_max"):
+        parts.append(f"VO2max {garmin_data['vo2_max']:.0f}")
     return parts
 
 
@@ -668,7 +674,7 @@ def _garmin_to_scores(garmin_data: dict, user: dict) -> dict[str, int]:
     # Stress — directly from Garmin
     stress = garmin_data.get("stress_score_1_10") or 6
 
-    return {"sleep": sleep, "energy": energy, "soreness": soreness, "stress": stress}
+    return {"sleep": sleep, "energy": energy, "soreness": soreness, "joint_pain": 10, "stress": stress}
 
 
 async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -836,11 +842,13 @@ async def _finish_checkin(
         score = round((data["sleep"] + data["energy"] + (11 - data["soreness"]) + (11 - data["stress"])) / 4 * 10)
         tip = "Listen to your body and train accordingly today."
 
+    joint_pain = data.get("joint_pain", 10)
     entry = {
         "date": _today(),
         "sleep_score": data["sleep"],
         "energy_score": data["energy"],
         "soreness_score": data["soreness"],
+        "joint_pain_score": joint_pain,
         "stress_score": data["stress"],
         "recovery_score": score,
         "coaching_tip": tip,
@@ -887,8 +895,10 @@ async def _finish_checkin(
 
     bar = "🟢" if score >= 75 else ("🟡" if score >= 50 else "🔴")
 
-    # Calculate current streak
-    sorted_dates = sorted({c["date"] for c in user["checkins"]}, reverse=True)
+    # Calculate current streak (checkin dates + freeze dates)
+    checkin_dates = {c["date"] for c in user["checkins"]}
+    freeze_dates = set(user.get("streak_freezes", []))
+    sorted_dates = sorted(checkin_dates | freeze_dates, reverse=True)
     streak_count = 0
     for d in sorted_dates:
         dt = _date.fromisoformat(d)
@@ -902,6 +912,22 @@ async def _finish_checkin(
     deload_hint = ""
     if score < 50:
         deload_hint = "\n\n⚠️ _Recovery is low — consider a deload or active recovery session today._"
+
+    # Joint pain red flag
+    joint_alert = ""
+    if joint_pain <= 3:
+        joint_alert = (
+            "\n\n🚨 *Joint/sharp pain reported* — avoid loading that area today. "
+            "If pain persists 48h+, see a physio."
+        )
+
+    # Sleep hygiene tip when sleep quality is poor
+    sleep_tip = ""
+    if data["sleep"] <= 5:
+        sleep_tip = (
+            "\n\n😴 _Sleep tip: Aim for a consistent sleep/wake time, avoid screens 1h before bed, "
+            "keep the room cool (18–20°C), and consider 300–400mg magnesium glycinate before bed._"
+        )
 
     # Build optional data sections (only shown when data is present)
     garmin_section = ""
@@ -921,7 +947,7 @@ async def _finish_checkin(
     scores_line = (
         "\n📲 _Auto-filled from Garmin_"
         if auto_filled else
-        f"\n⚡ Energy: {data['energy']}/10  🤕 Soreness: {data['soreness']}/10"
+        f"\n⚡ Energy: {data['energy']}/10  🤕 Soreness: {data['soreness']}/10  🦴 Joints: {joint_pain}/10"
     )
 
     await msg.edit_text(
@@ -929,7 +955,7 @@ async def _finish_checkin(
         f"{bar} Recovery Score: *{score}/100*{streak_text}"
         f"{garmin_section}{load_section}{nutrition_section}"
         f"{scores_line}\n\n"
-        f"💡 _{tip}_{deload_hint}",
+        f"💡 _{tip}_{deload_hint}{joint_alert}{sleep_tip}",
         parse_mode="Markdown",
     )
 
@@ -2253,8 +2279,9 @@ async def cmd_streak(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # Calculate streak from local checkin cache
-    sorted_dates = sorted({c["date"] for c in checkins}, reverse=True)
+    # Calculate streak from local checkin cache (freeze dates count as check-ins)
+    all_dates = {c["date"] for c in checkins} | set(user.get("streak_freezes", []))
+    sorted_dates = sorted(all_dates, reverse=True)
     today_str = _today()
     current = 0
     longest = 0
@@ -3201,6 +3228,7 @@ def _analyze_photo(images_b64: list[str], profile: dict, prev: dict | None = Non
 # ── Claude: plan generation ───────────────────────────────────────────────────
 
 def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_str: str = "") -> str:
+    injuries_note = profile.get("injuries", "") if profile else ""
     profile_ctx = (
         f"Age: {profile.get('age', 'not specified')} | "
         f"Gender: {profile.get('gender', 'not specified')} | "
@@ -3209,6 +3237,7 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         f"Goal: {profile.get('goal', 'general health')} | "
         f"Experience: {profile.get('experience', 'beginner')} | "
         f"Training days: {days}/week"
+        + (f" | Injuries/limitations: {injuries_note}" if injuries_note else "")
     ) if profile else "No profile data — assume healthy adult beginner with general fitness goal."
 
     if analysis:
@@ -3224,6 +3253,11 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         body_ctx = "No photo analysis — build the plan entirely from the profile stats above."
 
     ctx_section = f"ATHLETE RECENT HISTORY:\n{context_str}\n\n" if context_str else ""
+    injury_clause = (
+        f"CRITICAL: avoid or modify exercises that stress these injuries/limitations: "
+        f"{injuries_note}. Substitute with safe alternatives and note the substitution.\n\n"
+        if injuries_note else "\n\n"
+    )
     return (
         "You are an expert strength coach and sports nutritionist who works with all populations — "
         "beginners to advanced athletes, all ages (teens to 70+), all genders, all goals "
@@ -3233,7 +3267,7 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         f"{body_ctx}\n\n"
         "Tailor EVERYTHING to this specific athlete. A beginner gets simpler movements and lower volume. "
         "An older athlete gets joint-friendly exercise selection. Nutrition targets must match their "
-        "actual goal and body weight.\n\n"
+        f"actual goal and body weight. {injury_clause}"
         "Diet planning must account for gut health: "
         "(1) include at least one fermented probiotic food in foods_to_prioritize (Greek yogurt, kefir, kimchi, sauerkraut); "
         "(2) include prebiotic/high-fiber foods (garlic, onion, oats, legumes, bananas); "
@@ -3463,6 +3497,145 @@ async def _fetch_reddit_summaries(subreddits: list[str] | None = None) -> list[s
     return summaries
 
 
+# ── Safety / privacy commands ─────────────────────────────────────────────────
+
+async def cmd_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Explain what data the bot stores and how to delete it."""
+    await update.message.reply_text(
+        "🔒 *Your Privacy & Data*\n\n"
+        "*What is stored on our server:*\n"
+        "• Telegram chat ID (to identify you)\n"
+        "• Profile data you enter (age, weight, goal, injuries etc.)\n"
+        "• Workout sets, personal records, meal logs\n"
+        "• Daily check-ins and recovery scores\n"
+        "• Garmin/MFP credentials (AES-256 encrypted)\n"
+        "• Conversation history with the AI coach\n\n"
+        "*Telegram message retention:*\n"
+        "Telegram stores messages on their servers. The bot reads "
+        "messages you send to it but does not retain message text "
+        "beyond the active session. See telegram.org/privacy.\n\n"
+        "*Third-party services used:*\n"
+        "• *Anthropic* — AI analysis. Your data is sent to process "
+        "requests but is not used to train models (API usage).\n"
+        "• *Garmin Connect* — synced only when you connect your account.\n"
+        "• *MyFitnessPal* — synced only when you connect your account.\n"
+        "• *PubMed / Reddit* — public data only; no personal info sent.\n\n"
+        "*Your rights:*\n"
+        "• Export your data: /export\n"
+        "• Delete all data permanently: /delete\\_my\\_data\n\n"
+        "_Data is hosted on Railway.app. No data is sold or shared with advertisers._",
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_delete_my_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Ask for confirmation before permanently deleting all user data."""
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("✅ Yes, delete everything", callback_data="del:confirm"),
+        InlineKeyboardButton("❌ Cancel", callback_data="del:cancel"),
+    ]])
+    await update.message.reply_text(
+        "⚠️ *Delete all my data?*\n\n"
+        "This will permanently erase:\n"
+        "• Your profile, measurements and weight logs\n"
+        "• All workout set logs and personal records\n"
+        "• All check-ins, meal logs, and streaks\n"
+        "• Connected Garmin/MFP credentials\n\n"
+        "_This cannot be undone._",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
+async def handle_delete_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle del:confirm / del:cancel inline button presses."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    action = query.data.split(":")[1]
+
+    if action == "confirm":
+        if chat_id in user_data:
+            del user_data[chat_id]
+        _save_store()
+        await query.edit_message_text(
+            "✅ All your data has been permanently deleted.\n\n"
+            "Type /start if you want to begin again.",
+        )
+    else:
+        await query.edit_message_text("❌ Deletion cancelled. Your data is safe.")
+
+
+async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send the user's full data as a JSON file attachment."""
+    import io
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    # Strip sensitive encrypted credential fields
+    safe = {k: v for k, v in user.items() if k not in ("garmin_pass_enc", "mfp_pass_enc")}
+    safe["_export_date"] = _today()
+
+    data_bytes = json.dumps(safe, ensure_ascii=False, indent=2).encode("utf-8")
+    bio = io.BytesIO(data_bytes)
+    bio.name = f"bodybuilding_coach_export_{_today()}.json"
+
+    await update.message.reply_document(
+        document=bio,
+        filename=bio.name,
+        caption=(
+            "✅ Your full data export — workout logs, meals, check-ins, PRs and profile.\n\n"
+            "To delete this data from our server, use /delete\\_my\\_data."
+        ),
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_freeze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Protect today's streak with a freeze (once per 30 days)."""
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    today = _today()
+
+    # Already checked in today — freeze not needed
+    if any(c.get("date") == today for c in user.get("checkins", [])):
+        await update.message.reply_text(
+            "✅ You've already checked in today — your streak is safe! 🔥"
+        )
+        return
+
+    # Already frozen today
+    freezes: list[str] = user.get("streak_freezes", [])
+    if today in freezes:
+        await update.message.reply_text("❄️ You already activated a streak freeze today.")
+        return
+
+    # Check if a freeze was used in the last 30 days
+    cutoff_30d = str(_date.today() - timedelta(days=30))
+    recent = [f for f in freezes if f >= cutoff_30d]
+    if recent:
+        last_used = max(recent)
+        days_ago = (_date.today() - _date.fromisoformat(last_used)).days
+        next_avail = (_date.fromisoformat(last_used) + timedelta(days=30)).isoformat()
+        await update.message.reply_text(
+            f"❄️ Streak freeze already used {days_ago} day(s) ago.\n\n"
+            f"Next freeze available: *{next_avail}*",
+            parse_mode="Markdown",
+        )
+        return
+
+    freezes.append(today)
+    user["streak_freezes"] = freezes
+    _save_store()
+
+    await update.message.reply_text(
+        "❄️ *Streak Freeze activated!*\n\n"
+        "Today counts toward your streak even without a check-in.\n\n"
+        "_You get 1 freeze every 30 days._",
+        parse_mode="Markdown",
+    )
+
+
 # ── Formatters ────────────────────────────────────────────────────────────────
 
 def _format_analysis(a: dict) -> str:
@@ -3491,7 +3664,8 @@ def _format_analysis(a: dict) -> str:
         f"*Strengths:*\n{strengths}\n\n"
         f"*Top Priorities:*\n{priorities}\n\n"
         f"📐 {a.get('symmetry_notes', '')}\n\n"
-        f"_{a.get('coach_message', '')}_"
+        f"_{a.get('coach_message', '')}_\n\n"
+        f"_⚠️ AI estimate only — body fat ±5%, scores are relative. Not a medical assessment._"
     )
 
 
@@ -3545,6 +3719,31 @@ async def _send_plan(update: Update, plan: dict) -> None:
 
     # ── Diet ──
     meals = "\n".join(f"  • {m}" for m in diet.get("sample_meals", []))
+    kcal = diet.get("calories") or 0
+    try:
+        kcal = int(str(kcal).replace(",", ""))
+    except (ValueError, TypeError):
+        kcal = 0
+    gender = ""
+    if update.effective_user:
+        pass  # gender comes from profile, not Telegram
+    _profile = None
+    # Attempt to get profile for gender-aware threshold
+    try:
+        _cid = update.effective_chat.id
+        _profile = get_user(_cid).get("profile", {})
+    except Exception:
+        pass
+    _gender = (_profile or {}).get("gender", "").lower() if _profile else ""
+    _threshold = 1200 if "female" in _gender or "woman" in _gender else 1500
+    _ed_warning = ""
+    if 0 < kcal < _threshold:
+        _ed_warning = (
+            f"\n\n⚠️ *Calorie target note:* {kcal} kcal/day is below the general minimum "
+            f"({_threshold} kcal for your profile). Very low intakes risk muscle loss, nutrient "
+            f"deficiencies and metabolic adaptation. If you're experiencing restrictive eating "
+            f"patterns, please speak with a registered dietitian or healthcare provider."
+        )
     await send(
         f"🥗 *Diet Plan*\n\n"
         f"Calories: *{diet.get('calories', '?')} kcal*\n"
@@ -3554,7 +3753,8 @@ async def _send_plan(update: Update, plan: dict) -> None:
         f"_{diet.get('rationale', '')}_\n\n"
         f"*Meal Timing:*\n{diet.get('meal_timing', '')}\n\n"
         f"*Sample Day:*\n{meals}\n\n"
-        f"*Prioritize:* {', '.join(diet.get('foods_to_prioritize', []))}",
+        f"*Prioritize:* {', '.join(diet.get('foods_to_prioritize', []))}"
+        f"{_ed_warning}",
         parse_mode="Markdown",
     )
 
@@ -3708,10 +3908,15 @@ def main() -> None:
     app.add_handler(CommandHandler("units", cmd_units))
     app.add_handler(CommandHandler("link", cmd_link))
     app.add_handler(CommandHandler("link_status", cmd_link_status))
+    app.add_handler(CommandHandler("privacy", cmd_privacy))
+    app.add_handler(CommandHandler("delete_my_data", cmd_delete_my_data))
+    app.add_handler(CommandHandler("export", cmd_export))
+    app.add_handler(CommandHandler("freeze", cmd_freeze))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(CallbackQueryHandler(handle_plan_days_callback, pattern=r"^plan:days:"))
     app.add_handler(CallbackQueryHandler(handle_checkin_callback, pattern=r"^ci:"))
     app.add_handler(CallbackQueryHandler(handle_fridge_callback, pattern=r"^fridge:"))
+    app.add_handler(CallbackQueryHandler(handle_delete_callback, pattern=r"^del:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -3746,9 +3951,13 @@ def main() -> None:
             BotCommand("units",        "Switch between kg and lbs"),
             BotCommand("connect",      "Connect Garmin account"),
             BotCommand("mfp",          "Connect MyFitnessPal account"),
-            BotCommand("billing",      "Subscription & billing info"),
-            BotCommand("link",         "Link Telegram to the web app"),
-            BotCommand("link_status",  "Check web-app link status"),
+            BotCommand("billing",         "Subscription & billing info"),
+            BotCommand("link",            "Link Telegram to the web app"),
+            BotCommand("link_status",     "Check web-app link status"),
+            BotCommand("privacy",         "View privacy & data storage info"),
+            BotCommand("delete_my_data",  "Permanently delete all your data"),
+            BotCommand("export",          "Download your full data as JSON"),
+            BotCommand("freeze",          "Protect today's streak (1 per 30 days)"),
         ])
 
         _scheduler.add_job(

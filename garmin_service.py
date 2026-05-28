@@ -120,6 +120,23 @@ def fetch_and_cache(chat_id: int, email: str, enc_pass: str) -> dict:
     except Exception:
         pass
 
+    # VO2 max — from max metrics endpoint
+    try:
+        max_data = client.get_max_metrics(yesterday)
+        vo2 = None
+        if isinstance(max_data, list):
+            for item in max_data:
+                gd = (item.get("generic") or {})
+                vo2 = gd.get("vo2MaxPreciseValue") or gd.get("vo2MaxValue")
+                if vo2:
+                    break
+        elif isinstance(max_data, dict):
+            vo2 = max_data.get("vo2MaxPreciseValue") or max_data.get("vo2MaxValue")
+        if vo2:
+            result["vo2_max"] = round(float(vo2), 1)
+    except Exception:
+        pass
+
     cache = _load_cache()
     cache[str(chat_id)] = result
     _CACHE.write_text(json.dumps(cache), encoding="utf-8")

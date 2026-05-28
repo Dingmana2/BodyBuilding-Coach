@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## 2026-05-28 (Sprint 1 — Safety & Quick Wins)
+
+### Items 1–10 from expert panel backlog
+
+**Files**: `telegram_bot.py`, `garmin_service.py`
+
+**What**:
+- **`/privacy`** — new command explaining what data is stored, Telegram retention, Garmin/MFP/Anthropic usage, and user rights (export / delete).
+- **`/delete_my_data`** — permanently wipes user's record from bot_state.json after inline confirmation button; `handle_delete_callback` processes `del:confirm` / `del:cancel`.
+- **`/export`** — sends full user history (profile, set_logs, checkins, meal_logs, PRs, measurements) as a JSON file attachment; encrypted credential fields are stripped before export.
+- **`/freeze`** — streak freeze command; 1 per 30 days; adds today's date to `user["streak_freezes"]`; streak calculation in both `_finish_checkin` and `cmd_streak` now unions checkin dates + freeze dates.
+- **Physique analysis disclaimer** — `_format_analysis()` appends "_⚠️ AI estimate only — body fat ±5%, scores are relative. Not a medical assessment._"
+- **Eating disorder calorie warning** — `_send_plan()` checks generated calorie target against gender-aware threshold (1200 kcal women / 1500 kcal men); adds visible safety note if below threshold.
+- **Injury/limitations field** — `/profile injuries=...` injected into `_build_plan_prompt()` as a CRITICAL contraindication clause; `/profile` help text updated with example.
+- **Soreness vs joint pain split** — `_STEP_LABELS` now has 5 steps: sleep, energy, soreness (relabelled "Muscle soreness (DOMS)"), joint_pain (🦴, "1=painful, 10=pain-free"), stress. `joint_pain_score` stored in checkin entry. `_finish_checkin` shows red-flag alert if joint_pain ≤ 3. Garmin auto-fill defaults `joint_pain=10`.
+- **Sleep hygiene tip** — `_finish_checkin` appends a sleep hygiene tip when `sleep_score ≤ 5`.
+- **Garmin VO2 max** — `garmin_service.py` adds `get_max_metrics()` call; result stored as `vo2_max` in cache; surfaced in `_garmin_review_lines()` as "VO2max XX".
+
+**Rollback**: Revert `_STEP_LABELS` to 4 keys; remove new commands from `main()` handler registrations and `set_my_commands`; revert `_format_analysis`, `_send_plan`, `_build_plan_prompt`, `_finish_checkin`, `cmd_streak`; remove `vo2_max` block from `garmin_service.py`.
+
 ## 2026-05-28
 
 ### Feature: /research now pulls community insights from fitness subreddits
