@@ -593,10 +593,7 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
             "the more you add, the more personalised your plan will be.\n\n"
             "Tap *Generate my plan* at the bottom whenever you're ready.",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup(
-                list(_profile_menu_keyboard(profile).inline_keyboard)
-                + [[InlineKeyboardButton("🚀 Generate my plan", callback_data="prof:generate")]]
-            ),
+            reply_markup=_profile_menu_keyboard(profile),
         )
 
 
@@ -605,6 +602,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ── Profile / Goals / Measurements inline-keyboard helpers ───────────────────
+
+_HIDDEN_PROFILE_KEYS: frozenset[str] = frozenset({"goal_set_date"})
+
 
 def _profile_menu_keyboard(profile: dict) -> InlineKeyboardMarkup:
     """Inline keyboard for /profile — each button shows the current value."""
@@ -636,6 +636,9 @@ def _profile_menu_keyboard(profile: dict) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton("✏️ Type custom (field=value)", callback_data="prof:custom"),
+        ],
+        [
+            InlineKeyboardButton("🚀 Generate my plan", callback_data="prof:generate"),
         ],
     ])
 
@@ -705,7 +708,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
 
     if not context.args:
         current = (
-            "\n".join(f"• {k}: {v}" for k, v in profile.items())
+            "\n".join(f"• {k}: {esc(str(v))}" for k, v in profile.items() if k not in _HIDDEN_PROFILE_KEYS)
             if profile
             else "Not set yet."
         )
@@ -756,7 +759,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
     }
 
     def _current_summary() -> str:
-        return "\n".join(f"• {k}: {v}" for k, v in profile.items()) or "Not set yet."
+        return "\n".join(f"• {k}: {esc(str(v))}" for k, v in profile.items() if k not in _HIDDEN_PROFILE_KEYS) or "Not set yet."
 
     if action == "f":
         field = parts[2] if len(parts) > 2 else ""
@@ -850,7 +853,10 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
                 plan = _generate_plan_from_profile(user["profile"], ctx_str)
             user["last_plan"] = plan
             _save_store()
-            await query.delete_message()
+            try:
+                await query.delete_message()
+            except Exception:
+                pass
             await _send_plan(update, plan)
             await update.effective_chat.send_message(
                 "💬 Not happy with something? Just tell me — "
@@ -865,6 +871,8 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
+    user["active_command"] = None
+    user["command_state"] = {}
 
     force_new = bool(context.args and context.args[0].lower() in ("new", "reset", "regenerate"))
 
@@ -998,6 +1006,8 @@ def _garmin_to_scores(garmin_data: dict, user: dict) -> dict[str, int]:
 async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
+    user["active_command"] = None
+    user["command_state"] = {}
 
     # Allow inline: /checkin sleep=7 energy=6 soreness=5 stress=4
     if context.args:
@@ -1299,6 +1309,8 @@ async def _finish_checkin(
 async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
+    user["active_command"] = None
+    user["command_state"] = {}
     sub = context.args[0].lower() if context.args else ""
 
     if sub == "start":
@@ -1909,6 +1921,8 @@ async def handle_measurements_callback(update: Update, context: ContextTypes.DEF
 async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
+    user["active_command"] = None
+    user["command_state"] = {}
 
     if not context.args:
         await update.message.reply_text(
@@ -2021,6 +2035,7 @@ async def cmd_fridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     """Prompt user to send a fridge/pantry photo for macro-aligned recipe suggestions."""
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
+    user["command_state"] = {}
     user["active_command"] = "awaiting_fridge_photo"
     _save_store()
 
@@ -2954,8 +2969,10 @@ async def handle_goals_callback(update: Update, context: ContextTypes.DEFAULT_TY
         await query.edit_message_text(
             "Type your goal in full, e.g.:\n"
             "`/goals set cut 10%bf by 2026-09-01`\n"
-            "`/goals set bulk 90kg`",
+            "`/goals set bulk 90kg`\n\n"
+            "Or tap a button below to use the menu instead:",
             parse_mode="Markdown",
+            reply_markup=_goals_menu_keyboard(user),
         )
 
 
@@ -3415,7 +3432,10 @@ async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAUL
             plan = _generate_plan_from_profile(user["profile"], ctx_str)
         user["last_plan"] = plan
         _save_store()
-        await query.delete_message()
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
         await _send_plan(update, plan)
         await update.effective_chat.send_message(
             "💬 Not happy with something? Just tell me — "
@@ -3466,7 +3486,10 @@ async def handle_checkin_callback(update: Update, context: ContextTypes.DEFAULT_
         user["active_command"] = None
         user["command_state"] = {}
         _save_store()
-        await query.delete_message()
+        try:
+            await query.delete_message()
+        except Exception:
+            pass
         await _finish_checkin(
             update, user, data,
             garmin_data=state.get("garmin_data"),
@@ -3545,7 +3568,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user["command_state"] = {}
         _save_store()
         profile = user["profile"]
-        current = "\n".join(f"• {k}: {v}" for k, v in profile.items()) or "Not set yet."
+        current = "\n".join(f"• {k}: {esc(str(v))}" for k, v in profile.items() if k not in _HIDDEN_PROFILE_KEYS) or "Not set yet."
         await update.message.reply_text(
             f"✅ *Profile updated!*\n\n{current}\n\nTap a field to change another:",
             parse_mode="Markdown",
@@ -3556,8 +3579,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if active == "goals_input":
         state = user.get("command_state") or {}
         field = state.get("field", "")
-        user["active_command"] = None
-        user["command_state"] = {}
         if field != "_custom":
             goals_list = user.setdefault("goals", [])
             active_goal = next((g for g in reversed(goals_list) if g.get("is_active")), None)
@@ -3574,19 +3595,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 }
                 goals_list.append(active_goal)
             val = text.strip()
+            parsed_ok = False
             if field == "weight":
                 try:
                     active_goal["target_weight_kg"] = float(_parse_weight(val) or val)
+                    parsed_ok = True
                 except (ValueError, TypeError):
                     pass
             elif field == "bf":
                 try:
                     active_goal["target_bf_pct"] = float(val.replace("%", ""))
+                    parsed_ok = True
                 except ValueError:
                     pass
             elif field == "date":
                 if re.match(r"\d{4}-\d{2}-\d{2}", val):
                     active_goal["target_date"] = val[:10]
+                    parsed_ok = True
+            if not parsed_ok:
+                await update.message.reply_text(
+                    "❌ Couldn't parse that. Try:\n"
+                    "• Weight: `90kg` or `200lbs`\n"
+                    "• Body fat: `12` or `15%`\n"
+                    "• Date: `2026-12-01`",
+                    parse_mode="Markdown",
+                    reply_markup=_goals_menu_keyboard(user),
+                )
+                return
+        user["active_command"] = None
+        user["command_state"] = {}
         _save_store()
         await update.message.reply_text(
             "🎯 *Goal updated!*\n\nTap to continue editing:",

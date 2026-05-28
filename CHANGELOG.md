@@ -1,5 +1,27 @@
 # CHANGELOG
 
+## 2026-05-28 (Sprint 4 — Full UX Bug-Fix Sprint)
+
+### 8-bug audit fix: silent failures, dead ends, and stale state
+
+**Files**: `telegram_bot.py`
+
+**What changed:**
+- **Bug 1 (critical)**: All profile summary strings now escape values with `esc()` — users with underscores in injury fields (e.g. `bad_left_knee`) or apostrophes in height (e.g. `5'10"`) no longer silently break `edit_message_text`.
+- **Bug 2 (high)**: "🚀 Generate my plan" button is now permanently the last row of `_profile_menu_keyboard` — it never disappears after a profile edit. The onboarding `days` branch now uses `_profile_menu_keyboard` directly (no more tuple-concatenation fragility).
+- **Bug 3 (high)**: `cmd_plan`, `cmd_checkin`, `cmd_workout`, `cmd_meal`, `cmd_fridge` each clear `active_command` and `command_state` on entry — typing a new command while mid-flow in `profile_input` / `goals_input` / etc. no longer leaves state behind to intercept the next free-text message.
+- **Bug 4**: Already resolved in previous sprint (`query.answer()` was already in `handle_plan_days_callback`).
+- **Bug 5 (medium)**: `query.delete_message()` in `prof:generate`, `handle_plan_days_callback`, and `handle_checkin_callback` is now wrapped in `try/except Exception: pass` — double-tapping a generate or submit button no longer silently kills the flow.
+- **Bug 6 (medium)**: `goals_input` handler now tracks `parsed_ok`; if the user's input can't be parsed (wrong date format, non-numeric weight, etc.) it replies with an error + keyboard and returns without clearing state.
+- **Bug 7 (medium)**: `goals:custom` callback now includes `reply_markup=_goals_menu_keyboard(user)` so users aren't left with a dead-end text message and no buttons.
+- **Bug 8 (low)**: `_HIDDEN_PROFILE_KEYS = frozenset({"goal_set_date"})` filters internal keys from all profile summary displays.
+
+**Rationale:** End-to-end UX audit surfaced 8 bugs causing silent API failures, dead-end states, and stale active_command routing.
+
+**Rollback:** Revert the above edits. Key identifiers: `_HIDDEN_PROFILE_KEYS`, `parsed_ok`, `try: await query.delete_message()`.
+
+---
+
 ## 2026-05-28 (Sprint 3 — Inline Keyboard Button UIs)
 
 ### Button-based entry for /profile, /goals, /measurements
