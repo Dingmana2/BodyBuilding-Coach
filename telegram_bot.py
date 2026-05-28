@@ -763,8 +763,13 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
                 [InlineKeyboardButton(o.title(), callback_data=f"prof:v:{field}:{o}") for o in opts[i:i+3]]
                 for i in range(0, len(opts), 3)
             ]
-            rows.append([InlineKeyboardButton("← Back", callback_data="prof:menu")])
-            await query.edit_message_reply_markup(InlineKeyboardMarkup(rows))
+            rows.append([InlineKeyboardButton("← Back to profile", callback_data="prof:menu")])
+            label = field.replace("_", " ").title()
+            await query.edit_message_text(
+                f"*{label}* — choose one:",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup(rows),
+            )
         else:
             user["active_command"] = "profile_input"
             user["command_state"] = {"field": field}
