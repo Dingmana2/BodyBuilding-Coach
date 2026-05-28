@@ -120,6 +120,17 @@ RESEARCH_TOPICS = [
     "body recomposition simultaneous fat loss muscle gain",
 ]
 
+REDDIT_SUBREDDITS = [
+    "bodybuilding",
+    "naturalbodybuilding",
+    "nutrition",
+    "fitness",
+    "longevity",
+    "Supplements",
+    "powerlifting",
+    "weightlifting",
+]
+
 
 
 
@@ -2213,10 +2224,19 @@ async def cmd_mfp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = await update.message.reply_text("🔬 Fetching latest PubMed research…")
+    msg = await update.message.reply_text("🔬 Fetching research + community insights…")
     try:
-        summaries = await _fetch_research_summaries()
-        text = "*Latest Research Highlights*\n\n" + "\n\n".join(summaries)
+        pubmed_task = asyncio.create_task(_fetch_research_summaries())
+        reddit_task = asyncio.create_task(_fetch_reddit_summaries())
+        pubmed, reddit = await asyncio.gather(pubmed_task, reddit_task, return_exceptions=True)
+
+        parts: list[str] = []
+        if isinstance(pubmed, list) and pubmed:
+            parts.append("*📚 Latest Research*\n\n" + "\n\n".join(pubmed))
+        if isinstance(reddit, list) and reddit:
+            parts.append("*💬 Community Insights*\n\n" + "\n\n".join(reddit))
+
+        text = "\n\n───\n\n".join(parts) if parts else "No data available. Try again in a moment."
         await msg.edit_text(text[:4096], parse_mode="Markdown")
     except Exception as e:
         await msg.edit_text(f"❌ Research fetch failed: {e}")
@@ -3380,6 +3400,67 @@ def _summarize_papers(topic: str, papers: list) -> str:
         }],
     )
     return message.content[0].text.strip()
+
+
+async def _fetch_reddit_posts(subreddit: str, limit: int = 12) -> list[dict]:
+    """Fetch hot posts from a subreddit via the public JSON API (no auth required)."""
+    url = f"https://www.reddit.com/r/{subreddit}/hot.json"
+    async with httpx.AsyncClient(
+        timeout=15,
+        headers={"User-Agent": "BodyBuildingCoachBot/1.0 (fitness coaching research)"},
+    ) as client:
+        resp = await client.get(url, params={"limit": limit})
+    children = resp.json().get("data", {}).get("children", [])
+    posts = []
+    for child in children:
+        d = child.get("data", {})
+        if d.get("stickied") or d.get("score", 0) < 30:
+            continue
+        posts.append({
+            "title": d.get("title", ""),
+            "selftext": (d.get("selftext") or "")[:400],
+            "score": d.get("score", 0),
+        })
+    return posts
+
+
+def _summarize_reddit(subreddit: str, posts: list[dict]) -> str:
+    """Summarise hot Reddit posts into coach-relevant insights using Haiku."""
+    text = "\n\n".join(
+        f"[{p['score']}↑] {p['title']}\n{p['selftext']}".strip()
+        for p in posts[:6]
+    )
+    message = get_anthropic_client().messages.create(
+        model=SUMMARY_MODEL,
+        max_tokens=300,
+        messages=[{
+            "role": "user",
+            "content": (
+                f'What are the key fitness, nutrition, or recovery insights a coach should know '
+                f'from these top r/{subreddit} discussions? '
+                f'3 sentences max. Practical and coach-relevant only:\n\n{text}'
+            ),
+        }],
+    )
+    return message.content[0].text.strip()
+
+
+async def _fetch_reddit_summaries(subreddits: list[str] | None = None) -> list[str]:
+    """Fetch and summarise hot posts from fitness subreddits."""
+    targets = (subreddits or REDDIT_SUBREDDITS)[:4]  # cap at 4 to control cost and latency
+    summaries = []
+    for sub in targets:
+        try:
+            posts = await _fetch_reddit_posts(sub)
+            if posts:
+                summary = await asyncio.get_event_loop().run_in_executor(
+                    None, _summarize_reddit, sub, posts
+                )
+                summaries.append(f"*r/{sub}*\n{summary}")
+            await asyncio.sleep(2.0)  # Reddit rate-limit guidance: 1 req/2s
+        except Exception as e:
+            print(f"Warning: Reddit fetch for r/{sub} failed: {e}")
+    return summaries
 
 
 # ── Formatters ────────────────────────────────────────────────────────────────

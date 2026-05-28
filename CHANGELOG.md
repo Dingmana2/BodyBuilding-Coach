@@ -2,6 +2,13 @@
 
 ## 2026-05-28
 
+### Feature: /research now pulls community insights from fitness subreddits
+**Files**: `telegram_bot.py`, `community_posts.md`
+
+**What**: `/research` now shows two sections — "📚 Latest Research" (PubMed, existing) and "💬 Community Insights" (new). The Reddit section pulls hot posts from 8 fitness subreddits (r/bodybuilding, r/naturalbodybuilding, r/nutrition, r/fitness, r/longevity, r/Supplements, r/powerlifting, r/weightlifting) via Reddit's public JSON API (no auth needed). Posts filtered by score (≥30) and sticky status, then summarised into coach-relevant insights using Haiku. Both fetches run concurrently via `asyncio.gather`. New helpers: `REDDIT_SUBREDDITS`, `_fetch_reddit_posts`, `_summarize_reddit`, `_fetch_reddit_summaries`. Rate-limit: 2s sleep between subreddit calls. `community_posts.md` updated to remove Reddit post templates (Reddit used as knowledge source, not posting channel) — trimmed to 4 platforms.
+
+**Rollback**: Revert `cmd_research` to the PubMed-only version; remove new Reddit helpers.
+
 ### Improvement: /fridge scan shows ingredients grouped by category
 **Files**: `telegram_bot.py`
 
