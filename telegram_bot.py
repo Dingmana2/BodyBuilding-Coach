@@ -594,7 +594,7 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
             "Tap *Generate my plan* at the bottom whenever you're ready.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(
-                _profile_menu_keyboard(profile).inline_keyboard
+                list(_profile_menu_keyboard(profile).inline_keyboard)
                 + [[InlineKeyboardButton("🚀 Generate my plan", callback_data="prof:generate")]]
             ),
         )
