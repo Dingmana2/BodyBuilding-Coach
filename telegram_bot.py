@@ -509,8 +509,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
 
-    # Returning user — show quick status
-    if user.get("profile"):
+    # Returning user — must have a goal set to be considered complete
+    if user.get("profile") and user["profile"].get("goal"):
         goal = user["profile"].get("goal", "?")
         sessions = user.get("session_counter", 0)
         checkins = len(user.get("checkins", []))
@@ -519,10 +519,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Goal: *{goal}* · Sessions logged: *{sessions}* · Check-ins: *{checkins}*\n\n"
             f"Type /plan to see your plan, /checkin to log today, or /help for all commands.",
             parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("✏️ Update profile", callback_data="prof:menu"),
+            ]]),
         )
         return
 
-    # New user — onboarding quiz
+    # New user or incomplete profile — run onboarding quiz
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("💪 Build Muscle (Bulk)", callback_data="onboard:goal:bulk"),
          InlineKeyboardButton("🔥 Lose Fat (Cut)", callback_data="onboard:goal:cut")],
