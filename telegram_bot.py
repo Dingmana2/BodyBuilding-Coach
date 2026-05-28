@@ -626,7 +626,6 @@ def _profile_menu_keyboard(profile: dict) -> InlineKeyboardMarkup:
             InlineKeyboardButton(f"⚖️ Weight: {_val('weight')} kg", callback_data="prof:input:weight"),
         ],
         [
-            InlineKeyboardButton(f"🕐 Training time: {_val('train_time', _val('chronotype'))}", callback_data="prof:f:train_time"),
             InlineKeyboardButton(f"📸 Physique: {_val('physique_analysis', 'on')}", callback_data="prof:f:physique_analysis"),
         ],
         [
@@ -751,7 +750,6 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         "experience":        ["beginner", "intermediate", "advanced"],
         "days":              ["2", "3", "4", "5", "6"],
         "gender":            ["male", "female", "non-binary", "other"],
-        "train_time":        ["morning", "midday", "evening"],
         "physique_analysis": ["on", "off"],
     }
 
@@ -824,7 +822,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(
             "Type one or more `field=value` pairs, e.g.:\n"
             "`age=28 height=178cm weight=85kg`\n\n"
-            "Fields: goal, experience, days, gender, age, height, weight, injuries, train\\_time, email, physique\\_analysis",
+            "Fields: goal, experience, days, gender, age, height, weight, injuries, email, physique\\_analysis",
             parse_mode="Markdown",
         )
 
@@ -3932,12 +3930,6 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         f"{injuries_note}. Substitute with safe alternatives and note the substitution.\n\n"
         if injuries_note else "\n\n"
     )
-    train_time = (profile.get("train_time") or profile.get("chronotype", "")) if profile else ""
-    train_time_clause = (
-        f"Preferred training time: {train_time} — schedule all workout sessions in the {train_time} slot "
-        f"and adjust pre/post-workout meal timing accordingly.\n\n"
-        if train_time else ""
-    )
     return (
         "You are an expert strength coach and sports nutritionist who works with all populations — "
         "beginners to advanced athletes, all ages (teens to 70+), all genders, all goals "
@@ -3948,7 +3940,6 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         "Tailor EVERYTHING to this specific athlete. A beginner gets simpler movements and lower volume. "
         "An older athlete gets joint-friendly exercise selection. Nutrition targets must match their "
         f"actual goal and body weight. {injury_clause}"
-        f"{train_time_clause}"
         "Diet planning must account for gut health: "
         "(1) include at least one fermented probiotic food in foods_to_prioritize (Greek yogurt, kefir, kimchi, sauerkraut); "
         "(2) include prebiotic/high-fiber foods (garlic, onion, oats, legumes, bananas); "
