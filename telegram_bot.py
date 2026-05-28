@@ -583,16 +583,17 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
     elif step == "days":
         user["profile"]["days"] = value
         _save_store()
+        profile = user["profile"]
         await query.edit_message_text(
             f"✅ Training days: *{value}/week*\n\n"
-            "🎉 *Profile set!*\n\n"
-            "Next steps:\n"
-            "• `/profile age=25 gender=male weight=80kg height=178cm` — add full stats for a personalised plan\n"
-            "• `/plan` — generate your workout + diet plan now\n"
-            "• 📸 Send a physique photo — AI body analysis\n"
-            "• `/checkin` — start your daily recovery tracking\n\n"
-            "_You can update any profile field anytime with /profile._",
+            "Almost there! Tap any field below to add your details — "
+            "the more you fill in, the more personalised your plan will be.\n\n"
+            "_Tap *Generate my plan* when you're ready, or fill in fields first:_",
             parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup(
+                _profile_menu_keyboard(profile).inline_keyboard
+                + [[InlineKeyboardButton("🚀 Generate my plan", callback_data="prof:generate")]]
+            ),
         )
 
 
@@ -818,6 +819,27 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
             "Fields: goal, experience, days, gender, age, height, weight, injuries, train\\_time, email, physique\\_analysis",
             parse_mode="Markdown",
         )
+
+    elif action == "generate":
+        await query.edit_message_text("🧬 Building your plan… (30-60 seconds)")
+        ctx_str = _get_bot_context_str(user)
+        try:
+            if user["last_analysis"]:
+                plan = _generate_plan(user["last_analysis"], user["profile"], ctx_str)
+            else:
+                plan = _generate_plan_from_profile(user["profile"], ctx_str)
+            user["last_plan"] = plan
+            _save_store()
+            await query.delete_message()
+            await _send_plan(update, plan)
+            await update.effective_chat.send_message(
+                "💬 Not happy with something? Just tell me — "
+                "e.g. 'remove leg day', 'I'm vegetarian' — and I'll update it.\n"
+                "Type `/plan new` anytime to regenerate.",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            await update.effective_chat.send_message(f"❌ Plan generation failed: {e}")
 
 
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
