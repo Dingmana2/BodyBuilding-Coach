@@ -586,9 +586,9 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
         profile = user["profile"]
         await query.edit_message_text(
             f"✅ Training days: *{value}/week*\n\n"
-            "Almost there! Tap any field below to add your details — "
-            "the more you fill in, the more personalised your plan will be.\n\n"
-            "_Tap *Generate my plan* when you're ready, or fill in fields first:_",
+            "Almost there! Tap any field below to fill in your details — "
+            "the more you add, the more personalised your plan will be.\n\n"
+            "Tap *Generate my plan* at the bottom whenever you're ready.",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup(
                 _profile_menu_keyboard(profile).inline_keyboard
