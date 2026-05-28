@@ -343,16 +343,18 @@ Create a full program. Return ONLY valid JSON with this exact structure:
             }}
         ],
         "foods_to_prioritize": [
-            "Chicken breast, lean beef, eggs, Greek yogurt, cottage cheese",
-            "White/brown rice, oats, sweet potato, fruit",
-            "Salmon, mackerel (omega-3s for inflammation/recovery)",
-            "Leafy greens, cruciferous vegetables"
+            "Chicken breast, lean beef, eggs, Greek yogurt (probiotic), cottage cheese",
+            "White/brown rice, oats (prebiotic fiber), sweet potato, fruit",
+            "Salmon, mackerel, sardines (omega-3s — anti-inflammatory, recovery)",
+            "Leafy greens, cruciferous vegetables, legumes (prebiotic fiber)",
+            "Fermented foods: kefir, kimchi, sauerkraut (gut microbiome support)"
         ],
         "foods_to_limit": [
-            "Ultra-processed foods (spike inflammation)",
-            "Alcohol (suppresses protein synthesis 24-48 hrs)",
+            "Ultra-processed foods (spike inflammation, disrupt gut microbiome)",
+            "Alcohol (suppresses protein synthesis 24-48 hrs, impairs gut lining)",
             "Excessive dietary fat around training windows"
         ],
+        "gut_health_note": "One sentence on gut health considerations specific to this athlete's goal and plan",
         "hydration": "Body weight (lbs) × 0.67 = daily oz minimum. Add 16oz per hour of training.",
         "research_citations": [
             "Morton et al. (2018): 1.6-2.2g/kg protein optimizes muscle gains",

@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 2026-05-28
+
+### Feature: /fridge ingredient review UI — add missed items before recipes generate
+**Files**: `telegram_bot.py`
+
+**What**: Fridge photo scan now uses a two-step flow. Step 1: photo is scanned for ingredients only (new `_fridge_scan_call`, vision-only, max_tokens=400, timeout=60s). Step 2: an inline keyboard "review" message shows the detected ingredient list, six food category buttons (Proteins, Grains & Carbs, Vegetables, Dairy, Fats, Fruits), and a "Generate Recipes →" button. Each category expands to show common items; tapping an item toggles it (✓ marks already-added items). The user can also type missed items as comma-separated text — they are parsed, deduplicated, and added to the list. Tapping "Generate Recipes" calls `_fridge_recipes_call` (text-only, no image, timeout=90s) with the combined ingredient list, then renders recipes via `_fridge_send_recipes`. State is tracked in `user["command_state"]` (`ingredients`, `added`, `review_msg_id`) with `active_command = "fridge_reviewing"`. New helpers: `_FRIDGE_CATEGORIES`, `_fridge_review_text`, `_fridge_category_keyboard`, `_fridge_items_keyboard`, `handle_fridge_callback`. Text routing added to `handle_message` for the `fridge_reviewing` state.
+
+**Rollback**: Revert `telegram_bot.py` — remove the new helpers and callback, and restore the old single-call `_fridge_api_call` + `_handle_fridge_photo`.
+
+### Feature: Gut health awareness in nutrition coaching
+**Files**: `prompt_builder.py`, `telegram_bot.py`, `claude_service.py`
+
+**What**: The nutrition coaching persona, plan generation, and plan template now include gut health awareness. `_DEFAULT_PROMPT` in `prompt_builder.py` (used for all coaching conversations) now instructs the model to recommend 30+ diverse plant varieties for microbiome diversity, fermented probiotic foods (Greek yogurt, kefir, kimchi, sauerkraut), complex carbohydrates and resistant starch over refined carbs, and omega-3 sources for anti-inflammatory recovery. It also notes the gut-brain axis (stress impairs digestion → affects training). In `telegram_bot.py`, `_build_plan_prompt` adds gut health instructions: fermented foods in `foods_to_prioritize`, prebiotic/fiber foods (garlic, onion, oats, legumes), and a `gut_health_note` field. In `claude_service.py`, the comprehensive plan JSON template adds fermented foods and legumes to `foods_to_prioritize` and adds the `gut_health_note` field to the diet object.
+
+**Rollback**: Revert `_DEFAULT_PROMPT` in `prompt_builder.py`, revert gut health instruction block in `_build_plan_prompt`, revert diet object template in `claude_service.py`.
+
 ## 2026-05-27
 
 ### Bug fix: /fridge showed "Scanning…" forever — NameError on undefined `esc()` silently swallowed

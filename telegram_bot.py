@@ -1567,32 +1567,113 @@ async def cmd_fridge(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
-def _fridge_api_call(img_b64: str, prompt: str) -> dict:
-    """Sync helper — run in a thread via run_in_executor to avoid blocking the event loop."""
-    import re as _re
+_FRIDGE_CATEGORIES: dict[str, dict] = {
+    "proteins":   {"label": "🥩 Proteins",      "items": ["Chicken", "Eggs", "Beef", "Tuna", "Salmon", "Turkey", "Shrimp", "Tofu", "Tempeh", "Lentils"]},
+    "grains":     {"label": "🌾 Grains & Carbs", "items": ["Rice", "Oats", "Bread", "Pasta", "Quinoa", "Potato", "Sweet Potato", "Tortilla"]},
+    "vegetables": {"label": "🥦 Vegetables",     "items": ["Broccoli", "Spinach", "Peppers", "Onion", "Tomato", "Carrot", "Cucumber", "Zucchini", "Kale", "Mushrooms"]},
+    "dairy":      {"label": "🥛 Dairy",          "items": ["Milk", "Greek Yogurt", "Cottage Cheese", "Cheddar", "Mozzarella", "Butter"]},
+    "fats":       {"label": "🫒 Fats",           "items": ["Olive Oil", "Avocado", "Almonds", "Peanut Butter", "Walnuts", "Hummus"]},
+    "fruits":     {"label": "🍎 Fruits",         "items": ["Banana", "Apple", "Berries", "Orange", "Mango", "Grapes"]},
+}
+
+
+def _fridge_review_text(ingredients: list[str], added: list[str]) -> str:
+    """Format the ingredient review message."""
+    detected = ", ".join(ingredients) if ingredients else "_Nothing detected — try a clearer photo_"
+    lines = ["🔍 *Fridge Scan — Review Ingredients*\n", f"📋 *Detected:* {detected}"]
+    if added:
+        lines.append(f"✅ *You added:* {', '.join(added)}")
+    lines.append("\nTap a category to add missing items, or just type them:")
+    return "\n".join(lines)
+
+
+def _fridge_category_keyboard(added: list[str]) -> InlineKeyboardMarkup:
+    """2-column category grid + Done button."""
+    cats = list(_FRIDGE_CATEGORIES.items())
+    rows = []
+    for i in range(0, len(cats), 2):
+        row = [InlineKeyboardButton(v["label"], callback_data=f"fridge:cat:{k}") for k, v in cats[i:i+2]]
+        rows.append(row)
+    rows.append([InlineKeyboardButton(f"✅ Generate Recipes ({len(added)} added)" if added else "✅ Generate Recipes →", callback_data="fridge:done")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _fridge_items_keyboard(category: str, added: list[str]) -> InlineKeyboardMarkup:
+    """Items for a category; checkmark if already added. Back button at bottom."""
+    cat = _FRIDGE_CATEGORIES.get(category, {})
+    items = cat.get("items", [])
+    added_lower = {a.lower() for a in added}
+    rows = []
+    for i in range(0, len(items), 2):
+        row = []
+        for item in items[i:i+2]:
+            label = f"✓ {item}" if item.lower() in added_lower else item
+            row.append(InlineKeyboardButton(label, callback_data=f"fridge:add:{item}"))
+        rows.append(row)
+    rows.append([InlineKeyboardButton("← Back to Categories", callback_data="fridge:back")])
+    return InlineKeyboardMarkup(rows)
+
+
+def _fridge_scan_call(img_b64: str) -> list[str]:
+    """Sync vision scan — returns list of spotted ingredient strings."""
+    message = get_anthropic_client().messages.create(
+        model=ANALYSIS_MODEL,
+        max_tokens=400,
+        timeout=60.0,
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
+                {"type": "text", "text": (
+                    "List every food item or ingredient you can see in this fridge/pantry photo. "
+                    "Return ONLY valid JSON, no explanation:\n"
+                    '{"ingredients_spotted": ["item1", "item2", "item3"]}'
+                )},
+            ],
+        }],
+    )
+    raw = message.content[0].text
+    json_match = re.search(r"\{[\s\S]*\}", raw)
+    if not json_match:
+        return []
+    return json.loads(json_match.group()).get("ingredients_spotted", [])
+
+
+def _fridge_recipes_call(ingredients: list[str], diet_context: str) -> dict:
+    """Sync recipe generation from a confirmed ingredient list — no image needed."""
+    ingr_list = ", ".join(ingredients) if ingredients else "various ingredients"
     message = get_anthropic_client().messages.create(
         model=ANALYSIS_MODEL,
         max_tokens=1500,
         timeout=90.0,
         messages=[{
             "role": "user",
-            "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
-                {"type": "text", "text": prompt},
-            ],
+            "content": [{
+                "type": "text",
+                "text": (
+                    f"Available ingredients: {ingr_list}\n\n"
+                    f"{diet_context}\n\n"
+                    "Suggest 3 recipes using ONLY those ingredients that best fit this athlete's plan.\n"
+                    "Return ONLY valid JSON (no markdown, no explanation):\n"
+                    '{"recipes": ['
+                    '{"name": "...", "ingredients": ["200g chicken breast", "1 cup rice"], '
+                    '"macros": {"calories": 520, "protein_g": 48, "carbs_g": 40, "fat_g": 9}, '
+                    '"prep": "Short 2-sentence cooking method.", '
+                    '"meal_timing": "Post-workout", "why_it_fits": "One sentence."}'
+                    "]}"
+                ),
+            }],
         }],
     )
     raw = message.content[0].text
-    json_match = _re.search(r"\{[\s\S]*\}", raw)
+    json_match = re.search(r"\{[\s\S]*\}", raw)
     return json.loads(json_match.group()) if json_match else {}
 
 
-async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None:
-    """Analyze a fridge/pantry photo and return macro-aligned recipe suggestions."""
-    msg = await update.effective_chat.send_message("🔍 Scanning your fridge for ingredients…")
+def _build_fridge_diet_context(user: dict) -> str:
+    """Build a diet context string to pass to the recipe generation call."""
     diet = (user.get("last_plan") or {}).get("diet") or {}
     profile = user.get("profile") or {}
-
     cal = diet.get("calories", "?")
     prot = diet.get("protein_g", "?")
     carbs = diet.get("carbs_g", "?")
@@ -1601,56 +1682,75 @@ async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None
     prioritize = ", ".join(diet.get("foods_to_prioritize") or []) or "whole foods"
     avoid = ", ".join(diet.get("foods_to_limit") or []) or "ultra-processed foods"
     timing = diet.get("meal_timing", "")
-
     try:
-        cal_per_meal = round(int(cal) / 3)
-        prot_per_meal = round(int(prot) / 3)
-        per_meal_str = f"~{cal_per_meal} kcal, ~{prot_per_meal}g protein per meal"
+        per_meal_str = f"~{round(int(cal)/3)} kcal, ~{round(int(prot)/3)}g protein per meal"
     except (TypeError, ValueError):
         per_meal_str = "balanced macros per meal"
-
-    prompt = (
-        "Analyze this fridge/pantry photo.\n"
-        "1. List every food item or ingredient you can see.\n"
-        "2. Suggest 3 recipes using ONLY those ingredients that best fit this athlete's plan:\n"
-        f"   Goal: {goal}\n"
-        f"   Per meal target: {per_meal_str}\n"
-        f"   Daily: {cal} kcal | {prot}g protein | {carbs}g carbs | {fat}g fat\n"
-        f"   Prioritize: {prioritize}\n"
-        f"   Avoid: {avoid}\n"
-        f"   {timing}\n\n"
-        "Return ONLY valid JSON (no markdown, no explanation):\n"
-        '{"ingredients_spotted": ["item1", "item2"], "recipes": ['
-        '{"name": "...", "ingredients": ["200g chicken breast", "1 cup rice"], '
-        '"macros": {"calories": 520, "protein_g": 48, "carbs_g": 40, "fat_g": 9}, '
-        '"prep": "Short 2-sentence cooking method.", '
-        '"meal_timing": "Post-workout", "why_it_fits": "One sentence."}'
-        "]}"
+    return (
+        f"Athlete goal: {goal}\n"
+        f"Per meal target: {per_meal_str}\n"
+        f"Daily targets: {cal} kcal | {prot}g protein | {carbs}g carbs | {fat}g fat\n"
+        f"Foods to prioritise: {prioritize}\n"
+        f"Foods to avoid: {avoid}\n"
+        f"Meal timing: {timing}"
     )
+
+
+async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None:
+    """Scan fridge photo for ingredients then show the ingredient review UI."""
+    chat_id = update.effective_chat.id
+    msg = await update.effective_chat.send_message("🔍 Scanning your fridge for ingredients…")
+
+    try:
+        ingredients = await asyncio.get_event_loop().run_in_executor(
+            None, _fridge_scan_call, img_b64
+        )
+    except Exception as e:
+        print(f"Warning: fridge scan failed: {e}")
+        await msg.edit_text(
+            "⚠️ Couldn't scan the photo. Make sure it's a clear fridge/pantry image and try again."
+        )
+        return
+
+    user["active_command"] = "fridge_reviewing"
+    user["command_state"] = {
+        "ingredients": ingredients,
+        "added": [],
+        "review_msg_id": msg.message_id,
+    }
+    _save_store()
+
+    await msg.edit_text(
+        _fridge_review_text(ingredients, []),
+        parse_mode="Markdown",
+        reply_markup=_fridge_category_keyboard([]),
+    )
+
+
+async def _fridge_send_recipes(msg, ingredients: list[str], added: list[str], diet_context: str) -> None:
+    """Generate and display recipes; msg is the message to edit."""
+    all_ingredients = list(dict.fromkeys(ingredients + added))  # deduplicate, preserve order
+    await msg.edit_text("🍳 Generating recipes from your ingredients…")
 
     try:
         result = await asyncio.get_event_loop().run_in_executor(
-            None, _fridge_api_call, img_b64, prompt
+            None, _fridge_recipes_call, all_ingredients, diet_context
         )
     except Exception as e:
-        print(f"Warning: fridge analysis failed: {e}")
-        await msg.edit_text(
-            "⚠️ Couldn't analyze the photo. Make sure it's a clear fridge/pantry image and try again."
-        )
+        print(f"Warning: fridge recipe generation failed: {e}")
+        await msg.edit_text("⚠️ Couldn't generate recipes. Please try again.")
         return
 
-    ingredients = result.get("ingredients_spotted", [])
     recipes = result.get("recipes", [])
     if not recipes:
         await msg.edit_text(
-            "📷 I couldn't identify enough ingredients to suggest recipes. "
-            "Try a clearer photo with more items visible."
+            "📷 Couldn't generate recipes from those ingredients. Try adding more items and try again."
         )
         return
 
     try:
-        ingr_text = ", ".join(ingredients[:15]) + ("…" if len(ingredients) > 15 else "")
-        lines = [f"🛒 *Spotted:* {esc(ingr_text)}\n"]
+        ingr_summary = esc(", ".join(all_ingredients[:15]) + ("…" if len(all_ingredients) > 15 else ""))
+        lines = [f"🛒 *Ingredients used:* {ingr_summary}\n"]
         for i, r in enumerate(recipes[:3], 1):
             m = r.get("macros", {})
             ingr_list = esc(", ".join(r.get("ingredients", [])))
@@ -1662,16 +1762,79 @@ async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None
                 f"👨‍🍳 _{esc(r.get('prep', ''))}_\n"
                 f"⏱ {esc(r.get('meal_timing', ''))} — {esc(r.get('why_it_fits', ''))}\n"
             )
-
         await msg.edit_text(
             "🍽️ *Fridge Recipe Suggestions*\n\n" + "\n".join(lines),
             parse_mode="Markdown",
         )
     except Exception as e:
-        print(f"Warning: fridge formatting/send failed: {e}")
-        await msg.edit_text(
-            "⚠️ Got the analysis back but couldn't format it. Please try again."
+        print(f"Warning: fridge recipe formatting failed: {e}")
+        await msg.edit_text("⚠️ Got the recipes but couldn't format them. Please try again.")
+
+
+async def handle_fridge_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle all fridge: callback queries — category nav, item toggling, done."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    state = user.get("command_state") or {}
+    ingredients: list[str] = state.get("ingredients", [])
+    added: list[str] = state.get("added", [])
+    data = query.data  # e.g. "fridge:cat:proteins", "fridge:add:Tuna", "fridge:done"
+
+    parts = data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+    value = parts[2] if len(parts) > 2 else ""
+
+    if action == "cat":
+        await query.edit_message_text(
+            _fridge_review_text(ingredients, added) + f"\n\n*{_FRIDGE_CATEGORIES[value]['label']}* — tap to add:",
+            parse_mode="Markdown",
+            reply_markup=_fridge_items_keyboard(value, added),
         )
+
+    elif action == "add":
+        added_lower = {a.lower() for a in added}
+        if value.lower() in added_lower:
+            added = [a for a in added if a.lower() != value.lower()]
+        else:
+            added = added + [value]
+        user["command_state"]["added"] = added
+        _save_store()
+        # re-detect which category this item belongs to so we can stay in it
+        current_cat = next(
+            (k for k, v in _FRIDGE_CATEGORIES.items() if value in v["items"]), None
+        )
+        if current_cat:
+            await query.edit_message_text(
+                _fridge_review_text(ingredients, added) + f"\n\n*{_FRIDGE_CATEGORIES[current_cat]['label']}* — tap to add:",
+                parse_mode="Markdown",
+                reply_markup=_fridge_items_keyboard(current_cat, added),
+            )
+        else:
+            await query.edit_message_text(
+                _fridge_review_text(ingredients, added),
+                parse_mode="Markdown",
+                reply_markup=_fridge_category_keyboard(added),
+            )
+
+    elif action == "back" or action == "clear":
+        if action == "clear":
+            added = []
+            user["command_state"]["added"] = []
+            _save_store()
+        await query.edit_message_text(
+            _fridge_review_text(ingredients, added),
+            parse_mode="Markdown",
+            reply_markup=_fridge_category_keyboard(added),
+        )
+
+    elif action == "done":
+        user["active_command"] = None
+        user["command_state"] = {}
+        _save_store()
+        diet_context = _build_fridge_diet_context(user)
+        await _fridge_send_recipes(query.message, ingredients, added, diet_context)
 
 
 async def cmd_macros(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2721,6 +2884,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if active in ("connect_garmin", "connect_mfp"):
         await _handle_connect_step(update, user, text)
         return
+    if active == "fridge_reviewing":
+        state = user.get("command_state") or {}
+        new_items = [t.strip().title() for t in text.split(",") if t.strip()]
+        if new_items:
+            added_lower = {a.lower() for a in state.get("added", [])}
+            to_add = [item for item in new_items if item.lower() not in added_lower]
+            state.setdefault("added", []).extend(to_add)
+            user["command_state"] = state
+            _save_store()
+            label = ", ".join(to_add) if to_add else "nothing new"
+            await update.message.reply_text(f"✅ Added: {label}")
+            review_msg_id = state.get("review_msg_id")
+            if review_msg_id:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=review_msg_id,
+                        text=_fridge_review_text(state.get("ingredients", []), state["added"]),
+                        parse_mode="Markdown",
+                        reply_markup=_fridge_category_keyboard(state["added"]),
+                    )
+                except Exception:
+                    pass
+        return
 
     # Workout keyboard — handle free-text input when user tapped "Type…" buttons
     wk_awaiting = context.user_data.get("wk_awaiting")
@@ -3010,6 +3197,11 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         "Tailor EVERYTHING to this specific athlete. A beginner gets simpler movements and lower volume. "
         "An older athlete gets joint-friendly exercise selection. Nutrition targets must match their "
         "actual goal and body weight.\n\n"
+        "Diet planning must account for gut health: "
+        "(1) include at least one fermented probiotic food in foods_to_prioritize (Greek yogurt, kefir, kimchi, sauerkraut); "
+        "(2) include prebiotic/high-fiber foods (garlic, onion, oats, legumes, bananas); "
+        "(3) populate the gut_health_note field with 1–2 sentences specific to this athlete's goal; "
+        "(4) flag any patterns likely to impair gut health (excess alcohol, low fiber, ultra-processed foods).\n\n"
         "Return ONLY valid JSON:\n"
         "{\n"
         '    "workout": {\n'
@@ -3038,8 +3230,9 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         '        "rationale": "Why these exact numbers for this athlete",\n'
         '        "meal_timing": "Pre/post workout nutrition guidance",\n'
         '        "sample_meals": ["Breakfast: ...", "Lunch: ...", "Dinner: ..."],\n'
-        '        "foods_to_prioritize": ["Chicken breast", "Eggs", "Rice", "Oats"],\n'
-        '        "foods_to_limit": ["Ultra-processed foods", "Alcohol"]\n'
+        '        "foods_to_prioritize": ["Chicken breast", "Eggs", "Rice", "Oats", "Greek yogurt (probiotic)"],\n'
+        '        "foods_to_limit": ["Ultra-processed foods", "Alcohol"],\n'
+        '        "gut_health_note": "One sentence on gut health considerations for this athlete"\n'
         '    },\n'
         '    "supplements": [\n'
         '        {"priority": 1, "name": "Creatine Monohydrate", "dose": "5g daily", "timing": "Anytime", "grade": "A", "benefit": "5-15% strength gains. Most evidence-backed supplement."},\n'
@@ -3420,6 +3613,7 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(CallbackQueryHandler(handle_plan_days_callback, pattern=r"^plan:days:"))
     app.add_handler(CallbackQueryHandler(handle_checkin_callback, pattern=r"^ci:"))
+    app.add_handler(CallbackQueryHandler(handle_fridge_callback, pattern=r"^fridge:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
