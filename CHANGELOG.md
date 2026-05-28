@@ -2,6 +2,13 @@
 
 ## 2026-05-28
 
+### Improvement: /fridge scan shows ingredients grouped by category
+**Files**: `telegram_bot.py`
+
+**What**: The ingredient review message now groups detected items by food category instead of a flat comma-separated blob. `_fridge_scan_call` prompt changed to ask Claude to return categorized JSON (`proteins`, `grains`, `vegetables`, `dairy`, `fats`, `fruits`, `other`) instead of a flat array; return type changed from `list[str]` to `dict[str, list[str]]` with max_tokens bumped from 400 to 500. `_handle_fridge_photo` stores both the categorized dict (`ingredients_by_cat`) and a flat list (`ingredients`) in `command_state` — the flat list is used for recipe generation, the dict for display. `_fridge_review_text` updated to show items under their category emoji labels (e.g. "🥩 Proteins: eggs, chicken breast") with empty categories skipped and unrecognised items under "🗂 Other". All call sites updated.
+
+**Rollback**: Revert `telegram_bot.py` to previous commit.
+
 ### Feature: /fridge ingredient review UI — add missed items before recipes generate
 **Files**: `telegram_bot.py`
 

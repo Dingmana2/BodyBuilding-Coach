@@ -1577,12 +1577,20 @@ _FRIDGE_CATEGORIES: dict[str, dict] = {
 }
 
 
-def _fridge_review_text(ingredients: list[str], added: list[str]) -> str:
-    """Format the ingredient review message."""
-    detected = ", ".join(ingredients) if ingredients else "_Nothing detected — try a clearer photo_"
-    lines = ["🔍 *Fridge Scan — Review Ingredients*\n", f"📋 *Detected:* {detected}"]
+def _fridge_review_text(ingredients_by_cat: dict[str, list[str]], added: list[str]) -> str:
+    """Format the ingredient review message with items grouped by category."""
+    lines = ["🔍 *Fridge Scan — Review Ingredients*\n"]
+    total = sum(len(v) for v in ingredients_by_cat.values())
+    if total == 0:
+        lines.append("_Nothing detected — try a clearer photo_")
+    else:
+        for cat_key, cat_items in ingredients_by_cat.items():
+            if not cat_items:
+                continue
+            label = _FRIDGE_CATEGORIES[cat_key]["label"] if cat_key in _FRIDGE_CATEGORIES else "🗂 Other"
+            lines.append(f"{label}: {esc(', '.join(cat_items))}")
     if added:
-        lines.append(f"✅ *You added:* {', '.join(added)}")
+        lines.append(f"\n✅ *You added:* {esc(', '.join(added))}")
     lines.append("\nTap a category to add missing items, or just type them:")
     return "\n".join(lines)
 
@@ -1614,11 +1622,11 @@ def _fridge_items_keyboard(category: str, added: list[str]) -> InlineKeyboardMar
     return InlineKeyboardMarkup(rows)
 
 
-def _fridge_scan_call(img_b64: str) -> list[str]:
-    """Sync vision scan — returns list of spotted ingredient strings."""
+def _fridge_scan_call(img_b64: str) -> dict[str, list[str]]:
+    """Sync vision scan — returns ingredients grouped by category."""
     message = get_anthropic_client().messages.create(
         model=ANALYSIS_MODEL,
-        max_tokens=400,
+        max_tokens=500,
         timeout=60.0,
         messages=[{
             "role": "user",
@@ -1626,8 +1634,11 @@ def _fridge_scan_call(img_b64: str) -> list[str]:
                 {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": img_b64}},
                 {"type": "text", "text": (
                     "List every food item or ingredient you can see in this fridge/pantry photo. "
+                    "Group them by food category. "
                     "Return ONLY valid JSON, no explanation:\n"
-                    '{"ingredients_spotted": ["item1", "item2", "item3"]}'
+                    '{"proteins": ["eggs","chicken breast"], "grains": ["brown rice","oats"], '
+                    '"vegetables": ["broccoli","spinach"], "dairy": ["greek yogurt","cheddar"], '
+                    '"fats": ["olive oil","avocado"], "fruits": ["banana"], "other": ["hot sauce","soy sauce"]}'
                 )},
             ],
         }],
@@ -1635,8 +1646,11 @@ def _fridge_scan_call(img_b64: str) -> list[str]:
     raw = message.content[0].text
     json_match = re.search(r"\{[\s\S]*\}", raw)
     if not json_match:
-        return []
-    return json.loads(json_match.group()).get("ingredients_spotted", [])
+        return {}
+    data = json.loads(json_match.group())
+    # Keep only known category keys + "other"; normalise values to list[str]
+    valid_keys = set(_FRIDGE_CATEGORIES.keys()) | {"other"}
+    return {k: [str(i) for i in v] for k, v in data.items() if k in valid_keys and isinstance(v, list)}
 
 
 def _fridge_recipes_call(ingredients: list[str], diet_context: str) -> dict:
@@ -1702,7 +1716,7 @@ async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None
     msg = await update.effective_chat.send_message("🔍 Scanning your fridge for ingredients…")
 
     try:
-        ingredients = await asyncio.get_event_loop().run_in_executor(
+        ingredients_by_cat = await asyncio.get_event_loop().run_in_executor(
             None, _fridge_scan_call, img_b64
         )
     except Exception as e:
@@ -1712,16 +1726,18 @@ async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None
         )
         return
 
+    ingredients_flat = [item for items in ingredients_by_cat.values() for item in items]
     user["active_command"] = "fridge_reviewing"
     user["command_state"] = {
-        "ingredients": ingredients,
+        "ingredients": ingredients_flat,
+        "ingredients_by_cat": ingredients_by_cat,
         "added": [],
         "review_msg_id": msg.message_id,
     }
     _save_store()
 
     await msg.edit_text(
-        _fridge_review_text(ingredients, []),
+        _fridge_review_text(ingredients_by_cat, []),
         parse_mode="Markdown",
         reply_markup=_fridge_category_keyboard([]),
     )
@@ -1778,6 +1794,7 @@ async def handle_fridge_callback(update: Update, context: ContextTypes.DEFAULT_T
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
     state = user.get("command_state") or {}
+    ingredients_by_cat: dict[str, list[str]] = state.get("ingredients_by_cat", {})
     ingredients: list[str] = state.get("ingredients", [])
     added: list[str] = state.get("added", [])
     data = query.data  # e.g. "fridge:cat:proteins", "fridge:add:Tuna", "fridge:done"
@@ -1788,7 +1805,7 @@ async def handle_fridge_callback(update: Update, context: ContextTypes.DEFAULT_T
 
     if action == "cat":
         await query.edit_message_text(
-            _fridge_review_text(ingredients, added) + f"\n\n*{_FRIDGE_CATEGORIES[value]['label']}* — tap to add:",
+            _fridge_review_text(ingredients_by_cat, added) + f"\n\n*{_FRIDGE_CATEGORIES[value]['label']}* — tap to add:",
             parse_mode="Markdown",
             reply_markup=_fridge_items_keyboard(value, added),
         )
@@ -1807,13 +1824,13 @@ async def handle_fridge_callback(update: Update, context: ContextTypes.DEFAULT_T
         )
         if current_cat:
             await query.edit_message_text(
-                _fridge_review_text(ingredients, added) + f"\n\n*{_FRIDGE_CATEGORIES[current_cat]['label']}* — tap to add:",
+                _fridge_review_text(ingredients_by_cat, added) + f"\n\n*{_FRIDGE_CATEGORIES[current_cat]['label']}* — tap to add:",
                 parse_mode="Markdown",
                 reply_markup=_fridge_items_keyboard(current_cat, added),
             )
         else:
             await query.edit_message_text(
-                _fridge_review_text(ingredients, added),
+                _fridge_review_text(ingredients_by_cat, added),
                 parse_mode="Markdown",
                 reply_markup=_fridge_category_keyboard(added),
             )
@@ -1824,7 +1841,7 @@ async def handle_fridge_callback(update: Update, context: ContextTypes.DEFAULT_T
             user["command_state"]["added"] = []
             _save_store()
         await query.edit_message_text(
-            _fridge_review_text(ingredients, added),
+            _fridge_review_text(ingredients_by_cat, added),
             parse_mode="Markdown",
             reply_markup=_fridge_category_keyboard(added),
         )
@@ -2901,7 +2918,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     await context.bot.edit_message_text(
                         chat_id=chat_id,
                         message_id=review_msg_id,
-                        text=_fridge_review_text(state.get("ingredients", []), state["added"]),
+                        text=_fridge_review_text(state.get("ingredients_by_cat", {}), state["added"]),
                         parse_mode="Markdown",
                         reply_markup=_fridge_category_keyboard(state["added"]),
                     )
