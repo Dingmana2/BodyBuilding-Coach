@@ -626,7 +626,10 @@ def _profile_menu_keyboard(profile: dict) -> InlineKeyboardMarkup:
             InlineKeyboardButton(f"⚖️ Weight: {_val('weight')} kg", callback_data="prof:input:weight"),
         ],
         [
-            InlineKeyboardButton(f"📸 Physique: {_val('physique_analysis', 'on')}", callback_data="prof:f:physique_analysis"),
+            InlineKeyboardButton(
+                f"📸 Physique photos: {'✅ ON' if _val('physique_analysis', 'on') == 'on' else '🚫 OFF'} — tap to toggle",
+                callback_data="prof:toggle:physique_analysis",
+            ),
         ],
         [
             InlineKeyboardButton(f"🩹 Injuries: {_val('injuries')}", callback_data="prof:input:injuries"),
@@ -750,7 +753,6 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         "experience":        ["beginner", "intermediate", "advanced"],
         "days":              ["2", "3", "4", "5", "6"],
         "gender":            ["male", "female", "non-binary", "other"],
-        "physique_analysis": ["on", "off"],
     }
 
     def _current_summary() -> str:
@@ -776,6 +778,18 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
             user["command_state"] = {"field": field}
             _save_store()
             await query.edit_message_text(f"Type your *{esc(field)}* and send it:", parse_mode="Markdown")
+
+    elif action == "toggle":
+        field = parts[2] if len(parts) > 2 else ""
+        current = profile.get(field, "on")
+        profile[field] = "off" if current == "on" else "on"
+        user["profile"] = profile
+        _save_store()
+        await query.edit_message_text(
+            f"*Your Profile*\n{_current_summary()}\n\nTap a field to update it:",
+            parse_mode="Markdown",
+            reply_markup=_profile_menu_keyboard(profile),
+        )
 
     elif action == "v":
         field = parts[2] if len(parts) > 2 else ""
