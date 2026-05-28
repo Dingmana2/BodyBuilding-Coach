@@ -600,6 +600,98 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(_HELP_TEXT, parse_mode="Markdown")
 
 
+# ── Profile / Goals / Measurements inline-keyboard helpers ───────────────────
+
+def _profile_menu_keyboard(profile: dict) -> InlineKeyboardMarkup:
+    """Inline keyboard for /profile — each button shows the current value."""
+    def _val(field: str, default: str = "—") -> str:
+        return str(profile.get(field, default))
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"🎯 Goal: {_val('goal')}", callback_data="prof:f:goal"),
+            InlineKeyboardButton(f"📊 Exp: {_val('experience')}", callback_data="prof:f:experience"),
+        ],
+        [
+            InlineKeyboardButton(f"📅 Days/wk: {_val('days')}", callback_data="prof:f:days"),
+            InlineKeyboardButton(f"⚤ Gender: {_val('gender')}", callback_data="prof:f:gender"),
+        ],
+        [
+            InlineKeyboardButton(f"🎂 Age: {_val('age')}", callback_data="prof:input:age"),
+            InlineKeyboardButton(f"📏 Height: {_val('height')} cm", callback_data="prof:input:height"),
+            InlineKeyboardButton(f"⚖️ Weight: {_val('weight')} kg", callback_data="prof:input:weight"),
+        ],
+        [
+            InlineKeyboardButton(f"🌅 Chronotype: {_val('chronotype')}", callback_data="prof:f:chronotype"),
+            InlineKeyboardButton(f"📸 Physique: {_val('physique_analysis', 'on')}", callback_data="prof:f:physique_analysis"),
+        ],
+        [
+            InlineKeyboardButton(f"🩹 Injuries: {_val('injuries')}", callback_data="prof:input:injuries"),
+        ],
+        [
+            InlineKeyboardButton("✏️ Type custom (field=value)", callback_data="prof:custom"),
+        ],
+    ])
+
+
+def _goals_menu_keyboard(user: dict) -> InlineKeyboardMarkup:
+    """Inline keyboard for /goals — type selector and target inputs."""
+    goals_data = user.get("goals", [])
+    active = next((g for g in reversed(goals_data) if g.get("is_active")), None)
+    goal_type = active["goal_type"].title() if active else "—"
+
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton(f"📌 Current: {goal_type}", callback_data="goals:noop")],
+        [
+            InlineKeyboardButton("💪 Bulk", callback_data="goals:type:bulk"),
+            InlineKeyboardButton("✂️ Cut", callback_data="goals:type:cut"),
+            InlineKeyboardButton("🔄 Recomp", callback_data="goals:type:recomp"),
+        ],
+        [
+            InlineKeyboardButton("🏋️ Strength", callback_data="goals:type:strength"),
+            InlineKeyboardButton("🏆 Prep", callback_data="goals:type:prep"),
+            InlineKeyboardButton("❤️ Health", callback_data="goals:type:health"),
+        ],
+        [
+            InlineKeyboardButton("⚖️ Target weight", callback_data="goals:input:weight"),
+            InlineKeyboardButton("📉 Target body fat %", callback_data="goals:input:bf"),
+        ],
+        [
+            InlineKeyboardButton("📅 Target date (YYYY-MM-DD)", callback_data="goals:input:date"),
+        ],
+        [
+            InlineKeyboardButton("✏️ Type full command", callback_data="goals:custom"),
+        ],
+    ])
+
+
+def _measurements_menu_keyboard(last: dict | None) -> InlineKeyboardMarkup:
+    """Inline keyboard for /measurements — each button shows the last logged value."""
+    def _val(key: str) -> str:
+        if not last:
+            return "—"
+        v = last.get(key)
+        return str(v) if v is not None else "—"
+
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton(f"⚖️ Weight: {_val('body_weight_kg')} kg", callback_data="meas:input:weight"),
+            InlineKeyboardButton(f"📏 Waist: {_val('waist_cm')} cm", callback_data="meas:input:waist"),
+        ],
+        [
+            InlineKeyboardButton(f"🫀 Chest: {_val('chest_cm')} cm", callback_data="meas:input:chest"),
+            InlineKeyboardButton(f"🍑 Hips: {_val('hips_cm')} cm", callback_data="meas:input:hips"),
+        ],
+        [
+            InlineKeyboardButton(f"💪 Arm: {_val('left_arm_cm')} cm", callback_data="meas:input:arm"),
+            InlineKeyboardButton(f"🦵 Thigh: {_val('left_thigh_cm')} cm", callback_data="meas:input:thigh"),
+        ],
+        [
+            InlineKeyboardButton("✏️ Type multiple fields at once", callback_data="meas:custom"),
+        ],
+    ])
+
+
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
@@ -612,20 +704,9 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             else "Not set yet."
         )
         await update.message.reply_text(
-            f"*Your Profile:*\n{current}\n\n"
-            "Copy this line, fill in your info, and send it:\n"
-            "`/profile age=25 gender=male height=5'6\" weight=165lbs goal=bulk experience=beginner days=4`\n\n"
-            "Height: feet/inches *or* cm — `5'6\"` or `178cm`\n"
-            "Weight: lbs *or* kg — `165lbs` or `75kg`\n"
-            "Goals: `bulk` · `cut` · `recomp` · `strength` · `prep` · `health`\n"
-            "Experience: `beginner` · `intermediate` · `advanced`\n"
-            "Gender: anything — male, female, non-binary, etc.\n\n"
-            "Optional fields:\n"
-            "`/profile injuries=bad_left_knee` — improves plan safety\n"
-            "`/profile chronotype=morning` — morning/evening/intermediate (adjusts meal/training timing)\n"
-            "`/profile email=you@email.com` — for weekly coaching summaries\n"
-            "`/profile physique_analysis=off` — opt out of photo-based body scoring",
+            f"*Your Profile*\n{current}\n\nTap a field to update it:",
             parse_mode="Markdown",
+            reply_markup=_profile_menu_keyboard(profile),
         )
         return
 
@@ -648,6 +729,95 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "✅ Profile saved!\n\n"
         "Send a photo for physique analysis, or type /plan to get your plan now."
     )
+
+
+async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route prof:* callback queries for the /profile inline keyboard."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    profile = user["profile"]
+    data = query.data
+    parts = data.split(":", 3)
+    action = parts[1] if len(parts) > 1 else ""
+
+    _OPTIONS: dict[str, list[str]] = {
+        "goal":              ["bulk", "cut", "recomp", "strength", "prep", "health", "maintain"],
+        "experience":        ["beginner", "intermediate", "advanced"],
+        "days":              ["2", "3", "4", "5", "6"],
+        "gender":            ["male", "female", "non-binary", "other"],
+        "chronotype":        ["morning", "evening", "intermediate"],
+        "physique_analysis": ["on", "off"],
+    }
+
+    def _current_summary() -> str:
+        return "\n".join(f"• {k}: {v}" for k, v in profile.items()) or "Not set yet."
+
+    if action == "f":
+        field = parts[2] if len(parts) > 2 else ""
+        opts = _OPTIONS.get(field)
+        if opts:
+            rows = [
+                [InlineKeyboardButton(o.title(), callback_data=f"prof:v:{field}:{o}") for o in opts[i:i+3]]
+                for i in range(0, len(opts), 3)
+            ]
+            rows.append([InlineKeyboardButton("← Back", callback_data="prof:menu")])
+            await query.edit_message_reply_markup(InlineKeyboardMarkup(rows))
+        else:
+            user["active_command"] = "profile_input"
+            user["command_state"] = {"field": field}
+            _save_store()
+            await query.edit_message_text(f"Type your *{esc(field)}* and send it:", parse_mode="Markdown")
+
+    elif action == "v":
+        field = parts[2] if len(parts) > 2 else ""
+        value = parts[3] if len(parts) > 3 else ""
+        if field == "goal" and profile.get("goal") != value:
+            profile["goal_set_date"] = _today()
+        profile[field] = value
+        user["profile"] = profile
+        _save_store()
+        await query.edit_message_text(
+            f"*Your Profile*\n{_current_summary()}\n\nTap a field to update it:",
+            parse_mode="Markdown",
+            reply_markup=_profile_menu_keyboard(profile),
+        )
+
+    elif action == "input":
+        field = parts[2] if len(parts) > 2 else ""
+        user["active_command"] = "profile_input"
+        user["command_state"] = {"field": field}
+        _save_store()
+        _prompts = {
+            "age":     "Type your age (e.g. `28`):",
+            "height":  "Type your height (e.g. `5'10\"` or `178cm`):",
+            "weight":  "Type your weight (e.g. `85kg` or `188lbs`):",
+            "injuries": "Describe any injuries or pain areas (e.g. `bad left knee`):",
+            "email":   "Type your email address:",
+        }
+        await query.edit_message_text(
+            _prompts.get(field, f"Type your *{esc(field)}*:"),
+            parse_mode="Markdown",
+        )
+
+    elif action == "menu":
+        await query.edit_message_text(
+            f"*Your Profile*\n{_current_summary()}\n\nTap a field to update it:",
+            parse_mode="Markdown",
+            reply_markup=_profile_menu_keyboard(profile),
+        )
+
+    elif action == "custom":
+        user["active_command"] = "profile_input"
+        user["command_state"] = {"field": "_custom"}
+        _save_store()
+        await query.edit_message_text(
+            "Type one or more `field=value` pairs, e.g.:\n"
+            "`age=28 height=178cm weight=85kg`\n\n"
+            "Fields: goal, experience, days, gender, age, height, weight, injuries, chronotype, email, physique\\_analysis",
+            parse_mode="Markdown",
+        )
 
 
 async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1603,10 +1773,9 @@ async def cmd_measurements(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             current = "No measurements yet."
 
         await update.message.reply_text(
-            f"📏 *Measurements*\n{current}\n\n"
-            "Log measurements (supports lbs/kg and in/cm):\n"
-            "`/measurements weight=83kg waist=32in chest=42in arm=16in`",
+            f"📏 *Measurements*\n{current}\n\nTap a field to log it:",
             parse_mode="Markdown",
+            reply_markup=_measurements_menu_keyboard(last),
         )
         return
 
@@ -1652,6 +1821,47 @@ async def cmd_measurements(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         lines.append(f"• {label}: {val}{unit}{change}")
 
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+
+
+async def handle_measurements_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route meas:* callback queries for the /measurements inline keyboard."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    data = query.data
+    parts = data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+
+    _MEAS_PROMPTS = {
+        "weight": "Type your body weight (e.g. `83kg` or `185lbs`):",
+        "waist":  "Type your waist measurement (e.g. `32in` or `81cm`):",
+        "chest":  "Type your chest measurement (e.g. `42in` or `107cm`):",
+        "hips":   "Type your hips measurement (e.g. `38in` or `97cm`):",
+        "arm":    "Type your arm measurement (e.g. `16in` or `40cm`):",
+        "thigh":  "Type your thigh measurement (e.g. `24in` or `61cm`):",
+    }
+
+    if action == "input":
+        field = parts[2] if len(parts) > 2 else ""
+        user["active_command"] = "measurements_input"
+        user["command_state"] = {"field": field}
+        _save_store()
+        await query.edit_message_text(
+            _MEAS_PROMPTS.get(field, "Type the measurement:"),
+            parse_mode="Markdown",
+        )
+
+    elif action == "custom":
+        user["active_command"] = "measurements_input"
+        user["command_state"] = {"field": "_custom"}
+        _save_store()
+        await query.edit_message_text(
+            "Type all your measurements:\n"
+            "`weight=83kg waist=32in chest=42in arm=16in`\n\n"
+            "Supports kg/lbs and in/cm.",
+            parse_mode="Markdown",
+        )
 
 
 async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2561,32 +2771,26 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not context.args:
         goals_data = user.get("goals", [])
-        active = [g for g in goals_data if g.get("is_active")]
-        if not active:
-            await update.message.reply_text(
-                "🎯 *Goals*\nNo active goal set.\n\n"
-                "Set one:\n"
-                "`/goals set cut 10%bf by 2026-09-01`\n"
-                "`/goals set bulk 90kg by 2026-12-01`\n"
-                "`/goals set strength`",
-                parse_mode="Markdown",
-            )
-            return
-        g = active[-1]
-        target_parts = []
-        if g.get("target_weight_kg"):
-            target_parts.append(f"Weight: {g['target_weight_kg']}kg")
-        if g.get("target_bf_pct"):
-            target_parts.append(f"Body fat: {g['target_bf_pct']}%")
-        if g.get("target_date"):
-            from datetime import date as _date_cls
-            days_left = (_date_cls.fromisoformat(g["target_date"]) - _date_cls.today()).days
-            target_parts.append(f"Date: {g['target_date']} ({days_left} days away)")
-        target_str = " | ".join(target_parts) if target_parts else "No specific target"
+        active_goals = [g for g in goals_data if g.get("is_active")]
+        if active_goals:
+            g = active_goals[-1]
+            target_parts = []
+            if g.get("target_weight_kg"):
+                target_parts.append(f"Weight: {g['target_weight_kg']}kg")
+            if g.get("target_bf_pct"):
+                target_parts.append(f"Body fat: {g['target_bf_pct']}%")
+            if g.get("target_date"):
+                from datetime import date as _date_cls
+                days_left = (_date_cls.fromisoformat(g["target_date"]) - _date_cls.today()).days
+                target_parts.append(f"Date: {g['target_date']} ({days_left} days away)")
+            target_str = " | ".join(target_parts) if target_parts else "No specific target"
+            header = f"🎯 *Active Goal: {g['goal_type'].title()}*\n{target_str}\n\nChange it:"
+        else:
+            header = "🎯 *Goals*\nNo active goal set. Choose one:"
         await update.message.reply_text(
-            f"🎯 *Active Goal: {g['goal_type'].title()}*\n{target_str}\n\n"
-            "Update with `/goals set <type> <target>`",
+            header,
             parse_mode="Markdown",
+            reply_markup=_goals_menu_keyboard(user),
         )
         return
 
@@ -2645,6 +2849,70 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "`/goals set cut 10%bf by 2026-09-01`\n"
             "`/goals set bulk 90kg`\n"
             "`/goals set recomp`",
+            parse_mode="Markdown",
+        )
+
+
+async def handle_goals_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Route goals:* callback queries for the /goals inline keyboard."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    data = query.data
+    parts = data.split(":", 2)
+    action = parts[1] if len(parts) > 1 else ""
+
+    if action == "noop":
+        return
+
+    elif action == "type":
+        goal_type = parts[2] if len(parts) > 2 else "health"
+        for g in user.get("goals", []):
+            if g.get("is_active"):
+                g["is_active"] = False
+        new_goal: dict = {
+            "goal_type": goal_type,
+            "target_weight_kg": None,
+            "target_bf_pct": None,
+            "target_date": None,
+            "start_weight_kg": float(user["profile"].get("weight", 0) or 0) or None,
+            "created_at": _today(),
+            "is_active": True,
+        }
+        user.setdefault("goals", []).append(new_goal)
+        user["profile"]["goal"] = goal_type
+        user["profile"]["goal_set_date"] = _today()
+        _save_store()
+        await query.edit_message_text(
+            f"🎯 *Goal set to: {goal_type.title()}*\n\nAdd a target (optional):",
+            parse_mode="Markdown",
+            reply_markup=_goals_menu_keyboard(user),
+        )
+
+    elif action == "input":
+        field = parts[2] if len(parts) > 2 else ""
+        user["active_command"] = "goals_input"
+        user["command_state"] = {"field": field}
+        _save_store()
+        _prompts = {
+            "weight": "Type your target weight (e.g. `90kg` or `200lbs`):",
+            "bf":     "Type your target body fat % (e.g. `12`):",
+            "date":   "Type your target date (e.g. `2026-12-01`):",
+        }
+        await query.edit_message_text(
+            _prompts.get(field, "Type the value:"),
+            parse_mode="Markdown",
+        )
+
+    elif action == "custom":
+        user["active_command"] = "goals_input"
+        user["command_state"] = {"field": "_custom"}
+        _save_store()
+        await query.edit_message_text(
+            "Type your goal in full, e.g.:\n"
+            "`/goals set cut 10%bf by 2026-09-01`\n"
+            "`/goals set bulk 90kg`",
             parse_mode="Markdown",
         )
 
@@ -3203,6 +3471,150 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     )
                 except Exception:
                     pass
+        return
+
+    if active == "profile_input":
+        state = user.get("command_state") or {}
+        field = state.get("field", "")
+        if field == "_custom":
+            for arg in text.split():
+                if "=" in arg:
+                    k, _, v = arg.partition("=")
+                    k = k.strip().lower()
+                    v = v.strip()
+                    if k == "height":
+                        v = _parse_height(v)
+                    elif k == "weight":
+                        v = _parse_weight(v)
+                    elif k == "goal" and user["profile"].get("goal") != v:
+                        user["profile"]["goal_set_date"] = _today()
+                    user["profile"][k] = v
+        else:
+            value = text.strip()
+            if field == "height":
+                value = _parse_height(value)
+            elif field == "weight":
+                value = _parse_weight(value)
+            elif field == "goal" and user["profile"].get("goal") != value:
+                user["profile"]["goal_set_date"] = _today()
+            if field:
+                user["profile"][field] = value
+        user["active_command"] = None
+        user["command_state"] = {}
+        _save_store()
+        profile = user["profile"]
+        current = "\n".join(f"• {k}: {v}" for k, v in profile.items()) or "Not set yet."
+        await update.message.reply_text(
+            f"✅ *Profile updated!*\n\n{current}\n\nTap a field to change another:",
+            parse_mode="Markdown",
+            reply_markup=_profile_menu_keyboard(profile),
+        )
+        return
+
+    if active == "goals_input":
+        state = user.get("command_state") or {}
+        field = state.get("field", "")
+        user["active_command"] = None
+        user["command_state"] = {}
+        if field != "_custom":
+            goals_list = user.setdefault("goals", [])
+            active_goal = next((g for g in reversed(goals_list) if g.get("is_active")), None)
+            if not active_goal:
+                goal_type = user["profile"].get("goal", "health")
+                active_goal = {
+                    "goal_type": goal_type,
+                    "target_weight_kg": None,
+                    "target_bf_pct": None,
+                    "target_date": None,
+                    "start_weight_kg": float(user["profile"].get("weight", 0) or 0) or None,
+                    "created_at": _today(),
+                    "is_active": True,
+                }
+                goals_list.append(active_goal)
+            val = text.strip()
+            if field == "weight":
+                try:
+                    active_goal["target_weight_kg"] = float(_parse_weight(val) or val)
+                except (ValueError, TypeError):
+                    pass
+            elif field == "bf":
+                try:
+                    active_goal["target_bf_pct"] = float(val.replace("%", ""))
+                except ValueError:
+                    pass
+            elif field == "date":
+                if re.match(r"\d{4}-\d{2}-\d{2}", val):
+                    active_goal["target_date"] = val[:10]
+        _save_store()
+        await update.message.reply_text(
+            "🎯 *Goal updated!*\n\nTap to continue editing:",
+            parse_mode="Markdown",
+            reply_markup=_goals_menu_keyboard(user),
+        )
+        return
+
+    if active == "measurements_input":
+        state = user.get("command_state") or {}
+        field = state.get("field", "")
+        user["active_command"] = None
+        user["command_state"] = {}
+        _MEAS_FIELDS = {
+            "weight": "body_weight_kg",
+            "waist":  "waist_cm",
+            "chest":  "chest_cm",
+            "hips":   "hips_cm",
+            "arm":    "left_arm_cm",
+            "thigh":  "left_thigh_cm",
+        }
+        entry: dict = {"date": _today()}
+        if field == "_custom":
+            for arg in text.split():
+                if "=" not in arg:
+                    continue
+                k, _, v = arg.partition("=")
+                k = k.strip().lower().replace("-", "").replace("_", "")
+                db_key = _MEAS_FIELDS.get(k)
+                if not db_key:
+                    continue
+                parsed = _parse_logset_weight_kg(v) if db_key == "body_weight_kg" else _parse_measurement_cm(v)
+                if parsed is not None:
+                    entry[db_key] = parsed
+        else:
+            db_key = _MEAS_FIELDS.get(field)
+            if db_key:
+                parsed = _parse_logset_weight_kg(text.strip()) if db_key == "body_weight_kg" else _parse_measurement_cm(text.strip())
+                if parsed is not None:
+                    entry[db_key] = parsed
+        last_meas = user["measurements"][-1] if user["measurements"] else None
+        if len(entry) > 1:
+            prev_meas = last_meas
+            user["measurements"].append(entry)
+            user["measurements"] = user["measurements"][-100:]
+            _save_store()
+            lines = [f"✅ *Measurement saved ({_today()})*\n"]
+            for db_key, val in entry.items():
+                if db_key == "date":
+                    continue
+                label = db_key.replace("_cm", "").replace("_kg", "").replace("_", " ").title()
+                unit = "kg" if db_key == "body_weight_kg" else "cm"
+                change = ""
+                if prev_meas and db_key in prev_meas and prev_meas[db_key] is not None:
+                    diff = round(val - prev_meas[db_key], 1)
+                    if diff != 0:
+                        arrow = "▲" if diff > 0 else "▼"
+                        change = f" ({arrow} {abs(diff)}{unit})"
+                lines.append(f"• {label}: {val}{unit}{change}")
+            new_last = user["measurements"][-1]
+            await update.message.reply_text(
+                "\n".join(lines) + "\n\nLog another:",
+                parse_mode="Markdown",
+                reply_markup=_measurements_menu_keyboard(new_last),
+            )
+        else:
+            await update.message.reply_text(
+                "Couldn't parse that. Try `83kg`, `185lbs`, `32in`, or `81cm`.",
+                reply_markup=_measurements_menu_keyboard(last_meas),
+            )
         return
 
     # Workout keyboard — handle free-text input when user tapped "Type…" buttons
@@ -4223,6 +4635,9 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(handle_checkin_callback, pattern=r"^ci:"))
     app.add_handler(CallbackQueryHandler(handle_fridge_callback, pattern=r"^fridge:"))
     app.add_handler(CallbackQueryHandler(handle_delete_callback, pattern=r"^del:"))
+    app.add_handler(CallbackQueryHandler(handle_profile_callback, pattern=r"^prof:"))
+    app.add_handler(CallbackQueryHandler(handle_goals_callback, pattern=r"^goals:"))
+    app.add_handler(CallbackQueryHandler(handle_measurements_callback, pattern=r"^meas:"))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 

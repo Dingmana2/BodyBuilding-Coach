@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## 2026-05-28 (Sprint 3 — Inline Keyboard Button UIs)
+
+### Button-based entry for /profile, /goals, /measurements
+
+**Files**: `telegram_bot.py`
+
+**What changed:**
+- `/profile` (no args) now shows an inline keyboard with every field as a button displaying its current value. Fields with a fixed option set (goal, experience, days, gender, chronotype, physique_analysis) open a sub-menu of tap-able values. Free-text fields (age, height, weight, injuries, email) prompt the user to type. A "Type custom (field=value)" button preserves the old power-user syntax.
+- `/goals` (no args) now shows an inline keyboard with goal-type buttons (Bulk / Cut / Recomp / Strength / Prep / Health) and separate buttons to enter a target weight, body fat %, or target date. Tapping a goal type immediately activates that goal and syncs `profile.goal`. Each target button prompts for text input.
+- `/measurements` (no args) now shows an inline keyboard with each body-part measurement as a button showing the last logged value (or "—"). Tapping a button prompts for that specific measurement. A "Type multiple fields at once" button preserves batch syntax.
+- Three new `handle_*_callback` functions route `prof:`, `goals:`, `meas:` callback prefixes.
+- Three new helper functions: `_profile_menu_keyboard`, `_goals_menu_keyboard`, `_measurements_menu_keyboard`.
+- `handle_message` gains three new `active_command` branches: `profile_input`, `goals_input`, `measurements_input`.
+- Three new `CallbackQueryHandler` registrations in `main()`.
+
+**Rationale:** Users should not need to memorise `field=value` syntax for routine updates. Buttons lower friction for all skill levels while the "Type custom" fallback preserves power-user flexibility.
+
+**Rollback:** Revert the three `cmd_*` no-args blocks to their previous text-only replies and remove the three new handler functions and their `CallbackQueryHandler` registrations.
+
+---
+
 ## 2026-05-28 (Sprint 2 — Tiers 2–5 Full Rollout)
 
 ### Items 11–36 from expert panel backlog
