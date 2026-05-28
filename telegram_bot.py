@@ -57,6 +57,7 @@ def esc(text: str) -> str:
 # On Railway, mount a volume at /data and set DATA_DIR=/data in env vars.
 
 _STORE_PATH = Path(os.getenv("DATA_DIR", ".")) / "bot_state.json"
+_STORE_LOCK = __import__("threading").Lock()
 
 
 def _load_store() -> dict[int, dict]:
@@ -70,12 +71,13 @@ def _load_store() -> dict[int, dict]:
 
 
 def _save_store() -> None:
-    try:
-        tmp = _STORE_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(user_data, ensure_ascii=False), encoding="utf-8")
-        os.replace(tmp, _STORE_PATH)
-    except Exception as e:
-        print(f"Warning: could not save bot state: {e}")
+    with _STORE_LOCK:
+        try:
+            tmp = _STORE_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(user_data, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, _STORE_PATH)
+        except Exception as e:
+            print(f"Warning: could not save bot state: {e}")
 
 
 # In-memory store: chat_id → {profile, last_analysis, last_plan, conversation_history}
@@ -304,11 +306,12 @@ def _get_session_exercises(user: dict) -> list:
 # ── Check-in inline keyboard ──────────────────────────────────────────────────
 
 _STEP_LABELS: dict[str, tuple[str, str, str]] = {
-    "sleep":      ("😴", "Sleep quality",         "1=terrible, 10=perfect"),
-    "energy":     ("⚡", "Energy levels",         "1=drained, 10=energized"),
-    "soreness":   ("🤕", "Muscle soreness (DOMS)", "1=very sore, 10=fresh"),
-    "joint_pain": ("🦴", "Joint / sharp pain",    "1=painful, 10=pain-free"),
-    "stress":     ("🧠", "Stress level",           "1=very stressed, 10=calm"),
+    "sleep":      ("😴", "Sleep quality",          "1=terrible, 10=perfect"),
+    "energy":     ("⚡", "Energy levels",          "1=drained, 10=energized"),
+    "soreness":   ("🤕", "Muscle soreness (DOMS)",  "1=very sore, 10=fresh"),
+    "joint_pain": ("🦴", "Joint / sharp pain",     "1=painful, 10=pain-free"),
+    "stress":     ("🧠", "Stress level",            "1=very stressed, 10=calm"),
+    "motivation": ("🔥", "Motivation to train",    "1=zero motivation, 10=pumped"),
 }
 
 
@@ -461,42 +464,140 @@ def _sparkline(values: list[float]) -> str:
 WELCOME = (
     "⚡ *BodyBuilding Coach AI*\n\n"
     "Science-backed coaching for any age, any level, any goal.\n\n"
-    "*Getting started:*\n"
-    "/profile — Set your stats (age, weight, goal, etc.)\n"
-    "/plan — Generate full workout + diet + supplement plan\n"
-    "📸 Send a photo — physique analysis + plan\n\n"
-    "*Daily tracking:*\n"
-    "/checkin — Log sleep, energy, soreness → recovery score\n"
-    "/workout — Start/end a session · see today's plan\n"
-    "/log — Quick tap-based workout logger\n"
-    "/logset — Log a set: `/logset bench 100kg 8`\n"
-    "/weight — Quick weight log: `/weight 84.5`\n"
-    "/meal — Log food: `/meal 2 eggs, oatmeal, banana`\n"
-    "/macros — Today's macro targets vs. logged\n\n"
-    "*Progress & analytics:*\n"
-    "/progress — 30-day trend: weight, BF%, strength\n"
-    "/stats — Personal records + volume by muscle\n"
-    "/streak — Check-in streak + badges earned\n"
-    "/goals — Set/view your target (weight, BF%, date)\n"
-    "/measurements — Log body measurements\n"
-    "/weakpoints — AI analysis of training imbalances\n"
-    "/report — Weekly AI coaching report\n\n"
-    "*Other:*\n"
-    "/connect — Link Garmin or MyFitnessPal\n"
+    "Type /help for the full command list, or just start chatting!"
+)
+
+_HELP_TEXT = (
+    "⚡ *BodyBuilding Coach — Commands*\n\n"
+    "*📋 Setup*\n"
+    "/profile — Set age, weight, goal, injuries, etc.\n"
+    "/plan — Generate or view your workout + diet plan\n"
+    "📸 Send a photo — physique analysis\n\n"
+    "*🏋️ Logging*\n"
+    "/checkin — Daily check-in: sleep, energy, soreness, joints, motivation\n"
+    "/workout — Start / end a session\n"
+    "/log — Tap-based workout logger\n"
+    "/logset bench 100kg 8 — Quick set log\n"
+    "/meal 2 eggs oatmeal — Log food + estimate macros\n"
+    "/weight 84.5 — Log body weight\n"
+    "/measurements — Log body measurements\n\n"
+    "*📈 Progress & Analysis*\n"
+    "/stats — Personal records ranked by estimated 1RM\n"
+    "/progress — 30-day weight, PRs, recovery trend\n"
+    "/macros — Today's targets vs. logged\n"
+    "/weakpoints — AI imbalance analysis from training data\n"
+    "/report — Weekly AI coaching report\n"
+    "/streak — Check-in streak + badges\n"
+    "/goals — Set target weight / body fat / date\n"
+    "/research — Latest PubMed + community fitness insights\n\n"
+    "*⚙️ Settings & Integrations*\n"
+    "/connect — Link Garmin / MyFitnessPal\n"
     "/mfp sync — Sync today's MFP diary\n"
-    "/reminders — Set daily workout/check-in reminders\n"
-    "/research — Latest PubMed research highlights\n"
-    "/help — Show this message\n\n"
-    "💬 Chat anytime — tell me to update your plan, ask questions, or give feedback."
+    "/reminders — Set daily reminders\n"
+    "/units — Switch kg ↔ lbs\n"
+    "/freeze — Protect today's streak (1 per 30 days)\n"
+    "/fridge — Scan fridge photo → macro-matched recipes\n\n"
+    "*🔒 Privacy*\n"
+    "/privacy — View data policy\n"
+    "/export — Download all your data (JSON)\n"
+    "/delete\\_my\\_data — Erase all data permanently\n\n"
+    "💬 Chat anytime — ask questions or tell me to tweak your plan."
 )
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(WELCOME, parse_mode="Markdown")
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    # Returning user — show quick status
+    if user.get("profile"):
+        goal = user["profile"].get("goal", "?")
+        sessions = user.get("session_counter", 0)
+        checkins = len(user.get("checkins", []))
+        await update.message.reply_text(
+            f"👋 Welcome back!\n\n"
+            f"Goal: *{goal}* · Sessions logged: *{sessions}* · Check-ins: *{checkins}*\n\n"
+            f"Type /plan to see your plan, /checkin to log today, or /help for all commands.",
+            parse_mode="Markdown",
+        )
+        return
+
+    # New user — onboarding quiz
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💪 Build Muscle (Bulk)", callback_data="onboard:goal:bulk"),
+         InlineKeyboardButton("🔥 Lose Fat (Cut)", callback_data="onboard:goal:cut")],
+        [InlineKeyboardButton("⚖️ Recomposition", callback_data="onboard:goal:recomp"),
+         InlineKeyboardButton("🏋️ Strength", callback_data="onboard:goal:strength")],
+        [InlineKeyboardButton("🌱 General Health", callback_data="onboard:goal:health")],
+    ])
+    await update.message.reply_text(
+        "⚡ *Welcome to BodyBuilding Coach AI!*\n\n"
+        "Let's set up your profile in 3 quick questions.\n\n"
+        "*What's your main goal?*",
+        parse_mode="Markdown",
+        reply_markup=keyboard,
+    )
+
+
+async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle onboard:goal:X / onboard:exp:X / onboard:days:X inline keyboard steps."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+
+    parts = query.data.split(":")  # ["onboard", step, value]
+    step, value = parts[1], parts[2]
+
+    if step == "goal":
+        user.setdefault("profile", {})["goal"] = value
+        user["profile"]["goal_set_date"] = _today()
+        _save_store()
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌱 Beginner (< 1 year)", callback_data="onboard:exp:beginner"),
+             InlineKeyboardButton("💪 Intermediate (1-3 yrs)", callback_data="onboard:exp:intermediate")],
+            [InlineKeyboardButton("🏆 Advanced (3+ years)", callback_data="onboard:exp:advanced")],
+        ])
+        await query.edit_message_text(
+            f"✅ Goal set: *{value}*\n\n*What's your training experience?*",
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+
+    elif step == "exp":
+        user["profile"]["experience"] = value
+        _save_store()
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("2", callback_data="onboard:days:2"),
+             InlineKeyboardButton("3", callback_data="onboard:days:3"),
+             InlineKeyboardButton("4", callback_data="onboard:days:4")],
+            [InlineKeyboardButton("5", callback_data="onboard:days:5"),
+             InlineKeyboardButton("6", callback_data="onboard:days:6")],
+        ])
+        await query.edit_message_text(
+            f"✅ Experience: *{value}*\n\n*How many days per week can you train?*",
+            parse_mode="Markdown",
+            reply_markup=keyboard,
+        )
+
+    elif step == "days":
+        user["profile"]["days"] = value
+        _save_store()
+        await query.edit_message_text(
+            f"✅ Training days: *{value}/week*\n\n"
+            "🎉 *Profile set!*\n\n"
+            "Next steps:\n"
+            "• `/profile age=25 gender=male weight=80kg height=178cm` — add full stats for a personalised plan\n"
+            "• `/plan` — generate your workout + diet plan now\n"
+            "• 📸 Send a physique photo — AI body analysis\n"
+            "• `/checkin` — start your daily recovery tracking\n\n"
+            "_You can update any profile field anytime with /profile._",
+            parse_mode="Markdown",
+        )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(WELCOME, parse_mode="Markdown")
+    await update.message.reply_text(_HELP_TEXT, parse_mode="Markdown")
 
 
 async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -516,11 +617,14 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             "`/profile age=25 gender=male height=5'6\" weight=165lbs goal=bulk experience=beginner days=4`\n\n"
             "Height: feet/inches *or* cm — `5'6\"` or `178cm`\n"
             "Weight: lbs *or* kg — `165lbs` or `75kg`\n"
-            "Goals: `bulk` · `cut` · `recomp` · `maintain` · `health` · `performance`\n"
+            "Goals: `bulk` · `cut` · `recomp` · `strength` · `prep` · `health`\n"
             "Experience: `beginner` · `intermediate` · `advanced`\n"
             "Gender: anything — male, female, non-binary, etc.\n\n"
-            "Injuries/limitations (optional — improves plan safety):\n"
-            "`/profile injuries=bad_left_knee` or `/profile injuries=lower_back_pain`",
+            "Optional fields:\n"
+            "`/profile injuries=bad_left_knee` — improves plan safety\n"
+            "`/profile chronotype=morning` — morning/evening/intermediate (adjusts meal/training timing)\n"
+            "`/profile email=you@email.com` — for weekly coaching summaries\n"
+            "`/profile physique_analysis=off` — opt out of photo-based body scoring",
             parse_mode="Markdown",
         )
         return
@@ -534,6 +638,8 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 value = _parse_height(value)
             elif key == "weight":
                 value = _parse_weight(value)
+            elif key == "goal" and profile.get("goal") != value:
+                profile["goal_set_date"] = _today()
             profile[key] = value
 
     user["profile"] = profile
@@ -674,7 +780,7 @@ def _garmin_to_scores(garmin_data: dict, user: dict) -> dict[str, int]:
     # Stress — directly from Garmin
     stress = garmin_data.get("stress_score_1_10") or 6
 
-    return {"sleep": sleep, "energy": energy, "soreness": soreness, "joint_pain": 10, "stress": stress}
+    return {"sleep": sleep, "energy": energy, "soreness": soreness, "joint_pain": 10, "stress": stress, "motivation": 7}
 
 
 async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -843,6 +949,7 @@ async def _finish_checkin(
         tip = "Listen to your body and train accordingly today."
 
     joint_pain = data.get("joint_pain", 10)
+    motivation = data.get("motivation", 7)
     entry = {
         "date": _today(),
         "sleep_score": data["sleep"],
@@ -850,6 +957,7 @@ async def _finish_checkin(
         "soreness_score": data["soreness"],
         "joint_pain_score": joint_pain,
         "stress_score": data["stress"],
+        "motivation_score": motivation,
         "recovery_score": score,
         "coaching_tip": tip,
         "hrv_ms": garmin_data.get("hrv_ms") if garmin_data else None,
@@ -860,6 +968,12 @@ async def _finish_checkin(
     user["checkins"].append(entry)
     user["checkins"] = user["checkins"][-90:]
     _save_store()
+
+    # First check-in milestone hint
+    if len(user["checkins"]) == 1:
+        asyncio.create_task(update.effective_chat.send_message(
+            "💡 _First check-in done! Keep the streak going — /report after 7 days shows your weekly coaching summary._"
+        ))
 
     # Bridge to SQLite so build_context() and the web app can see bot check-ins
     try:
@@ -944,10 +1058,19 @@ async def _finish_checkin(
         nutr_display = nutrition_summary.replace("Nutrition today: ", "")
         nutrition_section = f"\n🍽️ *Nutrition:* {nutr_display}"
 
+    motivation_alert = ""
+    if motivation <= 3:
+        motivation_alert = "\n\n💤 _Motivation is low — this is normal. Show up anyway; the session will feel better once you start._"
+
+    # HRV methodology transparency
+    hrv_note = ""
+    if garmin_data and garmin_data.get("hrv_ms"):
+        hrv_note = "\n_HRV = 7-day rolling average (RMSSD, Garmin). Wearable sleep staging ≈70–80% accurate vs clinical polysomnography._"
+
     scores_line = (
         "\n📲 _Auto-filled from Garmin_"
         if auto_filled else
-        f"\n⚡ Energy: {data['energy']}/10  🤕 Soreness: {data['soreness']}/10  🦴 Joints: {joint_pain}/10"
+        f"\n⚡ Energy: {data['energy']}/10  🤕 Soreness: {data['soreness']}/10  🦴 Joints: {joint_pain}/10  🔥 Motivation: {motivation}/10"
     )
 
     await msg.edit_text(
@@ -955,7 +1078,7 @@ async def _finish_checkin(
         f"{bar} Recovery Score: *{score}/100*{streak_text}"
         f"{garmin_section}{load_section}{nutrition_section}"
         f"{scores_line}\n\n"
-        f"💡 _{tip}_{deload_hint}{joint_alert}{sleep_tip}",
+        f"💡 _{tip}_{deload_hint}{joint_alert}{motivation_alert}{sleep_tip}{hrv_note}",
         parse_mode="Markdown",
     )
 
@@ -1087,31 +1210,43 @@ async def cmd_logset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     if len(context.args) < 3:
         await update.message.reply_text(
-            "Usage: `/logset <exercise> <weight> <reps>`\n"
+            "Usage: `/logset <exercise> <weight> <reps> [rpe=N]`\n"
             "Examples:\n"
             "`/logset bench 100kg 8`\n"
-            "`/logset squat 225lbs 5`\n"
+            "`/logset squat 225lbs 5 rpe=8`\n"
             "`/logset deadlift 140 3`  ← bare number = kg",
             parse_mode="Markdown",
         )
         return
 
-    # Last arg = reps, second-to-last = weight, everything before = exercise name
+    # Optional trailing rpe=N argument
+    args = list(context.args)
+    rpe: float | None = None
+    if args and args[-1].lower().startswith("rpe="):
+        try:
+            rpe = float(args.pop(-1).split("=")[1])
+        except (ValueError, IndexError):
+            pass
+
+    if len(args) < 3:
+        await update.message.reply_text("Not enough arguments. Usage: `/logset bench 100kg 8`", parse_mode="Markdown")
+        return
+
     try:
-        reps = int(context.args[-1])
+        reps = int(args[-1])
     except ValueError:
-        await update.message.reply_text("Last argument must be the number of reps (e.g. `8`).", parse_mode="Markdown")
+        await update.message.reply_text("Reps must be a number (e.g. `8`).", parse_mode="Markdown")
         return
 
-    weight_kg = _parse_logset_weight_kg(context.args[-2])
+    weight_kg = _parse_logset_weight_kg(args[-2])
     if weight_kg is None:
-        await update.message.reply_text("Could not parse weight. Use formats like `100kg`, `225lbs`, or bare `100`.", parse_mode="Markdown")
+        await update.message.reply_text("Could not parse weight. Use `100kg`, `225lbs`, or bare `100`.", parse_mode="Markdown")
         return
 
-    exercise = " ".join(context.args[:-2]).title()
+    exercise = " ".join(args[:-2]).title()
     one_rm = epley_1rm(weight_kg, reps)
 
-    entry = {
+    entry: dict = {
         "exercise_name": exercise,
         "weight_kg": weight_kg,
         "reps": reps,
@@ -1119,14 +1254,24 @@ async def cmd_logset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         "date": _today(),
         "session_id": user["active_session_id"],
     }
-    user["set_logs"].append(entry)
-    user["set_logs"] = user["set_logs"][-500:]  # cap at 500 sets
+    if rpe is not None:
+        entry["rpe"] = rpe
 
-    # Track current session sets
+    # Weight-drop alert (≥10% below previous recorded weight for this exercise)
+    drop_alert = ""
+    prev_sets = [s for s in user["set_logs"] if s.get("exercise_name", "").lower() == exercise.lower()]
+    if prev_sets:
+        last_weight = prev_sets[-1].get("weight_kg", 0)
+        if last_weight > 0 and weight_kg < last_weight * 0.9:
+            pct = round((1 - weight_kg / last_weight) * 100)
+            drop_alert = f"\n\n⚠️ _{pct}% below your last logged weight for this exercise. If this wasn't intentional, check fatigue or technique._"
+
+    user["set_logs"].append(entry)
+    user["set_logs"] = user["set_logs"][-500:]
+
     if user["active_session_id"] is not None:
         user["command_state"].setdefault("current_session_sets", []).append(entry)
 
-    # Check for PR
     pr = user["prs"].get(exercise)
     is_pr = pr is None or one_rm > pr["estimated_1rm"]
     pr_text = ""
@@ -1134,10 +1279,16 @@ async def cmd_logset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         user["prs"][exercise] = {"weight_kg": weight_kg, "reps": reps, "estimated_1rm": one_rm, "date": _today()}
         pr_text = "\n🏆 *New PR!*"
 
+    rpe_text = f"  RPE {rpe}" if rpe is not None else ""
     _save_store()
+
+    # First set logged milestone hint
+    if len(user["set_logs"]) == 1:
+        drop_alert += "\n\n💡 _Tip: Use /stats after your session to see personal records by exercise._"
+
     await update.message.reply_text(
-        f"✅ *{exercise}* — {_wfmt(weight_kg, user)} × {reps} reps\n"
-        f"1RM estimate: ~{_wfmt(one_rm, user)} (Epley){pr_text}",
+        f"✅ *{exercise}* — {_wfmt(weight_kg, user)} × {reps} reps{rpe_text}\n"
+        f"1RM estimate: ~{_wfmt(one_rm, user)} (Epley){pr_text}{drop_alert}",
         parse_mode="Markdown",
     )
 
@@ -1386,6 +1537,36 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             photo_lines.append(f"  {dt}{angle_label}: {bf} BF | Score {score}/10{arrow}")
         lines.append("\n" + "\n".join(photo_lines))
 
+    # Longevity Score — composite from recent Garmin/checkin data
+    try:
+        import garmin_service as _gs
+        garmin_today = _gs.get_cached(chat_id)
+        if garmin_today:
+            ls_parts = []
+            hrv = garmin_today.get("hrv_ms", 0) or 0
+            rhr = garmin_today.get("resting_hr_bpm", 0) or 0
+            sleep_hrs = garmin_today.get("sleep_duration_hrs", 0) or 0
+            steps = garmin_today.get("steps_yesterday", 0) or 0
+            vo2 = garmin_today.get("vo2_max", 0) or 0
+            # Simple 0-100 composite (each metric 0-20)
+            hrv_score = min(20, round(hrv / 100 * 20)) if hrv else 0
+            rhr_score = min(20, max(0, round((80 - rhr) / 30 * 20))) if rhr else 0
+            sleep_score = min(20, round(sleep_hrs / 9 * 20)) if sleep_hrs else 0
+            steps_score = min(20, round(steps / 10000 * 20)) if steps else 0
+            vo2_score = min(20, round(vo2 / 55 * 20)) if vo2 else 0
+            longevity_score = hrv_score + rhr_score + sleep_score + steps_score + vo2_score
+            if longevity_score > 0:
+                lines.append(
+                    f"\n🫀 *Longevity Score (today):* {longevity_score}/100\n"
+                    f"  HRV {hrv:.0f}ms | RHR {rhr}bpm | Sleep {sleep_hrs:.1f}h | "
+                    f"Steps {steps:,} | VO2max {vo2:.0f}"
+                    if vo2 else
+                    f"\n🫀 *Longevity Score (today):* {longevity_score}/100\n"
+                    f"  HRV {hrv:.0f}ms | RHR {rhr}bpm | Sleep {sleep_hrs:.1f}h | Steps {steps:,}"
+                )
+    except Exception:
+        pass
+
     if len(lines) == 2:
         lines.append("\nLog workouts with `/workout start` + `/logset`, check in daily with `/checkin`, and track weight with `/measurements weight=83kg`.")
 
@@ -1569,7 +1750,12 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if items:
         items_text = f"\n_{', '.join(items)}_\n"
 
-    source_note = "" if macros.get("source") == "nutritionix" else " _(estimated)_"
+    if macros.get("source") == "nutritionix":
+        source_note = ""
+    else:
+        conf = macros.get("confidence", "medium")
+        conf_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}.get(conf, "🟡")
+        source_note = f" _{conf_emoji} AI estimate ({conf} confidence)_"
     await msg.edit_text(
         f"✅ *Meal logged!*{items_text}\n"
         f"{macros['calories']} kcal | P: {macros['protein_g']}g | C: {macros['carbs_g']}g | F: {macros['fat_g']}g{source_note}\n\n"
@@ -2555,9 +2741,37 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         if focus:
             reply += f"🎯 *Next Week Focus:* {focus}\n"
         if adherence:
-            reply += f"📈 *Adherence:* {adherence}"
+            reply += f"📈 *Adherence:* {adherence}\n"
 
-        await msg.edit_text(reply, parse_mode="Markdown")
+        # Phase transition warning — after 10+ weeks on same goal
+        goal_set_date = user.get("profile", {}).get("goal_set_date")
+        if goal_set_date:
+            weeks_on_goal = (_date.today() - _date.fromisoformat(goal_set_date)).days // 7
+            if weeks_on_goal >= 10:
+                current_goal = user.get("profile", {}).get("goal", "current")
+                reply += (
+                    f"\n\n📅 *Phase Check:* You've been on a *{current_goal}* phase for ~{weeks_on_goal} weeks. "
+                    "Consider evaluating whether to switch phases — extended cuts risk muscle loss, "
+                    "extended bulks increase fat gain. Reply to discuss or type `/plan new` to regenerate."
+                )
+
+        # Micronutrient reminder after 3+ consecutive deficit weeks
+        if user.get("profile", {}).get("goal") in ("cut", "recomp"):
+            recent_weights_sorted = sorted(
+                [(m["date"], m["body_weight_kg"]) for m in user.get("measurements", []) if m.get("body_weight_kg")],
+                key=lambda x: x[0],
+            )
+            if len(recent_weights_sorted) >= 2:
+                cutoff_3w = str(_date.today() - timedelta(days=21))
+                recent_3w = [w for w in recent_weights_sorted if w[0] >= cutoff_3w]
+                if len(recent_3w) >= 2 and recent_3w[-1][1] < recent_3w[0][1]:
+                    reply += (
+                        "\n\n🥦 *Micronutrient reminder:* You've been in a deficit for 3+ weeks. "
+                        "Consider a nutrient-dense refeed day (higher carbs, prioritise leafy greens, "
+                        "legumes, nuts, and colourful vegetables) to top up vitamins and minerals."
+                    )
+
+        await msg.edit_text(reply[:4096], parse_mode="Markdown")
     except Exception as e:
         await msg.edit_text(f"❌ Report generation failed: {e}")
 
@@ -2790,6 +3004,24 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         img_b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
         await _handle_fridge_photo(update, user, img_b64)
         return
+
+    # Body image sensitivity check — skip physique analysis if user opted out
+    if user.get("profile", {}).get("physique_analysis", "on").lower() == "off":
+        await update.message.reply_text(
+            "📸 Physique analysis is currently *off* for your account.\n\n"
+            "To enable: `/profile physique_analysis=on`",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Angle suggestion for single-photo submissions (first analysis only)
+    analyses_count = len(user.get("analyses", []))
+    if not update.message.media_group_id and analyses_count == 0:
+        await update.message.reply_text(
+            "📐 _For the most accurate analysis, send front + back + side photos as one album._\n"
+            "_(Analysing this photo now — send more angles any time.)_",
+            parse_mode="Markdown",
+        )
 
     # Album (media group) — buffer all photos then analyze together
     media_group_id = update.message.media_group_id
@@ -3193,8 +3425,8 @@ def _analyze_photo(images_b64: list[str], profile: dict, prev: dict | None = Non
         '    "body_fat_confidence": "medium",\n'
         '    "overall_physique_score": 7.2,\n'
         '    "muscle_development": {\n'
-        '        "chest": {"score": 7, "notes": "Good upper chest, lower needs work"},\n'
-        '        "back": {"score": 6, "notes": "Width decent, thickness lacking"}\n'
+        '        "chest": {"score": 7, "notes": "Good upper chest, lower needs work", "action": "Add 2 sets incline DB press; focus on full stretch at bottom"},\n'
+        '        "back": {"score": 6, "notes": "Width decent, thickness lacking", "action": "Add 3 sets barbell row; increase dead-hang pull-up volume"}\n'
         '    },\n'
         '    "strengths": ["Good shoulder-to-waist ratio", "Chest fullness"],\n'
         '    "areas_to_improve": ["Leg development", "Overall conditioning"],\n'
@@ -3273,14 +3505,25 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         "(2) include prebiotic/high-fiber foods (garlic, onion, oats, legumes, bananas); "
         "(3) populate the gut_health_note field with 1–2 sentences specific to this athlete's goal; "
         "(4) flag any patterns likely to impair gut health (excess alcohol, low fiber, ultra-processed foods).\n\n"
+        "WARM-UP: every training day MUST include a 5-minute warm-up block in the 'warmup' field — "
+        "at least 2 specific warm-up exercises (e.g. band pull-aparts, hip circles, light goblet squats).\n\n"
+        "CARDIO: include 'zone2_cardio' in workout — recommend 2-3 sessions per week of 25-40 min "
+        "Zone 2 (conversational pace, 60-70% max HR) for cardiovascular health and fat oxidation. "
+        "Adjust volume based on goal (more for cut/recomp, less for pure bulk/strength).\n\n"
+        "MACROS: provide BOTH training-day and rest-day macro variants in the diet section. "
+        "Training days: higher carbs. Rest days: slightly lower carbs, same protein.\n\n"
+        "SUPPLEMENTS: always include Beta-Alanine (grade B) at priority 4 — "
+        "3.2-6.4g/day for high-rep work (endurance/hypertrophy), causes tingling harmless paresthesia.\n\n"
         "Return ONLY valid JSON:\n"
         "{\n"
         '    "workout": {\n'
         '        "split": "4-Day Upper/Lower",\n'
+        '        "zone2_cardio": "2× 30 min at conversational pace (walking, cycling, light rowing) on rest days",\n'
         '        "days": [\n'
         '            {\n'
         '                "day": "Monday",\n'
         '                "focus": "Upper Push",\n'
+        '                "warmup": "5 min: 15 band pull-aparts, 10 shoulder circles each arm, 10 scapular push-ups",\n'
         '                "exercises": [\n'
         '                    {"name": "Barbell Bench Press", "sets": 4, "reps": "6-8", "rest": "3min", "notes": "Full ROM, 2-sec descent"},\n'
         '                    {"name": "Incline Dumbbell Press", "sets": 3, "reps": "8-10", "rest": "2min", "notes": "Focus on upper chest stretch"},\n'
@@ -3298,6 +3541,8 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         '        "protein_g": 180,\n'
         '        "carbs_g": 320,\n'
         '        "fat_g": 78,\n'
+        '        "training_day_macros": "protein=180g, carbs=350g, fat=78g (2900 kcal)",\n'
+        '        "rest_day_macros": "protein=180g, carbs=220g, fat=78g (2250 kcal)",\n'
         '        "rationale": "Why these exact numbers for this athlete",\n'
         '        "meal_timing": "Pre/post workout nutrition guidance",\n'
         '        "sample_meals": ["Breakfast: ...", "Lunch: ...", "Dinner: ..."],\n'
@@ -3309,9 +3554,10 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         '        {"priority": 1, "name": "Creatine Monohydrate", "dose": "5g daily", "timing": "Anytime", "grade": "A", "benefit": "5-15% strength gains. Most evidence-backed supplement."},\n'
         '        {"priority": 2, "name": "Whey Protein", "dose": "25-40g per serving", "timing": "Post-workout or to hit daily protein", "grade": "A", "benefit": "High leucine triggers muscle protein synthesis."},\n'
         '        {"priority": 3, "name": "Caffeine", "dose": "200-400mg", "timing": "30-45min pre-workout", "grade": "A", "benefit": "Increases power output, reduces perceived exertion."},\n'
-        '        {"priority": 4, "name": "Vitamin D3 + K2", "dose": "3000 IU D3 + 100mcg K2", "timing": "With a fat-containing meal", "grade": "B", "benefit": "Supports testosterone, bone density, immunity."},\n'
-        '        {"priority": 5, "name": "Omega-3 Fish Oil", "dose": "2-3g EPA+DHA", "timing": "With meals", "grade": "B", "benefit": "Reduces DOMS, supports joint health."},\n'
-        '        {"priority": 6, "name": "Magnesium Glycinate", "dose": "300-400mg", "timing": "Before bed", "grade": "B", "benefit": "Improves sleep quality and recovery."}\n'
+        '        {"priority": 4, "name": "Beta-Alanine", "dose": "3.2-6.4g daily", "timing": "Split into 2-3 doses to reduce tingling", "grade": "B", "benefit": "Buffers lactic acid in high-rep sets; best for hypertrophy/endurance work."},\n'
+        '        {"priority": 5, "name": "Vitamin D3 + K2", "dose": "3000 IU D3 + 100mcg K2", "timing": "With a fat-containing meal", "grade": "B", "benefit": "Supports testosterone, bone density, immunity."},\n'
+        '        {"priority": 6, "name": "Omega-3 Fish Oil", "dose": "2-3g EPA+DHA", "timing": "With meals", "grade": "B", "benefit": "Reduces DOMS, supports joint health."},\n'
+        '        {"priority": 7, "name": "Magnesium Glycinate", "dose": "300-400mg", "timing": "Before bed", "grade": "B", "benefit": "Improves sleep quality and recovery."}\n'
         '    ],\n'
         '    "coaching": {\n'
         '        "top_priority": "The single most impactful change for this athlete",\n'
@@ -3591,6 +3837,49 @@ async def cmd_export(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def cmd_peakweek(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Generate a contest peak week protocol (water/sodium taper, carb load, posing schedule)."""
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    profile = user.get("profile", {})
+
+    if profile.get("goal", "").lower() not in ("prep", "cut"):
+        await update.message.reply_text(
+            "⚠️ /peakweek is designed for athletes in contest prep or a final cut.\n\n"
+            "Set your goal first: `/profile goal=prep`",
+            parse_mode="Markdown",
+        )
+        return
+
+    msg = await update.message.reply_text("🏆 Generating peak week protocol…")
+    try:
+        prompt = (
+            "Generate a 7-day peak week protocol for a competitive physique athlete. "
+            f"Profile: {json.dumps(profile)}\n\n"
+            "Include: daily water intake (litres), sodium intake (mg), carbohydrate intake (g), "
+            "training recommendations, and a posing practice schedule (15 min/day minimum). "
+            "Structure as a day-by-day plan (Day 1 = 7 days out, Day 7 = show day). "
+            "Be specific with numbers. Format as clear markdown with daily sections."
+        )
+        resp = get_anthropic_client().messages.create(
+            model=ANALYSIS_MODEL,
+            max_tokens=2000,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        protocol = resp.content[0].text.strip()
+        # Send in chunks to avoid Telegram 4096-char limit
+        for i in range(0, len(protocol), 4000):
+            if i == 0:
+                await msg.edit_text(
+                    f"🏆 *Peak Week Protocol*\n\n{protocol[i:i+4000]}",
+                    parse_mode="Markdown",
+                )
+            else:
+                await update.effective_chat.send_message(protocol[i:i+4000], parse_mode="Markdown")
+    except Exception as e:
+        await msg.edit_text(f"❌ Peak week generation failed: {e}")
+
+
 async def cmd_freeze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Protect today's streak with a freeze (once per 30 days)."""
     chat_id = update.effective_chat.id
@@ -3650,6 +3939,7 @@ def _format_analysis(a: dict) -> str:
     muscle = a.get("muscle_development", {})
     muscle_lines = "\n".join(
         f"  {k.capitalize()}: {v.get('score', '?')}/10 — {v.get('notes', '')}"
+        + (f"\n    → _{v['action']}_" if v.get("action") else "")
         for k, v in muscle.items()
         if v.get("score") is not None
     )
@@ -3688,16 +3978,20 @@ async def _send_plan(update: Update, plan: dict) -> None:
     days_text = ""
     for day in workout.get("days", []):
         exercises = day.get("exercises", [])
+        warmup = day.get("warmup", "")
         if not exercises:
             days_text += f"\n*{day['day']} — {day.get('focus', '')}*\n    _(No exercises — type `/plan new` to regenerate)_\n"
             continue
+        warmup_line = f"\n    🔥 _Warm-up: {warmup}_" if warmup else ""
         ex_lines = "\n".join(
             f"    • {e['name']}: {e['sets']}×{e['reps']} — rest {e.get('rest', '')} | {e.get('notes', '')}"
             for e in exercises
         )
-        days_text += f"\n*{day['day']} — {day.get('focus', '')}*\n{ex_lines}\n"
+        days_text += f"\n*{day['day']} — {day.get('focus', '')}*{warmup_line}\n{ex_lines}\n"
 
-    # Build one button per training day so the user can tap to start that day's workout
+    zone2 = workout.get("zone2_cardio", "")
+    zone2_line = f"\n🫀 *Zone 2 Cardio:* _{zone2}_" if zone2 else ""
+
     plan_days = workout.get("days", [])
     day_buttons = [
         [InlineKeyboardButton(
@@ -3712,7 +4006,8 @@ async def _send_plan(update: Update, plan: dict) -> None:
         f"🏋️ *Workout — {workout.get('split', '')}*\n"
         f"{days_text}\n"
         f"📈 *Progression:* {workout.get('progression', '')}\n"
-        f"🔄 *Deload:* {workout.get('deload', '')}",
+        f"🔄 *Deload:* {workout.get('deload', '')}"
+        f"{zone2_line}",
         parse_mode="Markdown",
         reply_markup=day_keyboard,
     )
@@ -3744,12 +4039,19 @@ async def _send_plan(update: Update, plan: dict) -> None:
             f"deficiencies and metabolic adaptation. If you're experiencing restrictive eating "
             f"patterns, please speak with a registered dietitian or healthcare provider."
         )
+    training_macros = diet.get("training_day_macros", "")
+    rest_macros = diet.get("rest_day_macros", "")
+    macro_variants = ""
+    if training_macros and rest_macros:
+        macro_variants = f"\n🏋️ _Training days:_ {training_macros}\n😴 _Rest days:_ {rest_macros}"
+
     await send(
         f"🥗 *Diet Plan*\n\n"
-        f"Calories: *{diet.get('calories', '?')} kcal*\n"
+        f"Calories: *{diet.get('calories', '?')} kcal* (avg)\n"
         f"Protein: *{diet.get('protein_g', '?')}g* | "
         f"Carbs: *{diet.get('carbs_g', '?')}g* | "
-        f"Fat: *{diet.get('fat_g', '?')}g*\n\n"
+        f"Fat: *{diet.get('fat_g', '?')}g*"
+        f"{macro_variants}\n\n"
         f"_{diet.get('rationale', '')}_\n\n"
         f"*Meal Timing:*\n{diet.get('meal_timing', '')}\n\n"
         f"*Sample Day:*\n{meals}\n\n"
@@ -3778,7 +4080,9 @@ async def _send_plan(update: Update, plan: dict) -> None:
         f"🧘 *Stress:* {coaching.get('stress', '')}\n\n"
         f"📊 *Tracking:* {coaching.get('tracking', '')}\n\n"
         f"📅 *12-Week Outlook:* {coaching.get('expectations', '')}\n\n"
-        f"_{coaching.get('coach_message', '')}_",
+        f"_{coaching.get('coach_message', '')}_\n\n"
+        f"_⚠️ AI-generated plan — adjust based on how your body responds. "
+        f"If anything feels wrong, trust your body and consult a coach or physio._",
         parse_mode="Markdown",
     )
 
@@ -3912,6 +4216,8 @@ def main() -> None:
     app.add_handler(CommandHandler("delete_my_data", cmd_delete_my_data))
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("freeze", cmd_freeze))
+    app.add_handler(CommandHandler("peakweek", cmd_peakweek))
+    app.add_handler(CallbackQueryHandler(handle_onboard_callback, pattern=r"^onboard:"))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(CallbackQueryHandler(handle_plan_days_callback, pattern=r"^plan:days:"))
     app.add_handler(CallbackQueryHandler(handle_checkin_callback, pattern=r"^ci:"))
@@ -3958,6 +4264,7 @@ def main() -> None:
             BotCommand("delete_my_data",  "Permanently delete all your data"),
             BotCommand("export",          "Download your full data as JSON"),
             BotCommand("freeze",          "Protect today's streak (1 per 30 days)"),
+            BotCommand("peakweek",        "Contest peak week protocol (prep/cut only)"),
         ])
 
         _scheduler.add_job(

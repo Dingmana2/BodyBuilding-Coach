@@ -1,5 +1,49 @@
 # CHANGELOG
 
+## 2026-05-28 (Sprint 2 — Tiers 2–5 Full Rollout)
+
+### Items 11–36 from expert panel backlog
+
+**Files**: `telegram_bot.py`, `claude_service.py`
+
+**Tier 2 — Coaching quality:**
+- **Warm-up protocols** — every `/plan` day now includes a `warmup` field; displayed in plan output
+- **Zone 2 cardio** — `zone2_cardio` added to all generated plans and displayed in workout section
+- **Training-day vs rest-day macros** — `training_day_macros` / `rest_day_macros` fields in plan diet; shown in `/plan` output
+- **Beta-alanine** — added as priority 4 supplement (Grade B) in all generated plans
+- **AI confidence note** — coaching section of every plan ends with "AI-generated — adjust based on how your body responds"
+- **Motivation score** — 6th step added to `/checkin` ("Motivation to train 1-10"); stored as `motivation_score`; low-motivation alert when ≤ 3
+- **Body image sensitivity toggle** — `/profile physique_analysis=off` to opt out of photo analysis; angle suggestion shown on first single-photo submission
+
+**Tier 3 — Coaching depth:**
+- **RPE/RIR in set logs** — `/logset bench 100kg 8 rpe=8` now accepted; stored in set log entry
+- **Weight-drop alert** — when logged weight ≥10% below previous for same exercise, bot shows a warning note
+- **Phase transition warning** — weekly `/report` flags if athlete has been on same goal ≥10 weeks
+- **`goal_set_date`** — stored in profile whenever goal changes; used for phase transition check
+- **Micronutrient reminder** — `/report` adds refeed reminder when cut/recomp user has been losing weight for 3+ weeks
+- **Sleep chronotype field** — `/profile chronotype=morning` accepted; documented in profile help
+- **Food logging confidence** — `/meal` now shows 🟢/🟡/🔴 AI confidence level on estimated macros
+- **HRV methodology note** — check-in output clarifies "7-day rolling average (RMSSD)" when HRV present
+- **Wearable accuracy disclaimer** — appended to check-in when Garmin data used
+
+**Tier 4 — UX:**
+- **`/start` onboarding quiz** — new users get a 3-step inline keyboard: goal → experience → training days; returning users see quick-stats summary
+- **`handle_onboard_callback`** — handles `onboard:goal:X`, `onboard:exp:X`, `onboard:days:X`
+- **Contextual hints** — first set log shows /stats tip; first check-in shows /report tip
+- **Physique scores with action** — `_analyze_photo` prompt now requests an `action` field per muscle; displayed in analysis output
+- **Explicit angle prompt** — on first single-photo physique submission, bot suggests "send front + back + side as album"
+- **`/help` redesign** — `cmd_help` uses new `_HELP_TEXT` with 5 categorised sections (Setup / Logging / Progress / Settings / Privacy)
+
+**Tier 5 — Architecture / features:**
+- **Write lock on `_save_store()`** — `threading.Lock` prevents concurrent write corruption
+- **Longevity Score** — `/progress` now shows a 0-100 composite metric (HRV, RHR, sleep, steps, VO2max) when Garmin data is available
+- **Contest Prep goal** — `prep` added as a valid goal in profile help text; gates `/peakweek`
+- **`/peakweek` command** — generates a 7-day contest peak week protocol (water taper, sodium, carb load, posing schedule); only available for `prep`/`cut` goal users
+- **Email + chronotype fields** — documented in `/profile` help; stored as arbitrary profile keys
+- **`crypto_utils.py`** — already uses separate `ENCRYPTION_KEY` env var (not derived from bot token) — no change needed
+
+**Rollback**: Revert `_STEP_LABELS` (remove motivation); remove `handle_onboard_callback` and new command handlers; revert `_build_plan_prompt`, `_send_plan`, `_analyze_photo`, `cmd_report`, `cmd_meal`; remove `/peakweek`, `/help` redesign, longevity score from `/progress`; revert `_save_store` lock.
+
 ## 2026-05-28 (Sprint 1 — Safety & Quick Wins)
 
 ### Items 1–10 from expert panel backlog

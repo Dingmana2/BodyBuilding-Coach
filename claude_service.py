@@ -454,17 +454,25 @@ Fill in ALL fields with real, specific data for THIS athlete. Make the workout p
 
 
 def estimate_meal_macros(description: str) -> dict:
-    """Haiku estimates calories/protein/carbs/fat from a plain-text food description."""
+    """Haiku estimates calories/protein/carbs/fat from a plain-text food description.
+
+    Returns a dict including a 'confidence' field: 'high' | 'medium' | 'low'.
+    - high: specific foods with known weights/portions
+    - medium: recognisable foods but vague amounts
+    - low: unusual or ambiguous description
+    """
     message = _client().messages.create(
         model=SUMMARY_MODEL,
-        max_tokens=200,
+        max_tokens=250,
         messages=[{
             "role": "user",
             "content": (
                 f'Estimate the macros for this meal: "{description}"\n\n'
+                "Also rate your confidence: 'high' if portions are specific, "
+                "'medium' if recognisable but vague amounts, 'low' if unusual/ambiguous.\n\n"
                 "Return ONLY valid JSON — no other text:\n"
                 '{"calories": 520, "protein_g": 45.0, "carbs_g": 48.0, "fat_g": 10.0, '
-                '"source": "estimated"}'
+                '"confidence": "medium", "source": "estimated"}'
             ),
         }],
     )
