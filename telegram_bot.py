@@ -3160,53 +3160,13 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 
 async def cmd_billing(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Show subscription tier and upgrade info."""
-    chat_id = update.effective_chat.id
-    user = get_user(chat_id)
-    tier = user.get("subscription_tier", "free")
-
-    tier_labels = {"free": "Free", "pro": "Pro ($19.99/mo)", "elite": "Elite ($49.99/mo)"}
-    tier_label = tier_labels.get(tier, tier.capitalize())
-
-    pro_features = [
-        "Unlimited AI photo analyses",
-        "Weekly AI coaching report (/report)",
-        "Garmin / MFP sync",
-        "Progressive overload suggestions after sessions",
-        "Weak-point analysis (/weakpoints)",
-        "Meal logging with macro lookup",
-        "Full bot access (all commands)",
-    ]
-    elite_extras = [
-        "Daily AI coaching messages",
-        "Competition prep mode",
-        "Before/after photo comparison",
-        "PDF progress reports",
-        "Priority analysis queue",
-    ]
-
-    if tier == "free":
-        pro_list = "\n".join(f"✅ {f}" for f in pro_features)
-        await update.message.reply_text(
-            f"💳 *Your Plan: {tier_label}*\n\n"
-            f"*Pro features you're missing:*\n{pro_list}\n\n"
-            f"*Upgrade to Pro — $19.99/month*\n"
-            f"Visit the web app → Profile → Billing to upgrade.",
-            parse_mode="Markdown",
-        )
-    elif tier == "pro":
-        elite_list = "\n".join(f"✅ {f}" for f in elite_extras)
-        await update.message.reply_text(
-            f"💳 *Your Plan: {tier_label}*\n\n"
-            f"*Elite extras available:*\n{elite_list}\n\n"
-            f"Visit the web app → Profile → Billing to upgrade to Elite.",
-            parse_mode="Markdown",
-        )
-    else:
-        await update.message.reply_text(
-            f"💳 *Your Plan: {tier_label}*\n\nYou have full access to all features. Thank you! 🏆",
-            parse_mode="Markdown",
-        )
+    """Placeholder — billing is being reworked into a partner model."""
+    await update.message.reply_text(
+        "💳 *Billing & Partnerships*\n\n"
+        "All features are currently available to everyone.\n\n"
+        "Partnership and licensing info coming soon — stay tuned!",
+        parse_mode="Markdown",
+    )
 
 
 async def cmd_units(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3253,8 +3213,7 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             _linked_user_ids[chat_id] = info["user_id"]
             await update.message.reply_text(
                 f"✅ *Already linked!*\n\n"
-                f"Your Telegram is connected to *{info.get('email', '?')}*.\n"
-                f"Plan: *{info.get('subscription_tier', 'free').title()}*",
+                f"Your Telegram is connected to *{info.get('email', '?')}*.",
                 parse_mode="Markdown",
             )
             return
@@ -3316,7 +3275,6 @@ async def cmd_link_status(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await update.message.reply_text(
             f"✅ *Linked!*\n\n"
             f"Telegram → *{info.get('email', '?')}*\n"
-            f"Plan: *{info.get('subscription_tier', 'free').title()}*\n"
             f"User ID: `{info['user_id']}`",
             parse_mode="Markdown",
         )
@@ -4942,7 +4900,7 @@ def main() -> None:
             BotCommand("units",        "Switch between kg and lbs"),
             BotCommand("connect",      "Connect Garmin account"),
             BotCommand("mfp",          "Connect MyFitnessPal account"),
-            BotCommand("billing",         "Subscription & billing info"),
+            BotCommand("billing",         "Billing & partnership info"),
             BotCommand("link",            "Link Telegram to the web app"),
             BotCommand("link_status",     "Check web-app link status"),
             BotCommand("privacy",         "View privacy & data storage info"),

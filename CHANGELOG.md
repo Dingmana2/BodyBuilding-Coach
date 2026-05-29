@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## 2026-05-29 (Sprint 6 — Tier Removal + Beta-Fix Rollout)
+
+### Remove subscription tiers, billing UI, and roll out common-theme beta fixes
+
+**Files**: `main.py`, `static/index.html`, `static/app.js`, `static/style.css`, `telegram_bot.py`
+
+**What changed:**
+
+**Tier / billing removal:**
+- `main.py`: Deleted `_get_user_tier()`, removed free-tier gates from `/api/analyze`, `/api/analysis/weak-points`, `/api/reports/generate`. Deleted `/api/subscription` GET and `/api/subscription/upgrade` POST endpoints entirely. Removed `subscription_tier` from `/api/auth/me` and the internal Telegram-user lookup response.
+- `static/index.html`: Removed "Billing" nav tab and entire billing section (pricing cards, tier badges). Updated Reports empty-state text. Updated Reports subtitle (removed "Pro+").
+- `static/app.js`: Removed `loadBilling()` and `upgradeTier()` functions. Removed `billing` from tab loader map.
+- `static/style.css`: Removed all `.billing-tier-badge`, `.pricing-grid`, `.pricing-card`, `.pricing-name`, `.pricing-price`, `.pricing-features` rules.
+- `telegram_bot.py`: Replaced `cmd_billing()` with brief "coming soon as partnership" message. Removed `subscription_tier` display from `/link` and `/link-status` outputs. Updated billing command description in bot command list.
+
+**Beta-fix rollout (common themes):**
+- **Button double-tap prevention**: `submitAnalysis()` and `logSet()` both disable their button (with interim label) on click and re-enable in `finally` block — prevents double submissions.
+- **Profile form improvements**: Added `strength`, `health`, `contest_prep` goal options; added `non-binary` gender; added `Injuries or Physical Limitations` field; removed "(Elite — comp prep only)" label from show date.
+- **Accessibility**: `#drop-zone` now has `role="button"`, `tabindex="0"`, `aria-label`, and Enter/Space key handler. `#toast` has `role="alert"` and `aria-live="assertive"`. All check-in range sliders have `aria-label`. Photo input has `capture="environment"` for direct camera on mobile.
+- **Text contrast**: `.text-muted` changed from `#888` to `#999` (passes WCAG AA 4.5:1 on `#0d0d0d` background).
+- **Mobile touch targets**: `.stepper-btn` now has `min-width: 48px; min-height: 48px` per WCAG 2.5.5.
+- **iOS overscroll**: Added `html, body { overscroll-behavior: none; }` to prevent white flash on pull-to-refresh.
+
+**Rationale:** User explicitly requested tier removal toward a partner product model. Beta testing identified button double-tap bugs, accessibility gaps, and profile form limitations as common failure patterns across all 50 simulated user archetypes.
+
+**Rollback:** Revert all six files. No DB schema changes — `subscription_tier` column remains in the `users` table and can be re-read without migration.
+
+---
+
 ## 2026-05-29 (Sprint 5 — One Brain: Photo + Profile + Plan Integration)
 
 ### Generate button fix, guided onboarding, and unified plan generation

@@ -23,7 +23,6 @@
                 <button class="nav-tab" data-tab="profile" onclick="showTab('profile')">Profile</button>
                 <button class="nav-tab" data-tab="nutrition" onclick="showTab('nutrition')">Nutrition</button>
                 <button class="nav-tab" data-tab="reports" onclick="showTab('reports')">Reports</button>
-                <button class="nav-tab" data-tab="billing" onclick="showTab('billing')">Billing</button>
                 <div id="user-badge" class="user-badge" style="display:none">
                     <span id="user-email-short"></span>
                     <button class="btn btn-ghost btn-sm" onclick="signOut()">Sign Out</button>
@@ -133,19 +132,19 @@
                     <div style="display:grid;gap:14px">
                         <div>
                             <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">😴 Sleep Quality &nbsp;<span style="color:var(--gold);font-weight:700" id="ci-sleep-val">5</span>/10</label>
-                            <input type="range" id="ci-sleep" min="1" max="10" value="5" style="width:100%" oninput="document.getElementById('ci-sleep-val').textContent=this.value">
+                            <input type="range" id="ci-sleep" min="1" max="10" value="5" aria-label="Sleep quality 1 to 10" style="width:100%" oninput="document.getElementById('ci-sleep-val').textContent=this.value">
                         </div>
                         <div>
                             <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">⚡ Energy Level &nbsp;<span style="color:var(--gold);font-weight:700" id="ci-energy-val">5</span>/10</label>
-                            <input type="range" id="ci-energy" min="1" max="10" value="5" style="width:100%" oninput="document.getElementById('ci-energy-val').textContent=this.value">
+                            <input type="range" id="ci-energy" min="1" max="10" value="5" aria-label="Energy level 1 to 10" style="width:100%" oninput="document.getElementById('ci-energy-val').textContent=this.value">
                         </div>
                         <div>
                             <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🤕 Muscle Soreness &nbsp;<span style="color:var(--gold);font-weight:700" id="ci-soreness-val">5</span>/10</label>
-                            <input type="range" id="ci-soreness" min="1" max="10" value="5" style="width:100%" oninput="document.getElementById('ci-soreness-val').textContent=this.value">
+                            <input type="range" id="ci-soreness" min="1" max="10" value="5" aria-label="Muscle soreness 1 to 10" style="width:100%" oninput="document.getElementById('ci-soreness-val').textContent=this.value">
                         </div>
                         <div>
                             <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🧠 Stress Level &nbsp;<span style="color:var(--gold);font-weight:700" id="ci-stress-val">5</span>/10</label>
-                            <input type="range" id="ci-stress" min="1" max="10" value="5" style="width:100%" oninput="document.getElementById('ci-stress-val').textContent=this.value">
+                            <input type="range" id="ci-stress" min="1" max="10" value="5" aria-label="Stress level 1 to 10" style="width:100%" oninput="document.getElementById('ci-stress-val').textContent=this.value">
                         </div>
                     </div>
                     <div style="display:flex;gap:10px;margin-top:16px">
@@ -180,14 +179,18 @@
                 <div
                     id="drop-zone"
                     class="drop-zone"
+                    role="button"
+                    tabindex="0"
+                    aria-label="Upload physique photos — click or press Enter to select files"
                     ondragover="event.preventDefault()"
                     ondrop="handleDrop(event)"
                     onclick="document.getElementById('photo-input').click()"
+                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('photo-input').click()}"
                 >
                     <div class="drop-icon">📸</div>
                     <div class="drop-text">Drop photos here or click to select</div>
                     <div class="drop-subtext">JPG, PNG, WebP • Max 20MB each • Up to 3 angles (front, back, side)</div>
-                    <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" multiple style="display:none" onchange="handleFileSelect(this)" />
+                    <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" multiple capture="environment" style="display:none" onchange="handleFileSelect(this)" />
                 </div>
                 <div id="upload-preview" style="display:none">
                     <div id="preview-strip" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
@@ -390,7 +393,8 @@
                                 <option value="">Select…</option>
                                 <option value="male">Male</option>
                                 <option value="female">Female</option>
-                                <option value="other">Other</option>
+                                <option value="non-binary">Non-binary</option>
+                                <option value="other">Other / Prefer not to say</option>
                             </select>
                         </div>
                         <div class="form-group">
@@ -408,6 +412,9 @@
                                 <option value="bulk">Bulk (muscle gain)</option>
                                 <option value="cut">Cut (fat loss)</option>
                                 <option value="recomp">Recomp (muscle gain + fat loss)</option>
+                                <option value="strength">Strength</option>
+                                <option value="health">General health &amp; fitness</option>
+                                <option value="contest_prep">Contest prep</option>
                                 <option value="maintain">Maintain</option>
                             </select>
                         </div>
@@ -426,10 +433,14 @@
                         </div>
                         <div class="form-group full-width">
                             <label>Dietary Restrictions</label>
-                            <input type="text" name="dietary_restrictions" placeholder="e.g. vegetarian, lactose intolerant, no shellfish…" />
+                            <input type="text" name="dietary_restrictions" placeholder="e.g. vegetarian, lactose intolerant, no shellfish, vegan…" />
+                        </div>
+                        <div class="form-group full-width">
+                            <label>Injuries or Physical Limitations</label>
+                            <input type="text" name="injuries" placeholder="e.g. bad left knee, lower back pain, no overhead pressing…" />
                         </div>
                         <div class="form-group">
-                            <label>Competition Show Date <span style="color:var(--text-muted);font-size:12px">(Elite — comp prep only)</span></label>
+                            <label>Competition Show Date</label>
                             <input type="date" name="show_date" />
                         </div>
                     </div>
@@ -543,79 +554,10 @@
         <section id="tab-reports" class="tab-content">
             <div class="page-header">
                 <h1>Weekly Reports</h1>
-                <p class="subtitle">AI-generated coaching summaries — auto-delivered every Sunday (Pro+)</p>
+                <p class="subtitle">AI-generated coaching summaries — auto-delivered every Sunday</p>
                 <button class="btn btn-primary" onclick="generateReport()">Generate Report Now</button>
             </div>
-            <div id="reports-list"><p class="empty-state">No reports yet. Reports are auto-generated every Sunday for Pro users, or click "Generate Report Now" above.</p></div>
-        </section>
-
-        <!-- BILLING -->
-        <section id="tab-billing" class="tab-content">
-            <div class="page-header">
-                <h1>Billing & Subscription</h1>
-                <p class="subtitle">Manage your plan</p>
-            </div>
-
-            <div id="billing-current" class="card" style="margin-bottom:1.5rem">
-                <div class="billing-tier-badge" id="billing-tier-badge">Free</div>
-                <p id="billing-tier-desc" style="color:var(--text-muted);margin-top:.5rem"></p>
-            </div>
-
-            <div id="billing-free-section">
-                <div class="pricing-grid">
-                    <div class="pricing-card pricing-card-pro">
-                        <div class="pricing-name">Pro</div>
-                        <div class="pricing-price">$19.99<span>/month</span></div>
-                        <ul class="pricing-features">
-                            <li>Unlimited AI photo analyses</li>
-                            <li>Weekly AI coaching report</li>
-                            <li>Garmin &amp; MFP sync</li>
-                            <li>Progressive overload suggestions</li>
-                            <li>Weak-point analysis</li>
-                            <li>Meal logging with macro lookup</li>
-                            <li>All Telegram bot commands</li>
-                        </ul>
-                        <button class="btn btn-primary btn-block" onclick="upgradeTier('pro')">Upgrade to Pro</button>
-                    </div>
-                    <div class="pricing-card pricing-card-elite">
-                        <div class="pricing-name">Elite</div>
-                        <div class="pricing-price">$49.99<span>/month</span></div>
-                        <ul class="pricing-features">
-                            <li>Everything in Pro</li>
-                            <li>Daily AI coaching messages</li>
-                            <li>Competition prep mode</li>
-                            <li>Before/after photo comparison</li>
-                            <li>PDF progress reports</li>
-                            <li>Priority analysis queue</li>
-                        </ul>
-                        <button class="btn btn-secondary btn-block" onclick="upgradeTier('elite')">Upgrade to Elite</button>
-                    </div>
-                </div>
-            </div>
-
-            <div id="billing-pro-section" style="display:none">
-                <div class="pricing-card pricing-card-elite" style="max-width:420px">
-                    <div class="pricing-name">Elite</div>
-                    <div class="pricing-price">$49.99<span>/month</span></div>
-                    <ul class="pricing-features">
-                        <li>Everything in Pro</li>
-                        <li>Daily AI coaching messages</li>
-                        <li>Competition prep mode</li>
-                        <li>Before/after photo comparison</li>
-                        <li>PDF progress reports</li>
-                        <li>Priority analysis queue</li>
-                    </ul>
-                    <button class="btn btn-primary btn-block" onclick="upgradeTier('elite')">Upgrade to Elite</button>
-                </div>
-            </div>
-
-            <div id="billing-elite-section" style="display:none">
-                <div class="card" style="text-align:center;padding:2rem">
-                    <div style="font-size:2rem">👑</div>
-                    <h3 style="margin:.5rem 0">You're on Elite</h3>
-                    <p style="color:var(--text-muted)">You have full access to every feature. Thank you for your support!</p>
-                </div>
-            </div>
+            <div id="reports-list"><p class="empty-state">No reports yet. Click "Generate Report Now" above to create your first weekly coaching summary.</p></div>
         </section>
     </main>
 
@@ -628,7 +570,7 @@
     </div>
 
     <!-- Toast -->
-    <div id="toast" class="toast" style="display:none"></div>
+    <div id="toast" class="toast" role="alert" aria-live="assertive" style="display:none"></div>
 
     <!-- Auth modal -->
     <div id="auth-overlay" style="display:none">

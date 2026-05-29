@@ -298,18 +298,9 @@ def get_me(
     return {
         "id": user.id,
         "email": user.email,
-        "subscription_tier": user.subscription_tier,
         "telegram_linked": user.telegram_chat_id is not None,
         "created_at": user.created_at.isoformat(),
     }
-
-
-def _get_user_tier(user_id: int, db: Session) -> str:
-    """Return subscription tier for the given user_id (default 'free')."""
-    if not user_id:
-        return "free"
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    return user.subscription_tier if user else "free"
 
 
 # ── Telegram account linking ──────────────────────────────────────────────────
@@ -429,51 +420,7 @@ def get_telegram_user(chat_id: int, request: Request, db: Session = Depends(get_
         "linked": True,
         "user_id": user.id,
         "email": user.email,
-        "subscription_tier": user.subscription_tier,
     }
-
-
-@app.get("/api/subscription")
-def get_subscription(
-    current_user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-):
-    tier = _get_user_tier(current_user_id, db)
-    features = {
-        "free": ["workout_logging", "checkins", "basic_stats", "1_plan_per_month"],
-        "pro": ["unlimited_photo_analysis", "weekly_reports", "garmin_sync", "progressive_overload", "weak_point_analysis", "meal_logging", "all_bot_commands"],
-        "elite": ["all_pro_features", "daily_ai_coaching", "show_prep_mode", "comparison_photos", "pdf_reports", "priority_analysis"],
-    }
-    tier_features = {k: (k == tier or (k == "free")) for k in features}
-    return {
-        "tier": tier,
-        "features_included": features.get(tier, features["free"]),
-        "upgrade_available": tier in ("free", "pro"),
-        "pro_price_monthly": 19.99,
-        "elite_price_monthly": 49.99,
-        "stripe_configured": bool(os.getenv("STRIPE_SECRET_KEY")),
-    }
-
-
-@app.post("/api/subscription/upgrade")
-async def upgrade_subscription(
-    request: Request,
-    current_user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db),
-):
-    if not current_user_id:
-        raise HTTPException(status_code=401, detail="Sign in to upgrade.")
-    if not os.getenv("STRIPE_SECRET_KEY"):
-        raise HTTPException(
-            status_code=503,
-            detail="Billing is not configured yet. Add STRIPE_SECRET_KEY to enable payments.",
-        )
-    data = await request.json()
-    target_tier = data.get("tier", "pro")
-    if target_tier not in ("pro", "elite"):
-        raise HTTPException(status_code=400, detail="tier must be 'pro' or 'elite'.")
-    # Stripe checkout session creation goes here once STRIPE_SECRET_KEY is set
-    raise HTTPException(status_code=501, detail="Stripe integration coming soon. Add STRIPE_SECRET_KEY + price IDs.")
 
 
 # ── Profile ──────────────────────────────────────────────────────────────────
@@ -551,20 +498,6 @@ async def analyze_photo(
         raise HTTPException(status_code=400, detail="No files provided.")
     if len(files) > 5:
         raise HTTPException(status_code=400, detail="Maximum 5 photos per analysis.")
-
-    tier = _get_user_tier(current_user_id, db)
-    if tier == "free":
-        month_start = datetime.now(timezone.utc).strftime("%Y-%m-01")
-        monthly_count = (
-            db.query(models.BodyAnalysis)
-            .filter(models.BodyAnalysis.created_at >= datetime.fromisoformat(month_start))
-            .count()
-        )
-        if monthly_count >= 3:
-            raise HTTPException(
-                status_code=402,
-                detail="Free plan limit: 3 photo analyses per month. Upgrade to Pro for unlimited analyses.",
-            )
 
     saved_paths: list[str] = []
     saved_filenames: list[str] = []
@@ -647,12 +580,6 @@ async def get_weak_points(
     current_user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ):
-    tier = _get_user_tier(current_user_id, db)
-    if tier == "free":
-        raise HTTPException(
-            status_code=402,
-            detail="Weak-point analysis requires a Pro subscription ($19.99/month). Upgrade to unlock.",
-        )
     analyses_rows = (
         db.query(models.BodyAnalysis)
         .order_by(models.BodyAnalysis.created_at.desc())
@@ -1595,12 +1522,6 @@ def list_reports(limit: int = 10, current_user_id: int = Depends(get_current_use
 
 @app.post("/api/reports/generate")
 async def generate_report(request: Request, current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    tier = _get_user_tier(current_user_id, db)
-    if tier == "free":
-        raise HTTPException(
-            status_code=402,
-            detail="Weekly AI reports require a Pro subscription ($19.99/month). Upgrade to unlock.",
-        )
     data = await request.json()
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
 

@@ -177,7 +177,6 @@ function showTab(tab) {
         profile: loadProfile,
         nutrition: loadNutrition,
         reports: loadReports,
-        billing: loadBilling,
     };
     if (loaders[tab]) loaders[tab]();
 }
@@ -512,6 +511,8 @@ async function submitAnalysis() {
         formData.append('files', f);
     }
 
+    const btn = document.getElementById('analyze-btn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Analyzing…'; }
     showLoading('Analyzing your physique with AI… This takes 20-40 seconds.');
     try {
         const result = await api('POST', '/analyze', formData, true);
@@ -525,6 +526,8 @@ async function submitAnalysis() {
     } catch (err) {
         hideLoading();
         showToast(`Analysis failed: ${err.message}`, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = 'Analyze Photo'; }
     }
 }
 
@@ -1565,6 +1568,8 @@ async function logSet() {
         showToast('Enter valid weight and reps.', 'error');
         return;
     }
+    const logBtn = document.querySelector('#log-set-card .btn-primary');
+    if (logBtn) { logBtn.disabled = true; logBtn.textContent = 'Saving…'; }
     try {
         const result = await api('POST', `/sessions/${state.activeSessionId}/sets`, {
             exercise_name: state.selectedExercise,
@@ -1593,6 +1598,8 @@ async function logSet() {
         }
     } catch (err) {
         showToast(`Log failed: ${err.message}`, 'error');
+    } finally {
+        if (logBtn) { logBtn.disabled = false; logBtn.textContent = 'Log Set'; }
     }
 }
 
@@ -1788,37 +1795,6 @@ async function loadReports() {
             </div>
         `;
     }).join('');
-}
-
-/* ── Billing ── */
-async function loadBilling() {
-    const data = await api('GET', '/subscription').catch(() => null);
-    if (!data) return;
-
-    const badge = document.getElementById('billing-tier-badge');
-    const desc = document.getElementById('billing-tier-desc');
-    badge.textContent = data.tier.charAt(0).toUpperCase() + data.tier.slice(1);
-    badge.className = `billing-tier-badge ${data.tier}`;
-
-    const descs = {
-        free: 'Basic workout logging, check-ins, and 3 photo analyses per month.',
-        pro: 'Unlimited photo analyses, weekly reports, Garmin sync, and all bot commands.',
-        elite: 'All Pro features plus daily AI coaching, comp prep mode, and priority analysis.',
-    };
-    desc.textContent = descs[data.tier] || '';
-
-    document.getElementById('billing-free-section').style.display = data.tier === 'free' ? '' : 'none';
-    document.getElementById('billing-pro-section').style.display = data.tier === 'pro' ? '' : 'none';
-    document.getElementById('billing-elite-section').style.display = data.tier === 'elite' ? '' : 'none';
-}
-
-async function upgradeTier(tier) {
-    const res = await api('POST', '/subscription/upgrade', { tier }).catch(e => ({ error: e.message }));
-    if (res && res.error) {
-        showToast(res.error || 'Billing not configured yet — add STRIPE_SECRET_KEY to enable payments.', 'error');
-    } else {
-        showToast('Redirecting to checkout…');
-    }
 }
 
 /* ── Utilities ── */
