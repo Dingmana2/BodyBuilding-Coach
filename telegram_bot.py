@@ -4991,12 +4991,18 @@ async def cmd_peakweek(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "Structure as a day-by-day plan (Day 1 = 7 days out, Day 7 = show day). "
             "Be specific with numbers. Format as clear markdown with daily sections."
         )
-        resp = get_anthropic_client().messages.create(
-            model=ANALYSIS_MODEL,
-            max_tokens=2000,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        protocol = resp.content[0].text.strip()
+
+        def _peakweek_call() -> str:
+            """Blocking Anthropic call — run via executor to avoid blocking the event loop."""
+            resp = get_anthropic_client().messages.create(
+                model=ANALYSIS_MODEL,
+                max_tokens=2000,
+                messages=[{"role": "user", "content": prompt}],
+            )
+            return resp.content[0].text.strip()
+
+        loop = asyncio.get_running_loop()
+        protocol = await loop.run_in_executor(None, _peakweek_call)
         # Send in chunks to avoid Telegram 4096-char limit
         for i in range(0, len(protocol), 4000):
             if i == 0:

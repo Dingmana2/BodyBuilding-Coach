@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## 2026-05-29 — Expert Beta Simulation: 250 domain experts, 1–18 month simulation
+
+### Added
+- `tests/expert_beta.py` — self-contained 250-expert beta simulation covering 8 domains (Fitness & Strength, Medical & Health, Nutrition, Technology & Product, Special Populations, Mental Health & Behavior, Endurance & Alternative Sports, Research & Science); runs 35 domain-specific code validation checks against real source files; assigns findings to relevant experts; generates a full ranked report to stdout and `tests/expert_beta_report.md`
+
+### Fixed
+- `telegram_bot.py` — `cmd_peakweek`: wrapped blocking `get_anthropic_client().messages.create()` call in `asyncio.get_running_loop().run_in_executor()` — was blocking the Telegram event loop for 10–40 seconds during peak week protocol generation (spotted by expert beta simulation)
+
+### Rollback
+- `git revert HEAD` — no schema changes, no migrations; reverting removes the expert beta script and restores the direct blocking call in `cmd_peakweek`
+
 ## 2026-05-29 — Sprint 12: Weight defaults, sleep date, score display, nav footers
 
 ### Fixed
