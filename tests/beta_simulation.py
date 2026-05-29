@@ -537,6 +537,222 @@ def _test_source_py_compile() -> list[str]:
     return errors
 
 
+# ── Test: exercise weight defaults ───────────────────────────────────────────
+
+_LBS_PER_KG = 2.20462
+
+def _default_weights_for_sim(exercise_name: str, units: str) -> list[float]:
+    """Mirrors telegram_bot._default_weights_for for simulation."""
+    # Import defaults from source by reading them out of the source file
+    src = _read_bot_source()
+    name = exercise_name.lower()
+
+    # Extract the KG table
+    kg_start = src.find("_EXERCISE_DEFAULTS_KG: dict")
+    kg_end = src.find("\n}\n", kg_start) + 3
+    kg_block = src[kg_start:kg_end]
+
+    # Extract the LBS table
+    lbs_start = src.find("_EXERCISE_DEFAULTS_LBS: dict")
+    lbs_end = src.find("\n}\n", lbs_start) + 3
+    lbs_block = src[lbs_start:lbs_end]
+
+    def _parse_table(block: str) -> dict[str, list[float]]:
+        result = {}
+        for line in block.splitlines():
+            m = re.match(r'\s+"([^"]+)":\s+\[([^\]]+)\]', line)
+            if m:
+                kw = m.group(1)
+                vals = [float(v.strip().rstrip(",")) for v in m.group(2).split(",") if v.strip().rstrip(",")]
+                result[kw] = vals
+        return result
+
+    if units == "lbs":
+        table = _parse_table(lbs_block)
+        for kw, lbs_vals in table.items():
+            if kw in name:
+                return [round(v / _LBS_PER_KG, 4) for v in lbs_vals]
+        return [round(v / _LBS_PER_KG, 4) for v in [45, 95, 135, 185, 225]]
+    else:
+        table = _parse_table(kg_block)
+        for kw, kg_vals in table.items():
+            if kw in name:
+                return [float(v) for v in kg_vals]
+        return [20.0, 40.0, 60.0, 80.0, 100.0]
+
+
+def _test_exercise_defaults() -> list[str]:
+    errors: list[str] = []
+
+    # kg user: bench press should NOT be [20, 40, 60, 80, 100]
+    kg_bench = _default_weights_for_sim("Barbell Bench Press", "kg")
+    if kg_bench == [20.0, 40.0, 60.0, 80.0, 100.0]:
+        errors.append("kg bench press still uses old generic defaults [20,40,60,80,100]")
+    if max(kg_bench) < 80 or max(kg_bench) > 160:
+        errors.append(f"kg bench press max {max(kg_bench)} seems implausible")
+
+    # lbs user: bench press should map to standard barbell loads
+    lbs_bench = _default_weights_for_sim("Barbell Bench Press", "lbs")
+    lbs_vals = [round(v * _LBS_PER_KG) for v in lbs_bench]
+    if any(v % 5 != 0 for v in lbs_vals):
+        errors.append(f"lbs bench press defaults not in 5-lb increments: {lbs_vals}")
+    if max(lbs_vals) < 200 or max(lbs_vals) > 400:
+        errors.append(f"lbs bench press max {max(lbs_vals)}lbs seems implausible")
+
+    # kg isolation: curl max should be ≤ 25 kg
+    kg_curl = _default_weights_for_sim("Bicep Curl", "kg")
+    if max(kg_curl) > 25:
+        errors.append(f"kg bicep curl max {max(kg_curl)} kg is too heavy (> 25 kg)")
+
+    # lbs isolation: lateral raise should be < 50 lbs
+    lbs_lateral = _default_weights_for_sim("Lateral Raise", "lbs")
+    lbs_lateral_vals = [round(v * _LBS_PER_KG) for v in lbs_lateral]
+    if max(lbs_lateral_vals) > 50:
+        errors.append(f"lbs lateral raise max {max(lbs_lateral_vals)}lbs is too heavy (> 50 lbs)")
+
+    # lbs user: deadlift should start at 45lb-bar weight (135 lbs)
+    lbs_dl = _default_weights_for_sim("Deadlift", "lbs")
+    lbs_dl_vals = [round(v * _LBS_PER_KG) for v in lbs_dl]
+    if min(lbs_dl_vals) < 100 or min(lbs_dl_vals) > 180:
+        errors.append(f"lbs deadlift min {min(lbs_dl_vals)}lbs out of expected 100-180 range")
+
+    # kg / lbs tables produce different values for same exercise
+    kg_sq = _default_weights_for_sim("Back Squat", "kg")
+    lbs_sq_in_kg = _default_weights_for_sim("Back Squat", "lbs")
+    if kg_sq == lbs_sq_in_kg:
+        errors.append("kg and lbs defaults are identical for squat — tables not separate")
+
+    return errors
+
+
+# ── Test: garmin review qualitative labels ────────────────────────────────────
+
+_SAMPLE_GARMIN: dict = {
+    "sleep_duration_hrs": 6.5,
+    "sleep_score_1_10": 4,
+    "deep_sleep_mins": 60,
+    "rem_sleep_mins": 80,
+    "body_battery_end": 45,
+    "hrv_ms": 38.0,
+    "resting_hr_bpm": 62,
+    "stress_score_1_10": 6,
+    "steps_yesterday": 7200,
+}
+
+
+def _garmin_review_lines_sim(garmin_data: dict) -> list[str]:
+    """Mirrors telegram_bot._garmin_review_lines for simulation."""
+    def _score_label(s: float, invert: bool = False) -> str:
+        v = (11 - s) if invert else s
+        if v >= 8: return "Great"
+        if v >= 6: return "Good"
+        if v >= 4: return "Fair"
+        return "Poor"
+
+    parts: list[str] = []
+    if garmin_data.get("sleep_duration_hrs"):
+        hrs = garmin_data["sleep_duration_hrs"]
+        stage_parts = []
+        if garmin_data.get("deep_sleep_mins"):
+            stage_parts.append(f"Deep {garmin_data['deep_sleep_mins']}min")
+        if garmin_data.get("rem_sleep_mins"):
+            stage_parts.append(f"REM {garmin_data['rem_sleep_mins']}min")
+        stage_text = f" ({', '.join(stage_parts)})" if stage_parts else ""
+        raw_score = garmin_data.get("sleep_score_1_10")
+        quality = f" — {_score_label(raw_score)}" if raw_score else ""
+        parts.append(f"Sleep {hrs:.1f}h{quality}{stage_text}")
+    if garmin_data.get("stress_score_1_10"):
+        parts.append(f"Stress — {_score_label(garmin_data['stress_score_1_10'], invert=True)}")
+    return parts
+
+
+def _test_garmin_review_labels() -> list[str]:
+    errors: list[str] = []
+    lines = _garmin_review_lines_sim(_SAMPLE_GARMIN)
+    joined = " ".join(lines)
+
+    if "/10" in joined:
+        errors.append(f"Garmin review still contains '/10': {joined}")
+    labels = {"Great", "Good", "Fair", "Poor"}
+    if not any(label in joined for label in labels):
+        errors.append(f"Garmin review has no qualitative label: {joined}")
+    if "Sleep" not in joined:
+        errors.append("Sleep line missing from Garmin review")
+    if "Stress" not in joined:
+        errors.append("Stress line missing from Garmin review")
+
+    # Low sleep score (4/10 = Fair) → should show "Fair"
+    if "Fair" not in joined:
+        errors.append(f"Sleep score 4/10 should label as 'Fair', got: {joined}")
+
+    # Also test source directly
+    src = _read_bot_source()
+    if "sleep_score_1_10}/10" in src or '"/10"' in src.split("_garmin_review_lines")[1][:500]:
+        errors.append("Source still contains literal '/10' in _garmin_review_lines area")
+
+    return errors
+
+
+# ── Test: recovery scale blurb ────────────────────────────────────────────────
+
+def _test_recovery_scale_blurb() -> list[str]:
+    errors: list[str] = []
+    src = _read_bot_source()
+    if "completely exhausted" not in src and "peak readiness" not in src:
+        errors.append("Recovery score scale blurb not found in source")
+    return errors
+
+
+# ── Test: navigation footers ──────────────────────────────────────────────────
+
+def _test_navigation_footers() -> list[str]:
+    errors: list[str] = []
+    src = _read_bot_source()
+
+    if "_next_steps(" not in src:
+        errors.append("_next_steps() helper not defined in telegram_bot.py")
+        return errors
+
+    # Count how many times _next_steps is called (should be at least 5)
+    call_count = src.count("_next_steps(")
+    if call_count < 5:
+        errors.append(f"_next_steps() called only {call_count} times — expected ≥ 5 screens")
+
+    # Spot-check specific screens
+    checks = {
+        "_send_plan uses next_steps": "_send_plan" in src and "_next_steps(" in src[src.find("async def _send_plan"):src.find("async def _daily_garmin_sync")],
+        "checkin uses next_steps": "workout start" in src and "What's next" in src or "_next_steps(" in src[src.find("_finish_checkin"):src.find("async def cmd_workout")],
+        "report uses next_steps": "_next_steps(" in src[src.find("cmd_report"):src.find("async def cmd_billing")],
+        "progress uses next_steps": "_next_steps(" in src[src.find("async def cmd_progress"):src.find("async def handle_progress_callback")],
+    }
+    for label, ok in checks.items():
+        if not ok:
+            errors.append(f"Navigation footer missing: {label}")
+
+    return errors
+
+
+# ── Test: garmin sleep date fix (source inspection) ───────────────────────────
+
+def _test_garmin_sleep_date_fix() -> list[str]:
+    errors: list[str] = []
+    import os
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    garmin_path = os.path.join(root, "garmin_service.py")
+    try:
+        with open(garmin_path, encoding="utf-8") as f:
+            garmin_src = f.read()
+    except FileNotFoundError:
+        return ["garmin_service.py not found"]
+
+    if "for sleep_date in (today, yesterday)" not in garmin_src:
+        errors.append("garmin_service.py: try-today-first sleep fetch not found")
+    if "get_sleep_data(yesterday)" in garmin_src and "for sleep_date" not in garmin_src:
+        errors.append("garmin_service.py still fetches sleep from yesterday only")
+
+    return errors
+
+
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -561,6 +777,13 @@ def run_all() -> int:
     _add("workout_button_placement", _test_source_button_placement())
     _add("unit_param_propagation", _test_source_unit_param_propagation())
     _add("no_deprecated_get_event_loop", _test_source_asyncio_get_event_loop())
+
+    # Sprint 12 checks
+    _add("exercise_weight_defaults", _test_exercise_defaults())
+    _add("garmin_review_qualitative_labels", _test_garmin_review_labels())
+    _add("recovery_scale_blurb", _test_recovery_scale_blurb())
+    _add("navigation_footers", _test_navigation_footers())
+    _add("garmin_sleep_date_fix", _test_garmin_sleep_date_fix())
 
     # Per-archetype unit display checks (60+ archetypes)
     for arch in ARCHETYPES:

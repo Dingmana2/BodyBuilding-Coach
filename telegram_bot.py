@@ -64,6 +64,105 @@ _MUSCLE_MEASURE: dict[str, tuple[str, ...]] = {
     "legs": ("left_thigh_cm", "right_thigh_cm"),
 }
 
+# ── Exercise weight defaults ──────────────────────────────────────────────────
+# Two separate tables: kg plate math ≠ lbs plate math — do NOT convert between them.
+# Keyword matching: first key whose substring appears in exercise_name.lower() wins.
+
+_EXERCISE_DEFAULTS_KG: dict[str, list[float]] = {
+    # Lower compound (barbell = 20 kg)
+    "squat":          [60,  80,  100, 120, 140],
+    "deadlift":       [80,  100, 120, 140, 160],
+    "leg press":      [60,  80,  100, 130, 160],
+    "rdl":            [40,  60,  80,  100, 120],
+    "romanian":       [40,  60,  80,  100, 120],
+    "hip thrust":     [40,  60,  80,  100, 120],
+    "lunge":          [10,  15,  20,  25,  30],
+    "leg curl":       [25,  35,  45,  55,  65],
+    "leg extension":  [25,  35,  45,  55,  65],
+    "calf":           [20,  30,  40,  50,  60],
+    # Upper push (barbell = 20 kg)
+    "bench press":    [40,  60,  80,  100, 120],
+    "incline":        [30,  40,  50,  60,  80],
+    "dumbbell press": [12,  16,  20,  24,  28],
+    "overhead press": [30,  40,  50,  60,  70],
+    "ohp":            [30,  40,  50,  60,  70],
+    "dip":            [0,   5,   10,  15,  20],
+    # Upper pull
+    "pull-up":        [0,   5,   10,  15,  20],
+    "pullup":         [0,   5,   10,  15,  20],
+    "chin":           [0,   5,   10,  15,  20],
+    "pulldown":       [40,  50,  60,  70,  80],
+    "row":            [40,  50,  60,  70,  80],
+    # Isolation
+    "curl":           [8,   10,  12,  15,  20],
+    "tricep":         [15,  20,  25,  30,  35],
+    "lateral raise":  [5,   8,   10,  12,  15],
+    "face pull":      [12,  15,  20,  25,  30],
+    "fly":            [8,   10,  12,  15,  20],
+}
+
+_EXERCISE_DEFAULTS_LBS: dict[str, list[float]] = {
+    # Lower compound (barbell = 45 lbs)
+    "squat":          [135, 185, 225, 275, 315],
+    "deadlift":       [135, 185, 225, 275, 315],
+    "leg press":      [90,  135, 180, 225, 270],
+    "rdl":            [95,  135, 185, 225, 275],
+    "romanian":       [95,  135, 185, 225, 275],
+    "hip thrust":     [95,  135, 185, 225, 275],
+    "lunge":          [20,  30,  40,  50,  60],
+    "leg curl":       [50,  70,  90,  110, 130],
+    "leg extension":  [50,  70,  90,  110, 130],
+    "calf":           [45,  70,  90,  115, 135],
+    # Upper push (barbell = 45 lbs)
+    "bench press":    [95,  135, 185, 225, 275],
+    "incline":        [65,  95,  115, 135, 155],
+    "dumbbell press": [25,  35,  45,  55,  65],
+    "overhead press": [65,  95,  115, 135, 155],
+    "ohp":            [65,  95,  115, 135, 155],
+    "dip":            [0,   10,  25,  35,  45],
+    # Upper pull
+    "pull-up":        [0,   10,  25,  35,  45],
+    "pullup":         [0,   10,  25,  35,  45],
+    "chin":           [0,   10,  25,  35,  45],
+    "pulldown":       [70,  90,  110, 130, 150],
+    "row":            [95,  115, 135, 155, 185],
+    # Isolation (dumbbells, 5 lb increments)
+    "curl":           [15,  20,  25,  30,  35],
+    "tricep":         [30,  40,  50,  60,  70],
+    "lateral raise":  [10,  15,  20,  25,  30],
+    "face pull":      [25,  35,  45,  55,  65],
+    "fly":            [15,  20,  25,  30,  35],
+}
+
+
+def _default_weights_for(exercise_name: str, user: dict) -> list[float]:
+    """Return 5 first-time weight options in kg, matched to the exercise and unit system."""
+    name = exercise_name.lower()
+    if user.get("units") == "lbs":
+        for kw, lbs_vals in _EXERCISE_DEFAULTS_LBS.items():
+            if kw in name:
+                return [round(v / _LBS_PER_KG, 4) for v in lbs_vals]
+        return [round(v / _LBS_PER_KG, 4) for v in [45, 95, 135, 185, 225]]
+    for kw, kg_vals in _EXERCISE_DEFAULTS_KG.items():
+        if kw in name:
+            return [float(v) for v in kg_vals]
+    return [20.0, 40.0, 60.0, 80.0, 100.0]
+
+
+def _score_label(score_1_10: int | float, invert: bool = False) -> str:
+    """Convert a 1–10 score to a qualitative label. Set invert=True for stress (high=bad)."""
+    s = (11 - score_1_10) if invert else score_1_10
+    if s >= 8: return "Great"
+    if s >= 6: return "Good"
+    if s >= 4: return "Fair"
+    return "Poor"
+
+
+def _next_steps(*items: tuple[str, str]) -> str:
+    """Return a contextual 'What's next' footer line. Each item is (command, short label)."""
+    parts = " · ".join(f"`{cmd}` {label}" for cmd, label in items)
+    return f"\n\n_💡 What's next: {parts}_"
+
 
 def esc(text: str) -> str:
     """Escape special chars for Telegram legacy Markdown mode."""
@@ -425,9 +524,16 @@ def _weight_keyboard(exercise_name: str, user: dict) -> InlineKeyboardMarkup:
     recent = [s["weight_kg"] for s in reversed(user["set_logs"]) if s["exercise_name"] == exercise_name]
     last = recent[0] if recent else None
     if last:
-        opts = sorted({max(0.0, last - 5), max(0.0, last - 2.5), last, last + 2.5, last + 5})
+        # Use plate-friendly increments for each unit system
+        if user.get("units") == "lbs":
+            step_s = 5.0 / _LBS_PER_KG    # 5 lbs in kg
+            step_l = 10.0 / _LBS_PER_KG   # 10 lbs in kg
+        else:
+            step_s, step_l = 2.5, 5.0
+        opts = sorted({max(0.0, last - step_l), max(0.0, last - step_s),
+                       last, last + step_s, last + step_l})
     else:
-        opts = [20.0, 40.0, 60.0, 80.0, 100.0]
+        opts = _default_weights_for(exercise_name, user)
     rows: list[list[InlineKeyboardButton]] = []
     row: list[InlineKeyboardButton] = []
     for w in opts:
@@ -1085,14 +1191,15 @@ def _garmin_review_lines(garmin_data: dict) -> list[str]:
     parts: list[str] = []
     if garmin_data.get("sleep_duration_hrs"):
         hrs = garmin_data["sleep_duration_hrs"]
-        score = garmin_data.get("sleep_score_1_10", "?")
         stage_parts = []
         if garmin_data.get("deep_sleep_mins"):
             stage_parts.append(f"Deep {garmin_data['deep_sleep_mins']}min")
         if garmin_data.get("rem_sleep_mins"):
             stage_parts.append(f"REM {garmin_data['rem_sleep_mins']}min")
         stage_text = f" ({', '.join(stage_parts)})" if stage_parts else ""
-        parts.append(f"Sleep {hrs:.1f}h ({score}/10){stage_text}")
+        raw_score = garmin_data.get("sleep_score_1_10")
+        quality = f" — {_score_label(raw_score)}" if raw_score else ""
+        parts.append(f"Sleep {hrs:.1f}h{quality}{stage_text}")
     if garmin_data.get("body_battery_end") is not None:
         parts.append(f"Body Battery {garmin_data['body_battery_end']}%")
     if garmin_data.get("hrv_ms"):
@@ -1100,7 +1207,7 @@ def _garmin_review_lines(garmin_data: dict) -> list[str]:
     if garmin_data.get("resting_hr_bpm"):
         parts.append(f"RHR {garmin_data['resting_hr_bpm']}bpm")
     if garmin_data.get("stress_score_1_10"):
-        parts.append(f"Stress {garmin_data['stress_score_1_10']}/10")
+        parts.append(f"Stress — {_score_label(garmin_data['stress_score_1_10'], invert=True)}")
     if garmin_data.get("avg_spo2_pct"):
         parts.append(f"SpO2 {garmin_data['avg_spo2_pct']:.0f}%")
     if garmin_data.get("avg_respiration_rpm"):
@@ -1459,10 +1566,16 @@ async def _finish_checkin(
 
     await msg.edit_text(
         f"✅ *Recovery Check-in*\n\n"
-        f"{bar} Recovery Score: *{score}/100*{streak_text}"
+        f"{bar} Recovery Score: *{score}/100*{streak_text}\n"
+        f"_(0 = completely exhausted · 100 = peak readiness)_"
         f"{garmin_section}{load_section}{nutrition_section}"
         f"{scores_line}\n\n"
-        f"💡 _{tip}_{deload_hint}{joint_alert}{motivation_alert}{sleep_tip}{hrv_note}",
+        f"💡 _{tip}_{deload_hint}{joint_alert}{motivation_alert}{sleep_tip}{hrv_note}"
+        + _next_steps(
+            ("/workout start", "train now"),
+            ("/progress", "see trends"),
+            ("/report", "weekly summary"),
+        ),
         parse_mode="Markdown",
     )
 
@@ -1569,8 +1682,12 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             f"✅ *Session #{sid} complete!*\n\n"
             f"Sets: {total_sets} | Volume: {_w(total_volume, user):,.0f}{_wu(user)}{exercise_summary}"
-            f"{next_targets_text}\n\n"
-            "Type /stats to see your PRs.",
+            f"{next_targets_text}"
+            + _next_steps(
+                ("/stats", "see PRs"),
+                ("/checkin", "log recovery"),
+                ("/measurements", "track size"),
+            ),
             parse_mode="Markdown",
         )
 
@@ -1919,8 +2036,12 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
 
         await query.edit_message_text(
             f"✅ *Session #{sid} complete!*\n\n"
-            f"Sets: {total_sets} | Volume: {_w(total_volume, user):,.0f}{_wu(user)}{ex_summary}\n\n"
-            "Type /stats to see your PRs.",
+            f"Sets: {total_sets} | Volume: {_w(total_volume, user):,.0f}{_wu(user)}{ex_summary}"
+            + _next_steps(
+                ("/stats", "see PRs"),
+                ("/checkin", "log recovery"),
+                ("/measurements", "track size"),
+            ),
             parse_mode="Markdown",
         )
 
@@ -2007,6 +2128,11 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     keyboard = InlineKeyboardMarkup([[
         InlineKeyboardButton("💪 Muscle Progress", callback_data="progress:muscles"),
     ]])
+    lines.append(_next_steps(
+        ("/checkin", "log today's recovery"),
+        ("/measurements", "track size"),
+        ("/plan new", "adjust plan"),
+    ))
     await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
 
 
@@ -3335,6 +3461,11 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
                         "legumes, nuts, and colourful vegetables) to top up vitamins and minerals."
                     )
 
+        reply += _next_steps(
+            ("/checkin", "keep data flowing"),
+            ("/plan new", "adjust plan"),
+            ("/progress", "see trends"),
+        )
         await msg.edit_text(reply[:4096], parse_mode="Markdown")
     except Exception as e:
         await msg.edit_text(f"❌ Report generation failed: {e}")
@@ -3562,7 +3693,12 @@ async def _auto_plan_after_analysis(update: Update, user: dict, chat_id: int) ->
             await gen_msg.edit_text(f"❌ Plan generation failed: {e}")
     else:
         await update.effective_chat.send_message(
-            "How many days per week do you want to train?\n\nTap to generate your plan instantly:",
+            "How many days per week do you want to train?\n\nTap to generate your plan instantly:"
+            + _next_steps(
+                ("/plan", "generate plan"),
+                ("/progress", "track changes"),
+            ),
+            parse_mode="Markdown",
             reply_markup=_plan_days_keyboard(),
         )
 
@@ -5279,12 +5415,26 @@ async def _send_plan(update: Update, plan: dict) -> None:
         parse_mode="Markdown",
     )
 
-    # ── Day picker (trailing, after all plan sections) ──
+    # ── Day picker + navigation footer (trailing, after all plan sections) ──
     if day_buttons:
         await send(
-            "🏋️ *Ready to train? Choose your session:*",
+            "🏋️ *Ready to train? Choose your session:*"
+            + _next_steps(
+                ("/checkin", "log recovery first"),
+                ("/plan new", "regenerate"),
+                ("/progress", "see trends"),
+            ),
             parse_mode="Markdown",
             reply_markup=day_keyboard,
+        )
+    else:
+        await send(
+            _next_steps(
+                ("/checkin", "log recovery first"),
+                ("/plan new", "regenerate"),
+                ("/progress", "see trends"),
+            ).strip(),
+            parse_mode="Markdown",
         )
 
 

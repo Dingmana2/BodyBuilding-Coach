@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 2026-05-29 — Sprint 12: Weight defaults, sleep date, score display, nav footers
+
+### Fixed
+- `telegram_bot.py` — `_weight_keyboard`: replaced single generic `[20,40,60,80,100]kg` fallback with two separate exercise-specific tables (`_EXERCISE_DEFAULTS_KG` / `_EXERCISE_DEFAULTS_LBS`) — kg and lbs plate math differ, no conversion between them; bench press, deadlift, squat, isolations all get realistic starting weights for the user's unit system
+- `telegram_bot.py` — `_weight_keyboard`: repeat-session increments now use ±5/±10 lbs for lbs users (was ±2.5/±5 kg → fractional lbs); kg users unchanged at ±2.5/±5 kg
+- `garmin_service.py` — `fetch_and_cache`: sleep data now tries today's date first (Garmin stores Thursday night → Friday morning as Friday); falls back to yesterday for all other metrics
+- `telegram_bot.py` — `_garmin_review_lines`: removed all `X/10` score displays; replaced with qualitative labels via `_score_label()` helper (Great/Good/Fair/Poor); stress label inverted correctly
+- `telegram_bot.py` — check-in completion: added `_(0 = completely exhausted · 100 = peak readiness)_` blurb below recovery score bar
+- `prompt_builder.py` — `bot_json_context_block`: replaced `avg sleep=X/10` and `avg soreness=X/10` with qualitative labels so Claude no longer echoes "2.0/10" in weekly report insights
+
+### Added
+- `telegram_bot.py` — `_next_steps()` helper: consistent "💡 What's next:" footer; applied to 6 key outcome screens: plan delivery, check-in complete, workout session end (both paths), analysis follow-up, weekly report, progress view
+
+### Rollback
+- `git revert HEAD` — no schema changes, no migrations
+
 ## 2026-05-29 — Sprint 11: Unit fix, workout button UX, analysis readability, open-beta QA
 
 ### Fixed

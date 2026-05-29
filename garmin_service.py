@@ -15,39 +15,44 @@ def test_login(email: str, password: str) -> None:
 
 
 def fetch_and_cache(chat_id: int, email: str, enc_pass: str) -> dict:
-    """Fetch yesterday's recovery metrics from Garmin Connect and write to cache."""
+    """Fetch recovery metrics from Garmin Connect and write to cache."""
     from garminconnect import Garmin
     from crypto_utils import decrypt
 
     password = decrypt(enc_pass)
     client = Garmin(email, password)
     client.login()
+    today = date.today().isoformat()
     yesterday = (date.today() - timedelta(days=1)).isoformat()
 
     result: dict = {"chat_id": chat_id, "date": yesterday}
 
-    try:
-        sleep = client.get_sleep_data(yesterday) or {}
-        dto = sleep.get("dailySleepDTO") or {}
-        secs = dto.get("sleepTimeSeconds") or 0
-        if secs:
+    # Garmin attributes "Thursday night → Friday morning" sleep as Friday's data.
+    # Try today first so Friday check-ins get the correct night's sleep.
+    for sleep_date in (today, yesterday):
+        try:
+            sleep = client.get_sleep_data(sleep_date) or {}
+            dto = sleep.get("dailySleepDTO") or {}
+            secs = dto.get("sleepTimeSeconds") or 0
+            if not secs:
+                continue
             result["sleep_duration_hrs"] = round(secs / 3600, 2)
-        scores = sleep.get("sleepScores") or {}
-        overall = (scores.get("overall") or {}).get("value")
-        if overall is not None:
-            result["sleep_score_1_10"] = max(1, min(10, round(overall / 10)))
-        # Sleep stages
-        deep_secs = dto.get("deepSleepSeconds") or 0
-        rem_secs = dto.get("remSleepSeconds") or 0
-        light_secs = dto.get("lightSleepSeconds") or 0
-        if deep_secs:
-            result["deep_sleep_mins"] = round(deep_secs / 60)
-        if rem_secs:
-            result["rem_sleep_mins"] = round(rem_secs / 60)
-        if light_secs:
-            result["light_sleep_mins"] = round(light_secs / 60)
-    except Exception:
-        pass
+            scores = sleep.get("sleepScores") or {}
+            overall = (scores.get("overall") or {}).get("value")
+            if overall is not None:
+                result["sleep_score_1_10"] = max(1, min(10, round(overall / 10)))
+            deep_secs = dto.get("deepSleepSeconds") or 0
+            rem_secs = dto.get("remSleepSeconds") or 0
+            light_secs = dto.get("lightSleepSeconds") or 0
+            if deep_secs:
+                result["deep_sleep_mins"] = round(deep_secs / 60)
+            if rem_secs:
+                result["rem_sleep_mins"] = round(rem_secs / 60)
+            if light_secs:
+                result["light_sleep_mins"] = round(light_secs / 60)
+            break
+        except Exception:
+            pass
 
     try:
         hrv = client.get_hrv_data(yesterday) or {}

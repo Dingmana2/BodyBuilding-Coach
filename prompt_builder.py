@@ -281,9 +281,17 @@ def bot_json_context_block(user_data: dict) -> str:
         f"{volume_7d:,.0f}kg total volume",
     ]
     if avg_recovery is not None:
+        def _ql(v: float | None, invert: bool = False) -> str:
+            if v is None:
+                return "N/A"
+            s = (11 - v) if invert else v
+            if s >= 8: return "Great"
+            if s >= 6: return "Good"
+            if s >= 4: return "Fair"
+            return "Poor"
         lines.append(
-            f"Recovery 7d: avg score={avg_recovery}/100, avg sleep={avg_sleep}/10, "
-            f"avg soreness={avg_soreness}/10"
+            f"Recovery 7d: avg score={avg_recovery}/100, "
+            f"sleep quality={_ql(avg_sleep)}, soreness={_ql(avg_soreness, invert=True)}"
         )
     else:
         lines.append("Recovery 7d: no check-ins this week")
