@@ -7,7 +7,7 @@ from pathlib import Path
 
 ANALYSIS_MODEL   = "claude-opus-4-7"
 SUMMARY_MODEL    = "claude-haiku-4-5-20251001"
-REPORT_MODEL     = "claude-opus-4-7"
+REPORT_MODEL     = "claude-haiku-4-5-20251001"  # structured JSON report; haiku is sufficient
 WEAK_POINT_MODEL = "claude-haiku-4-5-20251001"
 
 
