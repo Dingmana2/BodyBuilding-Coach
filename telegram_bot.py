@@ -598,6 +598,21 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
         _save_store()
         await query.edit_message_text(
             f"✅ Training days: *{value}/week*\n\n"
+            "Which unit system do you prefer?",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton("🇺🇸 Imperial  (lbs / ft-in)", callback_data="onboard:units:lbs"),
+                    InlineKeyboardButton("🌍 Metric  (kg / cm)", callback_data="onboard:units:kg"),
+                ],
+            ]),
+        )
+
+    elif step == "units":
+        user["units"] = value  # "kg" or "lbs"
+        _save_store()
+        await query.edit_message_text(
+            f"✅ Units: *{'Imperial (lbs / ft-in)' if value == 'lbs' else 'Metric (kg / cm)'}*\n\n"
             "What's your gender? _(helps personalise your calorie and hormone coaching)_",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([
@@ -614,10 +629,15 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
         user["active_command"] = "onboard_text"
         user["command_state"] = {"step": "stats"}
         _save_store()
+        # Show unit-appropriate example
+        if _wu(user) == "lbs":
+            example = "`23 / 5'7\" / 155lbs`"
+        else:
+            example = "`23 / 178cm / 82kg`"
         await query.edit_message_text(
             f"✅ Gender: *{value}*\n\n"
             "Last step — type your *age, height and weight* so I can personalise your macros.\n\n"
-            "Example: `28 / 178cm / 82kg`\n\n"
+            f"Example: {example}\n\n"
             "_Tap Skip to generate your plan now with just your goal and training days:_",
             parse_mode="Markdown",
             reply_markup=InlineKeyboardMarkup([[

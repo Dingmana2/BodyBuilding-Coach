@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## 2026-05-29 (Sprint 9 — US vs Imperial Unit Selection in Onboarding)
+
+### Unit system choice added to `/start` onboarding flow
+
+**Files:** `telegram_bot.py`
+
+**What changed:**
+- Added a new `step == "units"` branch in `handle_onboard_callback` between the "days" step and the "gender" step
+- After selecting training days, users now see a two-button picker: 🇺🇸 Imperial (lbs / ft-in) or 🌍 Metric (kg / cm)
+- Selection saves `user["units"] = "lbs"` or `"kg"` immediately via `_save_store()`
+- `step == "gender"` now shows unit-appropriate example: `23 / 5'7" / 155lbs` for imperial, `23 / 178cm / 82kg` for metric
+- Existing `_wu(user)` and `_wfmt(value, user)` helpers already propagate this setting through plan generation, stats display, and all coaching output
+
+**Rollback:** Revert the `step == "days"` branch to go directly to gender selection; remove the `step == "units"` branch; revert the example logic in `step == "gender"`.
+
+---
+
 ## 2026-05-29 (Sprint 8 — Telegram Bot 50-User Beta Fix Sprint)
 
 ### 27-bug audit: 4 critical crashes fixed, 7 high-severity flows fixed, 10 medium UX issues fixed
