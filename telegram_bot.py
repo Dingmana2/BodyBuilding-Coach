@@ -632,7 +632,7 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
         )
 
     elif step == "units":
-        user["units"] = value  # "kg" or "lbs"
+        user["units"] = value if value in ("kg", "lbs") else "kg"
         _save_store()
         await query.edit_message_text(
             f"✅ Units: *{'Imperial (lbs / ft-in)' if value == 'lbs' else 'Metric (kg / cm)'}*\n\n"
@@ -677,7 +677,7 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
         loop = asyncio.get_running_loop()
         try:
             plan = await loop.run_in_executor(
-                None, _generate_plan_from_profile, user["profile"], ctx_str
+                None, _generate_plan_from_profile, user["profile"], ctx_str, user.get("units", "kg")
             )
             user["last_plan"] = plan
             _save_store()
@@ -989,11 +989,11 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         try:
             if user["last_analysis"]:
                 plan = await loop.run_in_executor(
-                    None, _generate_plan, user["last_analysis"], user["profile"], ctx_str
+                    None, _generate_plan, user["last_analysis"], user["profile"], ctx_str, user.get("units", "kg")
                 )
             else:
                 plan = await loop.run_in_executor(
-                    None, _generate_plan_from_profile, user["profile"], ctx_str
+                    None, _generate_plan_from_profile, user["profile"], ctx_str, user.get("units", "kg")
                 )
             user["last_plan"] = plan
             _save_store()
@@ -3504,9 +3504,10 @@ async def _process_media_group(update: Update, context: ContextTypes.DEFAULT_TYP
 
         result_text = _format_analysis(analysis)
         try:
-            await msg.edit_text(result_text, parse_mode="Markdown")
+            await msg.delete()
         except Exception:
-            await update.effective_chat.send_message(result_text, parse_mode="Markdown")
+            pass
+        await _send_long(update.effective_chat.send_message, result_text, parse_mode="Markdown")
         await _auto_plan_after_analysis(update, user, chat_id)
     except Exception as e:
         try:
@@ -3536,7 +3537,7 @@ async def _auto_plan_after_analysis(update: Update, user: dict, chat_id: int) ->
         loop = asyncio.get_running_loop()
         try:
             plan = await loop.run_in_executor(
-                None, _generate_plan, user["last_analysis"], user["profile"], ctx_str
+                None, _generate_plan, user["last_analysis"], user["profile"], ctx_str, user.get("units", "kg")
             )
             user["last_plan"] = plan
             _save_store()
@@ -3655,9 +3656,10 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
         result_text = _format_analysis(analysis)
         try:
-            await msg.edit_text(result_text, parse_mode="Markdown")
+            await msg.delete()
         except Exception:
-            await update.message.reply_text(result_text, parse_mode="Markdown")
+            pass
+        await _send_long(update.effective_chat.send_message, result_text, parse_mode="Markdown")
         await _auto_plan_after_analysis(update, user, chat_id)
     except Exception as e:
         try:
@@ -3684,15 +3686,15 @@ async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAUL
 
     await query.edit_message_text(f"🧬 Building your {days}-day plan… (30-60 seconds)")
     ctx_str = _get_bot_context_str(user)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     try:
         if user["last_analysis"]:
             plan = await loop.run_in_executor(
-                None, _generate_plan, user["last_analysis"], user["profile"], ctx_str
+                None, _generate_plan, user["last_analysis"], user["profile"], ctx_str, user.get("units", "kg")
             )
         else:
             plan = await loop.run_in_executor(
-                None, _generate_plan_from_profile, user["profile"], ctx_str
+                None, _generate_plan_from_profile, user["profile"], ctx_str, user.get("units", "kg")
             )
         user["last_plan"] = plan
         _save_store()
@@ -3878,7 +3880,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         loop = asyncio.get_running_loop()
         try:
             plan = await loop.run_in_executor(
-                None, _generate_plan_from_profile, user["profile"], ctx_str
+                None, _generate_plan_from_profile, user["profile"], ctx_str, user.get("units", "kg")
             )
             user["last_plan"] = plan
             _save_store()
@@ -4154,11 +4156,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 regen_ctx = _get_bot_context_str(user)
                 if user["last_analysis"]:
                     plan = await loop.run_in_executor(
-                        None, _generate_plan, user["last_analysis"], user["profile"], regen_ctx
+                        None, _generate_plan, user["last_analysis"], user["profile"], regen_ctx, user.get("units", "kg")
                     )
                 else:
                     plan = await loop.run_in_executor(
-                        None, _generate_plan_from_profile, user["profile"], regen_ctx
+                        None, _generate_plan_from_profile, user["profile"], regen_ctx, user.get("units", "kg")
                     )
                 user["last_plan"] = plan
                 _save_store()
@@ -4356,15 +4358,36 @@ def _analyze_photo(images_b64: list[str], profile: dict, prev: dict | None = Non
 
 # ── Claude: plan generation ───────────────────────────────────────────────────
 
-def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_str: str = "") -> str:
+def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_str: str = "", user_units: str = "kg") -> str:
     injuries_note = profile.get("injuries", "") if profile else ""
     diet_restrictions = profile.get("dietary_restrictions", "") if profile else ""
     show_date = profile.get("show_date", "") if profile else ""
+
+    # Convert stored metric values to the user's preferred display unit for the prompt
+    if user_units == "lbs" and profile:
+        try:
+            _w_lbs = round(float(profile.get("weight", 0) or 0) * 2.20462, 1)
+            w_display = f"{_w_lbs}lbs" if _w_lbs else "?lbs"
+        except (ValueError, TypeError):
+            w_display = "?lbs"
+        try:
+            _h_in = round(float(profile.get("height", 0) or 0) / 2.54)
+            h_display = f"{_h_in // 12}'{_h_in % 12}\"" if _h_in else "?"
+        except (ValueError, TypeError):
+            h_display = "?"
+    else:
+        w_display = f"{profile.get('weight', '?')}kg" if profile else "?"
+        h_display = f"{profile.get('height', '?')}cm" if profile else "?"
+
+    unit_label = "lbs" if user_units == "lbs" else "kg"
+    height_unit = "feet and inches" if user_units == "lbs" else "cm"
+    progression_example = "5lbs" if user_units == "lbs" else "2.5kg"
+
     profile_ctx = (
         f"Age: {profile.get('age', 'not specified')} | "
         f"Gender: {profile.get('gender', 'not specified')} | "
-        f"Height: {profile.get('height', '?')}cm | "
-        f"Weight: {profile.get('weight', '?')}kg | "
+        f"Height: {h_display} | "
+        f"Weight: {w_display} | "
         f"Goal: {profile.get('goal', 'general health')} | "
         f"Experience: {profile.get('experience', 'beginner')} | "
         f"Training days: {days}/week"
@@ -4442,6 +4465,10 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         "Training days: higher carbs. Rest days: slightly lower carbs, same protein.\n\n"
         "SUPPLEMENTS: always include Beta-Alanine (grade B) at priority 4 — "
         "3.2-6.4g/day for high-rep work (endurance/hypertrophy), causes tingling harmless paresthesia.\n\n"
+        f"UNITS: This athlete uses {unit_label}. Output ALL weight references throughout the plan "
+        f"(progression increments, exercise coaching cues, example loads) in {unit_label}. "
+        f"Height references in {height_unit}. Do NOT mix units — no kg if the athlete uses lbs, "
+        f"no lbs if the athlete uses kg.\n\n"
         "Return ONLY valid JSON:\n"
         "{\n"
         '    "workout": {\n'
@@ -4461,7 +4488,7 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         '                ]\n'
         '            }\n'
         '        ],\n'
-        '        "progression": "Add 2.5kg when you complete all sets at top of rep range for 2 consecutive sessions.",\n'
+        f'        "progression": "Add {progression_example} when you complete all sets at top of rep range for 2 consecutive sessions.",\n'
         '        "deload": "Every 4-6 weeks: reduce load 40%, maintain volume."\n'
         '    },\n'
         '    "diet": {\n'
@@ -4530,21 +4557,21 @@ def _run_plan_api(prompt: str) -> dict:
     return _parse_plan_response(resp.content[0].text)
 
 
-def _generate_plan(analysis: dict, profile: dict, context_str: str = "") -> dict:
+def _generate_plan(analysis: dict, profile: dict, context_str: str = "", user_units: str = "kg") -> dict:
     try:
         days = int(re.sub(r"[^0-9]", "", str(profile.get("days", "4"))) or "4")
     except (ValueError, TypeError):
         days = 4
-    prompt = _build_plan_prompt(profile, analysis, days, context_str)
+    prompt = _build_plan_prompt(profile, analysis, days, context_str, user_units)
     return _run_plan_api(prompt)
 
 
-def _generate_plan_from_profile(profile: dict, context_str: str = "") -> dict:
+def _generate_plan_from_profile(profile: dict, context_str: str = "", user_units: str = "kg") -> dict:
     try:
         days = int(re.sub(r"[^0-9]", "", str(profile.get("days", "4"))) or "4")
     except (ValueError, TypeError):
         days = 4
-    prompt = _build_plan_prompt(profile, None, days, context_str)
+    prompt = _build_plan_prompt(profile, None, days, context_str, user_units)
     return _run_plan_api(prompt)
 
 
@@ -5076,6 +5103,7 @@ def _build_muscle_progress_text(user: dict) -> str:
 # ── Formatters ────────────────────────────────────────────────────────────────
 
 def _format_analysis(a: dict) -> str:
+    _SEP = "\n——————————————————\n"
     angle = a.get("photo_angle", "")
     _angle_emoji = {
         "front": "🔵", "back": "🔴",
@@ -5085,25 +5113,44 @@ def _format_analysis(a: dict) -> str:
     angle_line = f"{angle_emoji} *{angle.replace('_', ' ').title()} view*\n" if angle else ""
 
     muscle = a.get("muscle_development", {})
-    muscle_lines = "\n".join(
-        f"  {k.capitalize()} — {esc(v.get('notes', ''))}"
-        + (f"\n    → _{esc(v['action'])}_" if v.get("action") else "")
-        for k, v in muscle.items()
-        if v.get("notes")
-    )
-    strengths = "\n".join(f"✅ {esc(s)}" for s in a.get("strengths", []))
-    priorities = "\n".join(f"🎯 {esc(s)}" for s in a.get("priority_improvements", []))
+    muscle_blocks = []
+    for k, v in muscle.items():
+        if not v.get("notes"):
+            continue
+        block = f"*{esc(k.capitalize())}*\n  {esc(v.get('notes', ''))}"
+        if v.get("action"):
+            block += f"\n  → _{esc(v['action'])}_"
+        muscle_blocks.append(block)
+    muscle_section = ("\n\n".join(muscle_blocks)) if muscle_blocks else "_No muscle data_"
 
-    return (
+    strengths = "\n".join(f"• {esc(s)}" for s in a.get("strengths", []))
+    priorities = "\n".join(f"• {esc(s)}" for s in a.get("priority_improvements", []))
+
+    parts = [
         f"📊 *Physique Analysis*\n{angle_line}\n"
-        f"Body Fat: *{a.get('body_fat_estimate', '?')}* (confidence: {a.get('body_fat_confidence', '?')})\n\n"
-        f"*Muscle Assessment:*\n{muscle_lines}\n\n"
-        f"*Strengths:*\n{strengths}\n\n"
-        f"*Top Priorities:*\n{priorities}\n\n"
-        f"📐 {esc(a.get('symmetry_notes', ''))}\n\n"
-        f"_{esc(a.get('coach_message', ''))}_\n\n"
-        f"_⚠️ AI estimate only — not a medical assessment. Use /progress to track objective muscle progress._"
+        f"Body Fat: *{esc(str(a.get('body_fat_estimate', '?')))}*  ·  "
+        f"Confidence: {esc(str(a.get('body_fat_confidence', '?')))}",
+
+        f"💪 *Muscle Assessment*\n\n{muscle_section}",
+
+        f"✅ *Strengths*\n{strengths}" if strengths else None,
+
+        f"🎯 *Top Priorities*\n{priorities}" if priorities else None,
+    ]
+
+    body = _SEP.join(p for p in parts if p)
+
+    footer_lines = []
+    if a.get("symmetry_notes"):
+        footer_lines.append(f"📐 _{esc(a.get('symmetry_notes', ''))}_")
+    if a.get("coach_message"):
+        footer_lines.append(f"💬 _{esc(a.get('coach_message', ''))}_")
+    footer_lines.append(
+        "_⚠️ AI estimate only — not a medical assessment. Use /progress for objective tracking._"
     )
+    footer = "\n\n".join(footer_lines)
+
+    return f"{body}{_SEP}{footer}"
 
 
 async def _send_plan(update: Update, plan: dict) -> None:
@@ -5156,7 +5203,6 @@ async def _send_plan(update: Update, plan: dict) -> None:
         f"🔄 *Deload:* {esc(workout.get('deload', ''))}"
         f"{zone2_line}",
         parse_mode="Markdown",
-        reply_markup=day_keyboard,
     )
 
     # ── Diet ──
@@ -5232,6 +5278,14 @@ async def _send_plan(update: Update, plan: dict) -> None:
         f"If anything feels wrong, trust your body and consult a coach or physio._",
         parse_mode="Markdown",
     )
+
+    # ── Day picker (trailing, after all plan sections) ──
+    if day_buttons:
+        await send(
+            "🏋️ *Ready to train? Choose your session:*",
+            parse_mode="Markdown",
+            reply_markup=day_keyboard,
+        )
 
 
 async def _daily_garmin_sync() -> None:

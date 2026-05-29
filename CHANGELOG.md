@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026-05-29 — Sprint 11: Unit fix, workout button UX, analysis readability, open-beta QA
+
+### Fixed
+- `telegram_bot.py` — `_build_plan_prompt`: added `user_units` param; converts stored kg/cm to lbs/ft-in for lbs users before injecting into the AI prompt; adds explicit UNITS instruction so Claude uses the correct unit throughout the plan (was always defaulting to metric regardless of user setting)
+- `telegram_bot.py` — `_send_plan`: removed `reply_markup=day_keyboard` from the Workout message; day-picker buttons now appear as a single trailing "🏋️ Ready to train?" message after all four plan sections are sent
+- `telegram_bot.py` — `_format_analysis`: replaced flat indented muscle list with section-separated layout — `——` dividers, bold per-muscle headers, `→ _action_` style, `•` bullet lists for strengths/priorities, `📐`/`💬` emoji labels for footer fields
+- `telegram_bot.py` — all 9 call sites of `_generate_plan` / `_generate_plan_from_profile` updated to pass `user.get("units", "kg")`; one site also fixed `asyncio.get_event_loop()` → `asyncio.get_running_loop()`
+
+### Added
+- `tests/beta_simulation.py` — self-contained 60+ archetype open-beta simulation; validates unit display, analysis formatting, Markdown escaping, plan JSON shape, and source-level structural checks; 69/69 pass
+
+### Rollback
+- `git revert HEAD` — no schema changes, no migrations
+
 ## 2026-05-29 — Replace subjective body-part scores with objective per-muscle tracking
 
 ### Changed
