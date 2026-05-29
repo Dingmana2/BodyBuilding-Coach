@@ -2767,6 +2767,14 @@ async def cmd_connect(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
 
+    import crypto_utils as _cu
+    if not _cu.encryption_available():
+        await update.message.reply_text(
+            "⚠️ Garmin and MFP connections aren't available on this bot yet.\n\n"
+            "The admin needs to set the ENCRYPTION_KEY environment variable and restart the bot."
+        )
+        return
+
     user["active_command"] = f"connect_{service}"
     user["command_state"] = {"step": 0}
 
@@ -2820,11 +2828,11 @@ async def _handle_connect_step(update: Update, user: dict, text: str) -> None:
                         "This will retry automatically at 6am."
                     )
             except Exception as e:
+                logger.warning("Garmin connect failed for chat %s: %s", chat_id, e)
                 user["active_command"] = None
                 await msg.edit_text(
-                    f"❌ Couldn't connect to Garmin: {e}\n"
-                    "Check your credentials and try `/connect garmin` again.",
-                    parse_mode="Markdown",
+                    "❌ Couldn't connect to Garmin — double-check your email and password, "
+                    "then try /connect garmin again."
                 )
 
     elif active == "connect_mfp":
@@ -2852,11 +2860,11 @@ async def _handle_connect_step(update: Update, user: dict, text: str) -> None:
                     parse_mode="Markdown",
                 )
             except Exception as e:
+                logger.warning("MFP connect failed for chat %s: %s", chat_id, e)
                 user["active_command"] = None
                 await msg.edit_text(
-                    f"❌ Couldn't connect to MFP: {e}\n"
-                    "Check your credentials and try `/connect mfp` again.",
-                    parse_mode="Markdown",
+                    "❌ Couldn't connect to MyFitnessPal — double-check your username and password, "
+                    "then try /connect mfp again."
                 )
 
 
@@ -5158,6 +5166,13 @@ def main() -> None:
         )
     if not ANTHROPIC_KEY:
         raise ValueError("ANTHROPIC_API_KEY is not set.")
+
+    import crypto_utils as _cu
+    if not _cu.encryption_available():
+        logger.warning(
+            "ENCRYPTION_KEY is not set or invalid — Garmin and MFP integrations are "
+            "disabled. Add ENCRYPTION_KEY to your environment variables to enable them."
+        )
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", cmd_start))
