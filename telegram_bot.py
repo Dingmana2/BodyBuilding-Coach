@@ -3473,17 +3473,27 @@ async def _process_media_group(update: Update, context: ContextTypes.DEFAULT_TYP
             images_b64.append(base64.standard_b64encode(buf.getvalue()).decode("utf-8"))
 
         prev = (user.get("analyses") or [None])[-1]
-        analysis = _analyze_photo(images_b64, user["profile"], prev=prev)
+        loop = asyncio.get_running_loop()
+        analysis = await loop.run_in_executor(
+            None, _analyze_photo, images_b64, user["profile"], prev
+        )
         user["last_analysis"] = analysis
         entry = {**analysis, "date": _today(), "photo_count": len(photos)}
         user.setdefault("analyses", []).append(entry)
         user["analyses"] = user["analyses"][-20:]
         _save_store()
 
-        await msg.edit_text(_format_analysis(analysis), parse_mode="Markdown")
+        result_text = _format_analysis(analysis)
+        try:
+            await msg.edit_text(result_text, parse_mode="Markdown")
+        except Exception:
+            await update.effective_chat.send_message(result_text, parse_mode="Markdown")
         await _auto_plan_after_analysis(update, user, chat_id)
     except Exception as e:
-        await msg.edit_text(f"❌ Analysis failed: {e}")
+        try:
+            await msg.edit_text(f"❌ Analysis failed: {e}")
+        except Exception:
+            await update.effective_chat.send_message(f"❌ Analysis failed: {e}")
 
 
 async def _auto_plan_after_analysis(update: Update, user: dict, chat_id: int) -> None:
@@ -3614,17 +3624,27 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         img_b64 = base64.standard_b64encode(buf.getvalue()).decode("utf-8")
 
         prev = (user.get("analyses") or [None])[-1]
-        analysis = _analyze_photo([img_b64], user["profile"], prev=prev)
+        loop = asyncio.get_running_loop()
+        analysis = await loop.run_in_executor(
+            None, _analyze_photo, [img_b64], user["profile"], prev
+        )
         user["last_analysis"] = analysis
         entry = {**analysis, "date": _today()}
         user.setdefault("analyses", []).append(entry)
         user["analyses"] = user["analyses"][-20:]
         _save_store()
 
-        await msg.edit_text(_format_analysis(analysis), parse_mode="Markdown")
+        result_text = _format_analysis(analysis)
+        try:
+            await msg.edit_text(result_text, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(result_text, parse_mode="Markdown")
         await _auto_plan_after_analysis(update, user, chat_id)
     except Exception as e:
-        await msg.edit_text(f"❌ Analysis failed: {e}")
+        try:
+            await msg.edit_text(f"❌ Analysis failed: {e}")
+        except Exception:
+            await update.message.reply_text(f"❌ Analysis failed: {e}")
 
 
 async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
