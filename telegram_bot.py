@@ -46,6 +46,24 @@ ANALYZE_COOLDOWN = 60   # 1 minute between photo analyses
 _plan_cooldowns: dict[int, float] = {}
 _analyze_cooldowns: dict[int, float] = {}
 
+# Exercise-name → muscle-group keyword mapping (shared across /stats, /progress, plan context).
+_MUSCLE_MAP: dict[str, list[str]] = {
+    "chest": ["bench", "chest", "fly", "push", "pec"],
+    "back": ["row", "pulldown", "pull-up", "pullup", "chin", "deadlift", "back", "lat"],
+    "shoulders": ["lateral", "shoulder", "ohp", "delt", "raise", "face pull"],
+    "arms": ["curl", "tricep", "bicep", "extension", "dip", "skullcrusher"],
+    "legs": ["squat", "lunge", "leg press", "leg curl", "leg extension", "calf", "rdl",
+             "romanian", "hip thrust", "glute", "hamstring"],
+    "core": ["plank", "crunch", "ab", "core", "sit-up", "situp", "woodchop"],
+}
+
+# Measurement fields that correspond to each muscle group (for size-trend tracking).
+_MUSCLE_MEASURE: dict[str, tuple[str, ...]] = {
+    "chest": ("chest_cm",),
+    "arms": ("left_arm_cm", "right_arm_cm"),
+    "legs": ("left_thigh_cm", "right_thigh_cm"),
+}
+
 
 def esc(text: str) -> str:
     """Escape special chars for Telegram legacy Markdown mode."""
@@ -1941,25 +1959,16 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     # Sessions count
     lines.append(f"\n*Sessions logged:* {user['session_counter']}")
 
-    # Photo analysis history
+    # Photo analysis history (body fat trend — no subjective scores)
     analyses = user.get("analyses", [])
     if analyses:
-        photo_lines = ["📸 *Photo Analyses:*"]
-        for i, a in enumerate(analyses):
-            score = a.get("overall_physique_score", "?")
+        photo_lines = ["📸 *Photo Check-ins:*"]
+        for a in analyses:
             bf = a.get("body_fat_estimate", "?")
             dt = a.get("date", "?")
-            if i > 0:
-                prev_score = analyses[i - 1].get("overall_physique_score")
-                try:
-                    arrow = " ↗" if float(score) > float(prev_score) else (" ↘" if float(score) < float(prev_score) else "")
-                except (TypeError, ValueError):
-                    arrow = ""
-            else:
-                arrow = ""
             angle = a.get("photo_angle", "")
             angle_label = f" [{angle.replace('_', ' ')}]" if angle else ""
-            photo_lines.append(f"  {dt}{angle_label}: {bf} BF | Score {score}/10{arrow}")
+            photo_lines.append(f"  {dt}{angle_label}: {bf} body fat")
         lines.append("\n" + "\n".join(photo_lines))
 
     # Longevity Score — composite from recent Garmin/checkin data
@@ -1995,7 +2004,26 @@ async def cmd_progress(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if len(lines) == 2:
         lines.append("\nLog workouts with `/workout start` + `/logset`, check in daily with `/checkin`, and track weight with `/measurements weight=83kg`.")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    keyboard = InlineKeyboardMarkup([[
+        InlineKeyboardButton("💪 Muscle Progress", callback_data="progress:muscles"),
+    ]])
+    await update.message.reply_text("\n".join(lines), parse_mode="Markdown", reply_markup=keyboard)
+
+
+async def handle_progress_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle progress: callback buttons (currently: progress:muscles)."""
+    query = update.callback_query
+    await query.answer()
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    action = query.data.split(":", 1)[1] if ":" in query.data else ""
+
+    if action == "muscles":
+        text = _build_muscle_progress_text(user)
+        try:
+            await query.edit_message_text(text, parse_mode="Markdown")
+        except Exception:
+            await update.effective_chat.send_message(text, parse_mode="Markdown")
 
 
 async def cmd_measurements(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -2615,25 +2643,8 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         for ex, v in sorted_prs
     )
 
-    # Volume per muscle group (last 30 days)
-    cutoff = str(_date.today() - timedelta(days=30))
-    recent_sets = [s for s in user["set_logs"] if s.get("date", "") >= cutoff]
-    muscle_map = {
-        "chest": ["bench", "chest", "fly", "push"],
-        "back": ["row", "pulldown", "pull-up", "deadlift", "back"],
-        "shoulders": ["press", "lateral", "shoulder", "ohp"],
-        "arms": ["curl", "tricep", "bicep", "extension"],
-        "legs": ["squat", "lunge", "leg press", "leg curl", "leg extension", "calf"],
-        "core": ["plank", "crunch", "ab", "core"],
-    }
-    vol: dict[str, int] = {}
-    for s in recent_sets:
-        name = s["exercise_name"].lower()
-        for muscle, keywords in muscle_map.items():
-            if any(k in name for k in keywords):
-                vol[muscle] = vol.get(muscle, 0) + 1
-                break
-
+    # Volume per muscle group (last 30 days) — uses shared _volume_by_muscle helper
+    vol = _volume_by_muscle(user["set_logs"], days=30)
     vol_text = ""
     if vol:
         max_sets = max(vol.values())
@@ -4365,10 +4376,9 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         body_ctx = (
             f"BODY ANALYSIS:\n"
             f"- Body fat: {analysis.get('body_fat_estimate', '?')}\n"
-            f"- Physique score: {analysis.get('overall_physique_score', '?')}/10\n"
             f"- Priority improvements: {', '.join(analysis.get('priority_improvements', []))}\n"
             f"- Weakest areas: {', '.join(analysis.get('areas_to_improve', []))}\n"
-            f"- Muscle development: {json.dumps(analysis.get('muscle_development', {}))}"
+            f"- Muscle coaching notes: {json.dumps(analysis.get('muscle_development', {}))}"
         )
     else:
         body_ctx = "No photo analysis — build the plan entirely from the profile stats above."
@@ -4906,6 +4916,163 @@ async def _send_long(send_fn, text: str, **kwargs) -> None:
         await send_fn(chunk, **kwargs)
 
 
+# ── Per-muscle helpers ────────────────────────────────────────────────────────
+
+def _volume_by_muscle(set_logs: list[dict], days: int = 30) -> dict[str, int]:
+    """Count sets per muscle group over the last N days using _MUSCLE_MAP."""
+    cutoff = str(_date.today() - timedelta(days=days))
+    vol: dict[str, int] = {}
+    for s in set_logs:
+        if s.get("date", "") < cutoff:
+            continue
+        name = (s.get("exercise_name") or "").lower()
+        for muscle, keywords in _MUSCLE_MAP.items():
+            if any(k in name for k in keywords):
+                vol[muscle] = vol.get(muscle, 0) + 1
+                break
+    return vol
+
+
+def _muscle_strength_trend(set_logs: list[dict], weeks: int = 8) -> dict[str, dict]:
+    """Return per-muscle best estimated-1RM split into early vs late half of window."""
+    today = _date.today()
+    start = str(today - timedelta(weeks=weeks))
+    mid = str(today - timedelta(weeks=weeks // 2))
+    trend: dict[str, dict] = {}
+    for s in set_logs:
+        d = s.get("date", "")
+        if d < start:
+            continue
+        name = s.get("exercise_name") or ""
+        rm = float(s.get("estimated_1rm") or 0)
+        if rm <= 0:
+            continue
+        for muscle, keywords in _MUSCLE_MAP.items():
+            if any(k in name.lower() for k in keywords):
+                bucket = "early" if d < mid else "late"
+                entry = trend.setdefault(muscle, {"early": (0.0, ""), "late": (0.0, "")})
+                if rm > entry[bucket][0]:
+                    entry[bucket] = (rm, name)
+                break
+    return trend
+
+
+def _muscle_measurement_trend(measurements: list[dict], weeks: int = 8) -> dict[str, dict]:
+    """Return measurement delta per muscle group over the last N weeks."""
+    cutoff = str(_date.today() - timedelta(weeks=weeks))
+    relevant = sorted(
+        [m for m in measurements if m.get("date", "") >= cutoff],
+        key=lambda m: m.get("date", ""),
+    )
+    result: dict[str, dict] = {}
+    for muscle, fields in _MUSCLE_MEASURE.items():
+        sides: dict[str, tuple[float, float]] = {}
+        for field in fields:
+            vals = [(m["date"], m[field]) for m in relevant if m.get(field) is not None]
+            if len(vals) >= 2:
+                sides[field] = (vals[0][1], vals[-1][1])
+        if not sides:
+            continue
+        all_first = [v[0] for v in sides.values()]
+        all_last = [v[1] for v in sides.values()]
+        first_avg = sum(all_first) / len(all_first)
+        last_avg = sum(all_last) / len(all_last)
+        result[muscle] = {
+            "first": round(first_avg, 1),
+            "last": round(last_avg, 1),
+            "delta": round(last_avg - first_avg, 1),
+            "sides": sides,
+        }
+    return result
+
+
+def _build_muscle_progress_text(user: dict) -> str:
+    """Build the per-muscle progress message from set_logs, prs, and measurements."""
+    set_logs = user.get("set_logs") or []
+    measurements = user.get("measurements") or []
+    u = user  # for unit helper
+
+    parts: list[str] = ["💪 *Per-Muscle Progress (last 8 weeks)*\n"]
+    has_data = False
+
+    # ── Tape measurements ─────────────────────────────────────────────────────
+    meas_trend = _muscle_measurement_trend(measurements, weeks=8)
+    if meas_trend:
+        has_data = True
+        parts.append("*📐 Size (tape measurements)*")
+        for muscle, info in meas_trend.items():
+            delta = info["delta"]
+            arrow = "▲" if delta > 0 else ("▼" if delta < 0 else "→")
+            if len(info["sides"]) == 1:
+                # Single field (chest)
+                field = list(info["sides"].keys())[0]
+                f, l = info["sides"][field]
+                parts.append(f"  {muscle.capitalize()}: {f}cm → {l}cm ({arrow} {abs(delta):.1f}cm)")
+            else:
+                # Paired (arms, legs) — show both sides
+                side_lines = []
+                for field, (f, l) in info["sides"].items():
+                    side_label = "L" if "left" in field else "R"
+                    side_lines.append(f"{side_label}: {f}→{l}cm")
+                d_str = f"({arrow} {abs(delta):.1f}cm avg)"
+                parts.append(f"  {muscle.capitalize()}: {', '.join(side_lines)}  {d_str}")
+        parts.append("")
+
+    # ── Strength trend ─────────────────────────────────────────────────────────
+    str_trend = _muscle_strength_trend(set_logs, weeks=8)
+    if str_trend:
+        has_data = True
+        parts.append("*🏋️ Strength trend (best est. 1RM)*")
+        for muscle, info in str_trend.items():
+            early_rm, early_ex = info["early"]
+            late_rm, late_ex = info["late"]
+            ex_name = late_ex or early_ex
+            if early_rm > 0 and late_rm > 0:
+                pct = round((late_rm - early_rm) / early_rm * 100, 1)
+                arrow = "▲" if pct > 0 else ("▼" if pct < 0 else "→")
+                parts.append(
+                    f"  {muscle.capitalize()} ({esc(ex_name)}): "
+                    f"{_wfmt(early_rm, u)} → {_wfmt(late_rm, u)}  {arrow} {abs(pct):.1f}%"
+                )
+            elif late_rm > 0:
+                parts.append(f"  {muscle.capitalize()} ({esc(ex_name)}): {_wfmt(late_rm, u)} 1RM (new)")
+            elif early_rm > 0:
+                parts.append(f"  {muscle.capitalize()} ({esc(ex_name)}): {_wfmt(early_rm, u)} 1RM (no recent sets)")
+        parts.append("")
+
+    # ── Volume balance ─────────────────────────────────────────────────────────
+    vol = _volume_by_muscle(set_logs, days=56)  # 8 weeks
+    if vol:
+        has_data = True
+        parts.append("*📊 Training volume (sets last 8 weeks)*")
+        max_sets = max(vol.values())
+        for muscle, sets in sorted(vol.items(), key=lambda x: x[1], reverse=True):
+            bar = "█" * round(sets / max_sets * 10) + "░" * (10 - round(sets / max_sets * 10))
+            parts.append(f"  {muscle.capitalize():10s} {bar}  {sets}s")
+        parts.append("")
+
+    if not has_data:
+        return (
+            "💪 *Per-Muscle Progress*\n\n"
+            "No data yet. Start logging:\n"
+            "• Sets: `/logset` or `/workout start`\n"
+            "• Measurements: `/measurements arm=35cm chest=95cm`\n\n"
+            "Once you have a few weeks of data, this view shows size, strength, and volume trends per muscle group."
+        )
+
+    # Tip: which muscles have no data
+    all_muscles = set(_MUSCLE_MAP.keys())
+    tracked = set(meas_trend.keys()) | set(str_trend.keys()) | set(vol.keys())
+    untracked = all_muscles - tracked
+    if untracked:
+        parts.append(
+            f"_No data for: {', '.join(sorted(untracked))} — "
+            f"log sets or measurements to track them._"
+        )
+
+    return "\n".join(parts)
+
+
 # ── Formatters ────────────────────────────────────────────────────────────────
 
 def _format_analysis(a: dict) -> str:
@@ -4919,24 +5086,23 @@ def _format_analysis(a: dict) -> str:
 
     muscle = a.get("muscle_development", {})
     muscle_lines = "\n".join(
-        f"  {k.capitalize()}: {v.get('score', '?')}/10 — {esc(v.get('notes', ''))}"
+        f"  {k.capitalize()} — {esc(v.get('notes', ''))}"
         + (f"\n    → _{esc(v['action'])}_" if v.get("action") else "")
         for k, v in muscle.items()
-        if v.get("score") is not None
+        if v.get("notes")
     )
     strengths = "\n".join(f"✅ {esc(s)}" for s in a.get("strengths", []))
     priorities = "\n".join(f"🎯 {esc(s)}" for s in a.get("priority_improvements", []))
 
     return (
         f"📊 *Physique Analysis*\n{angle_line}\n"
-        f"Body Fat: *{a.get('body_fat_estimate', '?')}* (confidence: {a.get('body_fat_confidence', '?')})\n"
-        f"Score: *{a.get('overall_physique_score', '?')}/10*\n\n"
-        f"*Muscle Development:*\n{muscle_lines}\n\n"
+        f"Body Fat: *{a.get('body_fat_estimate', '?')}* (confidence: {a.get('body_fat_confidence', '?')})\n\n"
+        f"*Muscle Assessment:*\n{muscle_lines}\n\n"
         f"*Strengths:*\n{strengths}\n\n"
         f"*Top Priorities:*\n{priorities}\n\n"
         f"📐 {esc(a.get('symmetry_notes', ''))}\n\n"
         f"_{esc(a.get('coach_message', ''))}_\n\n"
-        f"_⚠️ AI estimate only — body fat ±5%, scores are relative. Not a medical assessment._"
+        f"_⚠️ AI estimate only — not a medical assessment. Use /progress to track objective muscle progress._"
     )
 
 
@@ -5207,6 +5373,7 @@ def main() -> None:
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("freeze", cmd_freeze))
     app.add_handler(CommandHandler("peakweek", cmd_peakweek))
+    app.add_handler(CallbackQueryHandler(handle_progress_callback, pattern=r"^progress:"))
     app.add_handler(CallbackQueryHandler(handle_onboard_callback, pattern=r"^onboard:"))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
     app.add_handler(CallbackQueryHandler(handle_plan_days_callback, pattern=r"^plan:days:"))

@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 2026-05-29 — Replace subjective body-part scores with objective per-muscle tracking
+
+### Changed
+- `claude_service.py` — removed `score: 1-10` and `overall_physique_score` from physique analysis JSON schema; prompt now requests only qualitative `notes` + `action` per muscle
+- `telegram_bot.py` — `_format_analysis`: removed `X/10` display; muscle lines now show coaching notes + exercise prescription only; photo check-in history in `/progress` shows body fat trend, not scores; `/progress` adds "💪 Muscle Progress" inline button
+- `telegram_bot.py` — new module-level `_MUSCLE_MAP` (shared) and `_MUSCLE_MEASURE` constants; new helpers: `_volume_by_muscle()`, `_muscle_strength_trend()`, `_muscle_measurement_trend()`, `_build_muscle_progress_text()`; new `handle_progress_callback()` for `progress:muscles` button
+- `telegram_bot.py` — `cmd_stats`: now uses shared `_volume_by_muscle()` instead of duplicated inline logic
+- `telegram_bot.py` — `_build_plan_prompt`: removed `Physique score: X/10` injection; kept qualitative coaching notes
+- `prompt_builder.py` — `bot_json_context_block()`: added 30-day volume-by-muscle distribution to AI context (e.g. "Chest: 14s | Back: 22s | Legs: 8s") so plan generation can detect imbalances without photo scores
+
+### Added
+- `/progress` → "💪 Muscle Progress" button: shows tape measurement deltas (arm/chest/thigh cm over 8 weeks), strength trend per muscle group (best est. 1RM early vs late half of window), and volume distribution bar chart — all from logged set data and measurements with no AI subjectivity
+
+### Rollback
+- `git revert HEAD` — no schema changes, no migrations
+
 ## 2026-05-29 (Sprint 10 — Open Beta Bug-Fix Sprint: 21 bugs fixed)
 
 ### Pre-existing SyntaxError + 20 logic/UX bugs from open beta simulation fixed

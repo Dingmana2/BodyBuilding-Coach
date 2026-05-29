@@ -301,6 +301,27 @@ def bot_json_context_block(user_data: dict) -> str:
     lines.append(f"Total sessions logged: {session_counter}")
     lines.append(f"Top PRs: {prs_text}")
 
+    # Volume distribution by muscle group (last 30d) — used to detect training imbalances
+    _muscle_map = {
+        "chest": ["bench", "chest", "fly", "push", "pec"],
+        "back": ["row", "pulldown", "pull-up", "pullup", "chin", "deadlift", "back", "lat"],
+        "shoulders": ["lateral", "shoulder", "ohp", "delt", "raise", "face pull"],
+        "arms": ["curl", "tricep", "bicep", "extension", "dip", "skullcrusher"],
+        "legs": ["squat", "lunge", "leg press", "leg curl", "leg extension", "calf", "rdl",
+                 "romanian", "hip thrust", "glute", "hamstring"],
+        "core": ["plank", "crunch", "ab", "core", "sit-up", "situp", "woodchop"],
+    }
+    vol_30d: dict[str, int] = {}
+    for s in [s for s in set_logs if s.get("date", "") >= thirty_days_ago]:
+        name = (s.get("exercise_name") or "").lower()
+        for muscle, keywords in _muscle_map.items():
+            if any(k in name for k in keywords):
+                vol_30d[muscle] = vol_30d.get(muscle, 0) + 1
+                break
+    if vol_30d:
+        vol_str = " | ".join(f"{m.capitalize()}: {n}s" for m, n in sorted(vol_30d.items()))
+        lines.append(f"Volume balance 30d (sets): {vol_str}")
+
     return "\n".join(lines)
 
 
