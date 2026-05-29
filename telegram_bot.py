@@ -586,14 +586,44 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
     elif step == "days":
         user["profile"]["days"] = value
         _save_store()
-        profile = user["profile"]
         await query.edit_message_text(
             f"✅ Training days: *{value}/week*\n\n"
-            "Almost there! Tap any field below to fill in your details — "
-            "the more you add, the more personalised your plan will be.\n\n"
-            "Tap *Generate my plan* at the bottom whenever you're ready.",
+            "What's your gender? _(helps personalise your calorie and hormone coaching)_",
             parse_mode="Markdown",
-            reply_markup=_profile_menu_keyboard(profile),
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("👨 Male", callback_data="onboard:gender:male"),
+                 InlineKeyboardButton("👩 Female", callback_data="onboard:gender:female")],
+                [InlineKeyboardButton("⚧️ Non-binary", callback_data="onboard:gender:non-binary"),
+                 InlineKeyboardButton("⏭️ Skip — generate now", callback_data="onboard:skip:gender")],
+            ]),
+        )
+
+    elif step == "gender":
+        user["profile"]["gender"] = value
+        _save_store()
+        user["active_command"] = "onboard_text"
+        user["command_state"] = {"step": "stats"}
+        _save_store()
+        await query.edit_message_text(
+            f"✅ Gender: *{value}*\n\n"
+            "Last step — type your *age, height and weight* so I can personalise your macros.\n\n"
+            "Example: `28 / 178cm / 82kg`\n\n"
+            "_Tap Skip to generate your plan now with just your goal and training days:_",
+            parse_mode="Markdown",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("⏭️ Skip — generate now", callback_data="onboard:skip:stats"),
+            ]]),
+        )
+
+    elif step == "skip":
+        user["active_command"] = None
+        user["command_state"] = {}
+        _save_store()
+        await query.edit_message_text(
+            "You're all set! Tap below to generate your personalised plan:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🚀 Generate my plan", callback_data="prof:generate"),
+            ]]),
         )
 
 
@@ -844,13 +874,22 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         )
 
     elif action == "generate":
+        remaining = _check_cooldown(_plan_cooldowns, chat_id, PLAN_COOLDOWN)
+        if remaining:
+            await query.answer(f"⏳ Wait {remaining}s before regenerating.", show_alert=True)
+            return
         await query.edit_message_text("🧬 Building your plan… (30-60 seconds)")
         ctx_str = _get_bot_context_str(user)
+        loop = asyncio.get_event_loop()
         try:
             if user["last_analysis"]:
-                plan = _generate_plan(user["last_analysis"], user["profile"], ctx_str)
+                plan = await loop.run_in_executor(
+                    None, _generate_plan, user["last_analysis"], user["profile"], ctx_str
+                )
             else:
-                plan = _generate_plan_from_profile(user["profile"], ctx_str)
+                plan = await loop.run_in_executor(
+                    None, _generate_plan_from_profile, user["profile"], ctx_str
+                )
             user["last_plan"] = plan
             _save_store()
             try:
@@ -859,9 +898,9 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
                 pass
             await _send_plan(update, plan)
             await update.effective_chat.send_message(
-                "💬 Not happy with something? Just tell me — "
-                "e.g. 'remove leg day', 'I'm vegetarian' — and I'll update it.\n"
-                "Type `/plan new` anytime to regenerate.",
+                "💬 Your plan is built from your profile"
+                + (" + photo analysis" if user["last_analysis"] else "")
+                + ".\nTell me to adjust anything, or type `/plan new` to regenerate.",
                 parse_mode="Markdown",
             )
         except Exception as e:
@@ -3305,15 +3344,52 @@ async def _process_media_group(update: Update, context: ContextTypes.DEFAULT_TYP
         _save_store()
 
         await msg.edit_text(_format_analysis(analysis), parse_mode="Markdown")
-        current_days = user["profile"].get("days", "4")
-        await update.effective_chat.send_message(
-            f"How many days per week do you want to train? _(currently {current_days})_\n\n"
-            "Tap a number to generate your plan instantly:",
-            parse_mode="Markdown",
-            reply_markup=_plan_days_keyboard(),
-        )
+        await _auto_plan_after_analysis(update, user, chat_id)
     except Exception as e:
         await msg.edit_text(f"❌ Analysis failed: {e}")
+
+
+async def _auto_plan_after_analysis(update: Update, user: dict, chat_id: int) -> None:
+    """After a physique analysis, generate the plan immediately if days is set, else ask."""
+    if user["profile"].get("days"):
+        remaining = _check_cooldown(_plan_cooldowns, chat_id, PLAN_COOLDOWN)
+        if remaining:
+            await update.effective_chat.send_message(
+                "📊 Analysis saved and merged with your profile.\n"
+                f"Tap below to generate your updated plan (cooldown: {remaining}s):",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🚀 Generate my plan", callback_data="prof:generate"),
+                ]]),
+            )
+            return
+        gen_msg = await update.effective_chat.send_message(
+            "🧬 Generating your personalised plan from this analysis + your profile… (30-60 seconds)"
+        )
+        ctx_str = _get_bot_context_str(user)
+        loop = asyncio.get_event_loop()
+        try:
+            plan = await loop.run_in_executor(
+                None, _generate_plan, user["last_analysis"], user["profile"], ctx_str
+            )
+            user["last_plan"] = plan
+            _save_store()
+            try:
+                await gen_msg.delete()
+            except Exception:
+                pass
+            await _send_plan(update, plan)
+            await update.effective_chat.send_message(
+                "💬 This plan is built from your photo analysis + profile.\n"
+                "Tell me to adjust anything, or type `/plan new` to regenerate.",
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            await gen_msg.edit_text(f"❌ Plan generation failed: {e}")
+    else:
+        await update.effective_chat.send_message(
+            "How many days per week do you want to train?\n\nTap to generate your plan instantly:",
+            reply_markup=_plan_days_keyboard(),
+        )
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3401,13 +3477,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         _save_store()
 
         await msg.edit_text(_format_analysis(analysis), parse_mode="Markdown")
-        current_days = user["profile"].get("days", "4")
-        await update.message.reply_text(
-            f"How many days per week do you want to train? _(currently {current_days})_\n\n"
-            "Tap a number to generate your plan instantly:",
-            parse_mode="Markdown",
-            reply_markup=_plan_days_keyboard(),
-        )
+        await _auto_plan_after_analysis(update, user, chat_id)
     except Exception as e:
         await msg.edit_text(f"❌ Analysis failed: {e}")
 
@@ -3425,11 +3495,16 @@ async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAUL
 
     await query.edit_message_text(f"🧬 Building your {days}-day plan… (30-60 seconds)")
     ctx_str = _get_bot_context_str(user)
+    loop = asyncio.get_event_loop()
     try:
         if user["last_analysis"]:
-            plan = _generate_plan(user["last_analysis"], user["profile"], ctx_str)
+            plan = await loop.run_in_executor(
+                None, _generate_plan, user["last_analysis"], user["profile"], ctx_str
+            )
         else:
-            plan = _generate_plan_from_profile(user["profile"], ctx_str)
+            plan = await loop.run_in_executor(
+                None, _generate_plan_from_profile, user["profile"], ctx_str
+            )
         user["last_plan"] = plan
         _save_store()
         try:
@@ -3438,9 +3513,9 @@ async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAUL
             pass
         await _send_plan(update, plan)
         await update.effective_chat.send_message(
-            "💬 Not happy with something? Just tell me — "
-            "e.g. 'remove leg day', 'I'm vegetarian' — and I'll update it.\n"
-            "Type `/plan new` anytime to regenerate.",
+            "💬 Your plan is built from your profile"
+            + (" + photo analysis" if user["last_analysis"] else "")
+            + ".\nTell me to adjust anything, or type `/plan new` to regenerate.",
             parse_mode="Markdown",
         )
     except Exception as e:
@@ -3536,6 +3611,54 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     )
                 except Exception:
                     pass
+        return
+
+    if active == "onboard_text":
+        state = user.get("command_state") or {}
+        step = state.get("step", "stats")
+        user["active_command"] = None
+        user["command_state"] = {}
+        if step == "stats":
+            # Parse loose "28 / 178cm / 82kg" or "age=28 height=178 weight=82" formats
+            normalized = text.lower().replace("/", " ").replace(",", " ")
+            tokens = normalized.split()
+            for tok in tokens:
+                tok = tok.strip()
+                if "=" in tok:
+                    k, _, v = tok.partition("=")
+                    k, v = k.strip(), v.strip()
+                    if k in ("age",):
+                        try:
+                            user["profile"]["age"] = str(int(v))
+                        except ValueError:
+                            pass
+                    elif k in ("height", "h"):
+                        user["profile"]["height"] = _parse_height(v)
+                    elif k in ("weight", "w"):
+                        user["profile"]["weight"] = _parse_weight(v)
+                else:
+                    # Bare number — infer by position and value range
+                    try:
+                        n = float(re.sub(r"[a-z]", "", tok))
+                    except ValueError:
+                        continue
+                    if re.search(r"cm|m$", tok):
+                        user["profile"]["height"] = _parse_height(tok)
+                    elif re.search(r"kg|lbs?", tok):
+                        user["profile"]["weight"] = _parse_weight(tok)
+                    elif n < 110 and "age" not in user["profile"]:
+                        user["profile"]["age"] = str(int(n))
+                    elif 140 <= n <= 220 and "height" not in user["profile"]:
+                        user["profile"]["height"] = str(int(n))
+                    elif 40 <= n <= 200 and "weight" not in user["profile"]:
+                        user["profile"]["weight"] = str(int(n))
+        _save_store()
+        await update.message.reply_text(
+            "✅ Stats saved! Tap below to generate your personalised plan:",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("🚀 Generate my plan", callback_data="prof:generate"),
+            ]]),
+        )
         return
 
     if active == "profile_input":

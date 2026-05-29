@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## 2026-05-29 (Sprint 5 — One Brain: Photo + Profile + Plan Integration)
+
+### Generate button fix, guided onboarding, and unified plan generation
+
+**Files**: `telegram_bot.py`
+
+**What changed:**
+- **Generate button fix**: Both `prof:generate` and `handle_plan_days_callback` now run the Claude API call in a thread executor (`run_in_executor`) — previously the synchronous API call blocked the entire async event loop for 30-60 seconds, making the button appear frozen. Also adds plan cooldown check to `prof:generate`.
+- **Photo flow — one brain**: After a physique analysis, if the user already has `days` set in their profile, the bot immediately generates the plan automatically (using both the photo analysis AND profile data together). No more re-asking for days they already provided. If a cooldown is active, shows a single generate button instead.
+- **Guided onboarding**: After selecting training days, the bot no longer dumps a full 8-button profile keyboard. Instead it walks through two more guided steps: gender (tap buttons) → age/height/weight (one text prompt with skip option). Then shows the generate button. The full profile keyboard remains accessible via /profile for edits.
+- **`_auto_plan_after_analysis` helper**: New shared function called by both single-photo and album-photo handlers so the logic is DRY.
+- **Plan confirmation message**: Updated to explicitly say "built from your profile + photo analysis" so users understand the systems are connected.
+- **`onboard_text` active_command**: New handler in `handle_message` that parses a loose stats string (e.g. `28 / 178cm / 82kg`) and saves age, height, weight to profile before showing the generate button.
+
+**Rationale:** User reported: photo upload re-asked for days already provided; generate button appeared unresponsive; onboarding dumped a form instead of guiding; photo analysis and plan felt like separate features.
+
+**Rollback:** Revert `_auto_plan_after_analysis`, the `onboard:gender/skip` branches in `handle_onboard_callback`, the `onboard_text` branch in `handle_message`, and restore the synchronous `_generate_plan` calls.
+
+---
+
 ## 2026-05-28 (Sprint 4 — Full UX Bug-Fix Sprint)
 
 ### 8-bug audit fix: silent failures, dead ends, and stale state
