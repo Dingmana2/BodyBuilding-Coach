@@ -1,5 +1,43 @@
 # CHANGELOG
 
+## 2026-05-29 (Sprint 10 — Open Beta Bug-Fix Sprint: 21 bugs fixed)
+
+### Pre-existing SyntaxError + 20 logic/UX bugs from open beta simulation fixed
+
+**Files:** `telegram_bot.py`, `crypto_utils.py`, `.env.example`
+
+**Critical fixes:**
+- **Pre-existing SyntaxError**: `_parse_height` (line 201) contained Unicode curly apostrophes as Python string delimiters — bot would crash on Python 3.11+ at import time. Replaced with proper ASCII-only parsing loop using `for _ch in (…)`.
+- **BUG-01**: `handle_checkin_callback` — KeyError crash when user taps old checkin button after session expires. Added `_REQUIRED_CHECKIN_KEYS` guard before `_finish_checkin`; switched `_finish_checkin` to `.get()` with defaults.
+- **BUG-02**: `goals_input` branch — custom goal text silently discarded (success message sent without saving). Fixed: custom text now saved as `active_goal["custom_description"]`.
+- **BUG-03**: `/delete_my_data` — only wiped `bot_state.json`; Garmin cache entry and user photo files persisted. Added: Garmin cache pop + `DATA_DIR/{chat_id}_*` file deletion.
+
+**High-priority fixes:**
+- **BUG-04**: `_parse_height` regex `[''ft]` only matched a single character from that set, so `"5ft10"` never parsed. Replaced with `(?:'|ft)` alternation group (now working for all formats).
+- **BUG-05**: Plan regen via AI coach chat didn't pass `ctx_str` — regenerated plans were context-blind (no check-in history, goals, or streak). Fixed with `regen_ctx = _get_bot_context_str(user)`.
+- **BUG-06**: `/privacy` falsely claimed "does not retain message text beyond the active session." Corrected to accurately describe conversation history persistence.
+- **BUG-07**: `_build_plan_prompt` read `profile.get("show_date")` — a field never written. Now mirrored: when a target_date is saved in goals, `profile["show_date"]` is set too.
+- **BUG-08**: `_weekly_stall_check` hardcoded "kg" unit string. Now uses `_wfmt(value, user)` for both displayed weights.
+
+**Medium fixes:**
+- **BUG-09**: Profile menu keyboard showed "cm" and "kg" for height/weight buttons regardless of user unit preference. Now uses `_units` conditional labels (`in`/`lbs` for imperial users).
+- **BUG-10**: Measurements menu keyboard hardcoded "kg"/"cm". Now unit-aware with display conversion for imperial users.
+- **BUG-11**: `/goals` display hardcoded "kg" for target weight. Now uses `_wfmt()`.
+- **BUG-13**: AI-generated text in `_format_analysis` and `_send_plan` not escaped with `esc()`. Underscores in coaching notes, actions, symmetry_notes, rationale, coach_message now properly escaped.
+- **BUG-14**: `/weakpoints` with sets but no photo gave raw internal error string. Added friendly "upload a photo first" guard.
+- **BUG-15**: `crypto_utils.py` silently generated throwaway Fernet key if `ENCRYPTION_KEY` env var unset — all stored Garmin credentials unreadable after restart. Now raises `RuntimeError`. Added `ENCRYPTION_KEY` to `.env.example`.
+- **BUG-16**: `_analyze_photo` JSON decode not wrapped in try/except — non-JSON AI responses silently crashed with no user feedback. Now raises descriptive `ValueError`.
+
+**Low-priority fixes:**
+- **BUG-17**: All `asyncio.get_event_loop().run_in_executor()` and `loop = asyncio.get_event_loop()` replaced with `get_running_loop()` (deprecated in Python 3.10+ inside async context).
+- **BUG-18/19**: AI coach reply and `/weakpoints` output had no Telegram 4096-char limit guard. Added `_send_long()` helper that chunks at newline boundaries.
+- **BUG-20**: Text sent during button-based onboarding steps was silently routed to AI coach. Now shows friendly "please tap a button" message.
+- **BUG-21**: `_parse_weight` returned `str`, causing `TypeError` in arithmetic (e.g. Epley 1RM). Now returns `float`. Added `try/except` at all call sites.
+
+**Rollback:** Revert all changes to `telegram_bot.py` (this commit), and revert `crypto_utils.py` to re-add the silent-key-generation fallback.
+
+---
+
 ## 2026-05-29 (Sprint 9 — US vs Imperial Unit Selection in Onboarding)
 
 ### Unit system choice added to `/start` onboarding flow

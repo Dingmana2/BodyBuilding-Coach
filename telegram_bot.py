@@ -198,28 +198,33 @@ def _today() -> str:
 # ── Unit helpers ─────────────────────────────────────────────────────────────
 
 def _parse_height(s: str) -> str:
-    s = s.strip().lower().replace(‘’’, “’”).replace(‘‘’, “’”).replace(‘”’, ‘’).replace(‘“’, ‘’).replace(‘”’, ‘’).replace(‘”’, ‘’).replace(‘ ‘, ‘’)
-    # feet-inches: 5’10, 5’10”, 5ft10, 5ft10in, 5feet10, 5feet10in
-    m = re.match(r”(\d+)[‘’ft][\s]*(\d+)”, s) or re.match(r”(\d+)feet(\d+)”, s)
+    # Normalise curly/smart quotes to ASCII before parsing
+    for _ch in ('‘', '’', 'ʼ'):
+        s = s.replace(_ch, "'")
+    for _ch in ('“', '”'):
+        s = s.replace(_ch, '')
+    s = s.strip().lower().replace(' ', '')
+    # feet-inches: 5'10, 5ft10, 5ft10in, 5feet10, 5feet10in
+    m = re.match(r"(\d+)(?:'|ft)\s*(\d+)", s) or re.match(r"(\d+)feet(\d+)", s)
     if m:
         return str(round(int(m.group(1)) * 30.48 + int(m.group(2)) * 2.54))
     # bare feet e.g. 5ft (no inches)
-    m = re.match(r”(\d+)ft$”, s)
+    m = re.match(r"(\d+)ft$", s)
     if m:
         return str(round(int(m.group(1)) * 30.48))
     # bare inches e.g. 68in
-    m = re.match(r”(\d+(?:\.\d+)?)in$”, s)
+    m = re.match(r"(\d+(?:\.\d+)?)in$", s)
     if m:
         return str(round(float(m.group(1)) * 2.54))
-    return re.sub(r”cm$”, “”, s)
+    return re.sub(r"cm$", "", s)
 
 
-def _parse_weight(s: str) -> str:
+def _parse_weight(s: str) -> float:
     s = s.strip().lower().replace(' ', '')
     m = re.match(r"(\d+(?:\.\d+)?)(?:lbs?|pounds?)$", s)
     if m:
-        return str(round(float(m.group(1)) * 0.453592))
-    return re.sub(r"kg$", "", s)
+        return round(float(m.group(1)) * 0.453592, 4)
+    return float(re.sub(r"kg$", "", s))
 
 
 def _parse_measurement_cm(s: str) -> float | None:
@@ -651,7 +656,7 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
         _save_store()
         await query.edit_message_text("🧬 Building your personalised plan… (30-60 seconds)")
         ctx_str = _get_bot_context_str(user)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             plan = await loop.run_in_executor(
                 None, _generate_plan_from_profile, user["profile"], ctx_str
@@ -683,10 +688,14 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 _HIDDEN_PROFILE_KEYS: frozenset[str] = frozenset({"goal_set_date"})
 
 
-def _profile_menu_keyboard(profile: dict) -> InlineKeyboardMarkup:
+def _profile_menu_keyboard(profile: dict, user: dict | None = None) -> InlineKeyboardMarkup:
     """Inline keyboard for /profile — each button shows the current value."""
     def _val(field: str, default: str = "—") -> str:
         return str(profile.get(field, default))
+
+    _units = (user or {}).get("units", "kg")
+    _height_unit = "cm" if _units == "kg" else "in"
+    _weight_unit = "kg" if _units == "kg" else "lbs"
 
     return InlineKeyboardMarkup([
         [
@@ -699,8 +708,8 @@ def _profile_menu_keyboard(profile: dict) -> InlineKeyboardMarkup:
         ],
         [
             InlineKeyboardButton(f"🎂 Age: {_val('age')}", callback_data="prof:input:age"),
-            InlineKeyboardButton(f"📏 Height: {_val('height')} cm", callback_data="prof:input:height"),
-            InlineKeyboardButton(f"⚖️ Weight: {_val('weight')} kg", callback_data="prof:input:weight"),
+            InlineKeyboardButton(f"📏 Height: {_val('height')} {_height_unit}", callback_data="prof:input:height"),
+            InlineKeyboardButton(f"⚖️ Weight: {_val('weight')} {_weight_unit}", callback_data="prof:input:weight"),
         ],
         [
             InlineKeyboardButton(
@@ -754,7 +763,7 @@ def _goals_menu_keyboard(user: dict) -> InlineKeyboardMarkup:
     ])
 
 
-def _measurements_menu_keyboard(last: dict | None) -> InlineKeyboardMarkup:
+def _measurements_menu_keyboard(last: dict | None, user: dict | None = None) -> InlineKeyboardMarkup:
     """Inline keyboard for /measurements — each button shows the last logged value."""
     def _val(key: str) -> str:
         if not last:
@@ -762,18 +771,42 @@ def _measurements_menu_keyboard(last: dict | None) -> InlineKeyboardMarkup:
         v = last.get(key)
         return str(v) if v is not None else "—"
 
+    _units = (user or {}).get("units", "kg")
+    _wu_label = "kg" if _units == "kg" else "lbs"
+    _cm_label = "cm" if _units == "kg" else "in"
+
+    def _wval(key: str) -> str:
+        if not last:
+            return "—"
+        v = last.get(key)
+        if v is None:
+            return "—"
+        if _units == "lbs":
+            return f"{round(float(v) * 2.20462, 1)}"
+        return str(v)
+
+    def _cmval(key: str) -> str:
+        if not last:
+            return "—"
+        v = last.get(key)
+        if v is None:
+            return "—"
+        if _units == "lbs":
+            return f"{round(float(v) * 0.393701, 1)}"
+        return str(v)
+
     return InlineKeyboardMarkup([
         [
-            InlineKeyboardButton(f"⚖️ Weight: {_val('body_weight_kg')} kg", callback_data="meas:input:weight"),
-            InlineKeyboardButton(f"📏 Waist: {_val('waist_cm')} cm", callback_data="meas:input:waist"),
+            InlineKeyboardButton(f"⚖️ Weight: {_wval('body_weight_kg')} {_wu_label}", callback_data="meas:input:weight"),
+            InlineKeyboardButton(f"📏 Waist: {_cmval('waist_cm')} {_cm_label}", callback_data="meas:input:waist"),
         ],
         [
-            InlineKeyboardButton(f"🫀 Chest: {_val('chest_cm')} cm", callback_data="meas:input:chest"),
-            InlineKeyboardButton(f"🍑 Hips: {_val('hips_cm')} cm", callback_data="meas:input:hips"),
+            InlineKeyboardButton(f"🫀 Chest: {_cmval('chest_cm')} {_cm_label}", callback_data="meas:input:chest"),
+            InlineKeyboardButton(f"🍑 Hips: {_cmval('hips_cm')} {_cm_label}", callback_data="meas:input:hips"),
         ],
         [
-            InlineKeyboardButton(f"💪 Arm: {_val('left_arm_cm')} cm", callback_data="meas:input:arm"),
-            InlineKeyboardButton(f"🦵 Thigh: {_val('left_thigh_cm')} cm", callback_data="meas:input:thigh"),
+            InlineKeyboardButton(f"💪 Arm: {_cmval('left_arm_cm')} {_cm_label}", callback_data="meas:input:arm"),
+            InlineKeyboardButton(f"🦵 Thigh: {_cmval('left_thigh_cm')} {_cm_label}", callback_data="meas:input:thigh"),
         ],
         [
             InlineKeyboardButton("✏️ Type multiple fields at once", callback_data="meas:custom"),
@@ -795,7 +828,7 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text(
             f"*Your Profile*\n{current}\n\nTap a field to update it:",
             parse_mode="Markdown",
-            reply_markup=_profile_menu_keyboard(profile),
+            reply_markup=_profile_menu_keyboard(profile, user),
         )
         return
 
@@ -807,7 +840,10 @@ async def cmd_profile(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             if key == "height":
                 value = _parse_height(value)
             elif key == "weight":
-                value = _parse_weight(value)
+                try:
+                    value = _parse_weight(value)
+                except (ValueError, TypeError):
+                    pass  # store raw string if unparseable
             elif key == "goal" and profile.get("goal") != value:
                 profile["goal_set_date"] = _today()
             profile[key] = value
@@ -871,7 +907,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(
             f"*Your Profile*\n{_current_summary()}\n\nTap a field to update it:",
             parse_mode="Markdown",
-            reply_markup=_profile_menu_keyboard(profile),
+            reply_markup=_profile_menu_keyboard(profile, user),
         )
 
     elif action == "v":
@@ -885,7 +921,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(
             f"*Your Profile*\n{_current_summary()}\n\nTap a field to update it:",
             parse_mode="Markdown",
-            reply_markup=_profile_menu_keyboard(profile),
+            reply_markup=_profile_menu_keyboard(profile, user),
         )
 
     elif action == "input":
@@ -910,7 +946,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         await query.edit_message_text(
             f"*Your Profile*\n{_current_summary()}\n\nTap a field to update it:",
             parse_mode="Markdown",
-            reply_markup=_profile_menu_keyboard(profile),
+            reply_markup=_profile_menu_keyboard(profile, user),
         )
 
     elif action == "custom":
@@ -931,7 +967,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
             return
         await query.edit_message_text("🧬 Building your plan… (30-60 seconds)")
         ctx_str = _get_bot_context_str(user)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             if user["last_analysis"]:
                 plan = await loop.run_in_executor(
@@ -1133,7 +1169,7 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             import garmin_service
             await update.effective_chat.send_action("typing")
             # Run the blocking network call off the event loop so the bot stays responsive
-            garmin_data = await asyncio.get_event_loop().run_in_executor(
+            garmin_data = await asyncio.get_running_loop().run_in_executor(
                 None,
                 garmin_service.fetch_and_cache,
                 chat_id, user["garmin_email"], user["garmin_pass_enc"],
@@ -1265,7 +1301,7 @@ async def _finish_checkin(
     try:
         from claude_service import generate_recovery_insight
         score, tip = generate_recovery_insight(
-            data["sleep"], data["energy"], data["soreness"], data["stress"],
+            data.get("sleep", 5), data.get("energy", 5), data.get("soreness", 5), data.get("stress", 5),
             user["profile"] or None,
             ctx_str,
         )
@@ -1279,11 +1315,11 @@ async def _finish_checkin(
     motivation = data.get("motivation", 7)
     entry = {
         "date": _today(),
-        "sleep_score": data["sleep"],
-        "energy_score": data["energy"],
-        "soreness_score": data["soreness"],
+        "sleep_score": data.get("sleep", 5),
+        "energy_score": data.get("energy", 5),
+        "soreness_score": data.get("soreness", 5),
         "joint_pain_score": joint_pain,
-        "stress_score": data["stress"],
+        "stress_score": data.get("stress", 5),
         "motivation_score": motivation,
         "recovery_score": score,
         "coaching_tip": tip,
@@ -1505,7 +1541,7 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                         (d for d in days_ctx if d.get("day", "").lower() == today_name_end.lower()),
                         None,
                     )
-                targets = await asyncio.get_event_loop().run_in_executor(
+                targets = await asyncio.get_running_loop().run_in_executor(
                     None, generate_next_session_targets, session_sets, plan_day_ctx, profile
                 )
                 next_targets_text = f"\n\n🎯 *Next session targets:*\n_{targets}_"
@@ -1994,7 +2030,7 @@ async def cmd_measurements(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         await update.message.reply_text(
             f"📏 *Measurements*\n{current}\n\nTap a field to log it:",
             parse_mode="Markdown",
-            reply_markup=_measurements_menu_keyboard(last),
+            reply_markup=_measurements_menu_keyboard(last, user),
         )
         return
 
@@ -2371,7 +2407,7 @@ async def _handle_fridge_photo(update: Update, user: dict, img_b64: str) -> None
     msg = await update.effective_chat.send_message("🔍 Scanning your fridge for ingredients…")
 
     try:
-        ingredients_by_cat = await asyncio.get_event_loop().run_in_executor(
+        ingredients_by_cat = await asyncio.get_running_loop().run_in_executor(
             None, _fridge_scan_call, img_b64
         )
     except Exception as e:
@@ -2404,7 +2440,7 @@ async def _fridge_send_recipes(msg, ingredients: list[str], added: list[str], di
     await msg.edit_text("🍳 Generating recipes from your ingredients…")
 
     try:
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, _fridge_recipes_call, all_ingredients, diet_context
         )
     except Exception as e:
@@ -3002,7 +3038,7 @@ async def cmd_goals(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             g = active_goals[-1]
             target_parts = []
             if g.get("target_weight_kg"):
-                target_parts.append(f"Weight: {g['target_weight_kg']}kg")
+                target_parts.append(f"Weight: {_wfmt(float(g['target_weight_kg']), user)}")
             if g.get("target_bf_pct"):
                 target_parts.append(f"Body fat: {g['target_bf_pct']}%")
             if g.get("target_date"):
@@ -3160,12 +3196,21 @@ async def cmd_weakpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         )
         return
 
+    if not user.get("analyses") and not user["last_analysis"]:
+        await update.message.reply_text(
+            "📸 *Upload a physique photo first.*\n\n"
+            "Send a front, back, or side photo and I'll assess your muscle development. "
+            "Then /weakpoints will give you a full imbalance analysis.",
+            parse_mode="Markdown",
+        )
+        return
+
     msg = await update.message.reply_text("🔬 Analyzing training imbalances…")
     try:
         from claude_service import analyze_weak_points
         all_analyses = user.get("analyses") or ([user["last_analysis"]] if user["last_analysis"] else [])
         ctx_str = _get_bot_context_str(user)
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, analyze_weak_points, all_analyses, recent_sets, user["profile"] or None, ctx_str
         )
         weak_pts = "\n".join(f"• {w}" for w in result.get("weak_points", []))
@@ -3181,7 +3226,11 @@ async def cmd_weakpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if priority:
             reply += f"🎯 *#1 Priority Fix:* {priority}"
 
-        await msg.edit_text(reply, parse_mode="Markdown")
+        if len(reply) <= _TG_MAX:
+            await msg.edit_text(reply, parse_mode="Markdown")
+        else:
+            await msg.delete()
+            await _send_long(update.message.reply_text, reply, parse_mode="Markdown")
     except Exception as e:
         await msg.edit_text(f"❌ Weak point analysis failed: {e}")
 
@@ -3212,7 +3261,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         meals_data = [{"protein_g": m.get("protein_g", 0)} for m in recent_meals]
 
         ctx_str = _get_bot_context_str(user)
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None, generate_weekly_report, sessions_data, checkins_data, meals_data, prs_list,
             user["profile"] or None, ctx_str
         )
@@ -3455,7 +3504,7 @@ async def _auto_plan_after_analysis(update: Update, user: dict, chat_id: int) ->
             f"🧬 {verb} your plan from this analysis + your profile… (30-60 seconds)"
         )
         ctx_str = _get_bot_context_str(user)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             plan = await loop.run_in_executor(
                 None, _generate_plan, user["last_analysis"], user["profile"], ctx_str
@@ -3659,6 +3708,10 @@ async def handle_checkin_callback(update: Update, context: ContextTypes.DEFAULT_
             reply_markup=_score_keyboard(next_step),
         )
     else:
+        _required_keys = {"sleep", "energy", "soreness", "stress"}
+        if not _required_keys.issubset(data.keys()):
+            await query.answer("Session expired — please run /checkin again.", show_alert=True)
+            return
         user["active_command"] = None
         user["command_state"] = {}
         _save_store()
@@ -3720,6 +3773,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     pass
         return
 
+    if active == "onboarding":
+        await update.message.reply_text(
+            "👆 Please tap one of the buttons above to continue your setup.\n\n"
+            "Or type /start to restart the onboarding quiz."
+        )
+        return
+
     if active == "onboard_text":
         state = user.get("command_state") or {}
         user["active_command"] = None
@@ -3776,7 +3836,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         _save_store()
         gen_msg = await update.message.reply_text("🧬 Building your personalised plan… (30-60 seconds)")
         ctx_str = _get_bot_context_str(user)
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             plan = await loop.run_in_executor(
                 None, _generate_plan_from_profile, user["profile"], ctx_str
@@ -3811,7 +3871,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     if k == "height":
                         v = _parse_height(v)
                     elif k == "weight":
-                        v = _parse_weight(v)
+                        try:
+                            v = _parse_weight(v)
+                        except (ValueError, TypeError):
+                            pass
                     elif k == "goal" and user["profile"].get("goal") != v:
                         user["profile"]["goal_set_date"] = _today()
                     user["profile"][k] = v
@@ -3820,7 +3883,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if field == "height":
                 value = _parse_height(value)
             elif field == "weight":
-                value = _parse_weight(value)
+                try:
+                    value = _parse_weight(value)
+                except (ValueError, TypeError):
+                    pass
             elif field == "goal" and user["profile"].get("goal") != value:
                 user["profile"]["goal_set_date"] = _today()
             if field:
@@ -3833,14 +3899,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             f"✅ *Profile updated!*\n\n{current}\n\nTap a field to change another:",
             parse_mode="Markdown",
-            reply_markup=_profile_menu_keyboard(profile),
+            reply_markup=_profile_menu_keyboard(profile, user),
         )
         return
 
     if active == "goals_input":
         state = user.get("command_state") or {}
         field = state.get("field", "")
-        if field != "_custom":
+        if field == "_custom":
+            goals_list = user.setdefault("goals", [])
+            active_goal = next((g for g in reversed(goals_list) if g.get("is_active")), None)
+            if not active_goal:
+                goal_type = user["profile"].get("goal", "health")
+                active_goal = {
+                    "goal_type": goal_type,
+                    "target_weight_kg": None,
+                    "target_bf_pct": None,
+                    "target_date": None,
+                    "start_weight_kg": float(user["profile"].get("weight", 0) or 0) or None,
+                    "created_at": _today(),
+                    "is_active": True,
+                }
+                goals_list.append(active_goal)
+            active_goal["custom_description"] = text.strip()
+        else:
             goals_list = user.setdefault("goals", [])
             active_goal = next((g for g in reversed(goals_list) if g.get("is_active")), None)
             if not active_goal:
@@ -3882,6 +3964,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     except ValueError:
                         pass
                     active_goal["target_date"] = val[:10]
+                    user["profile"]["show_date"] = val[:10]
                     parsed_ok = True
             if not parsed_ok:
                 await update.message.reply_text(
@@ -3958,12 +4041,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text(
                 "\n".join(lines) + "\n\nLog another:",
                 parse_mode="Markdown",
-                reply_markup=_measurements_menu_keyboard(new_last),
+                reply_markup=_measurements_menu_keyboard(new_last, user),
             )
         else:
             await update.message.reply_text(
                 "Couldn't parse that. Try `83kg`, `185lbs`, `32in`, or `81cm`.",
-                reply_markup=_measurements_menu_keyboard(last_meas),
+                reply_markup=_measurements_menu_keyboard(last_meas, user),
             )
         return
 
@@ -4028,14 +4111,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "🧬 Got it — rebuilding your full plan with the changes… (30-60 seconds)"
             )
             try:
-                loop = asyncio.get_event_loop()
+                loop = asyncio.get_running_loop()
+                regen_ctx = _get_bot_context_str(user)
                 if user["last_analysis"]:
                     plan = await loop.run_in_executor(
-                        None, _generate_plan, user["last_analysis"], user["profile"]
+                        None, _generate_plan, user["last_analysis"], user["profile"], regen_ctx
                     )
                 else:
                     plan = await loop.run_in_executor(
-                        None, _generate_plan_from_profile, user["profile"]
+                        None, _generate_plan_from_profile, user["profile"], regen_ctx
                     )
                 user["last_plan"] = plan
                 _save_store()
@@ -4051,7 +4135,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             _save_store()
             reply += "\n\n✅ _Your plan has been updated. Type /plan to see the full updated version._"
 
-        await msg.edit_text(reply, parse_mode="Markdown")
+        if len(reply) <= _TG_MAX:
+            await msg.edit_text(reply, parse_mode="Markdown")
+        else:
+            await msg.delete()
+            await _send_long(update.message.reply_text, reply, parse_mode="Markdown")
     except Exception as e:
         await msg.edit_text(f"❌ Something went wrong: {e}")
 
@@ -4221,7 +4309,10 @@ def _analyze_photo(images_b64: list[str], profile: dict, prev: dict | None = Non
         text = text.split("```json")[1].split("```")[0]
     elif "```" in text:
         text = text.split("```")[1].split("```")[0]
-    return json.loads(text.strip())
+    try:
+        return json.loads(text.strip())
+    except json.JSONDecodeError:
+        raise ValueError(f"Photo analysis returned non-JSON response: {text[:200]}")
 
 
 # ── Claude: plan generation ───────────────────────────────────────────────────
@@ -4551,7 +4642,7 @@ async def _fetch_reddit_summaries(subreddits: list[str] | None = None, topic: st
         try:
             posts = await _fetch_reddit_posts(sub)
             if posts:
-                summary = await asyncio.get_event_loop().run_in_executor(
+                summary = await asyncio.get_running_loop().run_in_executor(
                     None, _summarize_reddit, sub, posts
                 )
                 summaries.append(f"*r/{sub}*\n{summary}")
@@ -4574,10 +4665,12 @@ async def cmd_privacy(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         "• Daily check-ins and recovery scores\n"
         "• Garmin/MFP credentials (AES-256 encrypted)\n"
         "• Conversation history with the AI coach\n\n"
-        "*Telegram message retention:*\n"
-        "Telegram stores messages on their servers. The bot reads "
-        "messages you send to it but does not retain message text "
-        "beyond the active session. See telegram.org/privacy.\n\n"
+        "*Conversation history:*\n"
+        "The bot retains a rolling window of your recent messages to "
+        "provide coaching continuity across sessions. This history is "
+        "stored in the bot's data file alongside your profile and logs. "
+        "Use /delete\\_my\\_data to erase it permanently. "
+        "Telegram itself also stores messages — see telegram.org/privacy.\n\n"
         "*Third-party services used:*\n"
         "• *Anthropic* — AI analysis. Your data is sent to process "
         "requests but is not used to train models (API usage).\n"
@@ -4622,6 +4715,22 @@ async def handle_delete_callback(update: Update, context: ContextTypes.DEFAULT_T
         if chat_id in user_data:
             del user_data[chat_id]
         _save_store()
+        # Clear Garmin cache entry
+        try:
+            _gcache = Path(os.getenv("DATA_DIR", ".")) / "garmin_cache.json"
+            if _gcache.exists():
+                _gc = json.loads(_gcache.read_text(encoding="utf-8"))
+                _gc.pop(str(chat_id), None)
+                _gcache.write_text(json.dumps(_gc), encoding="utf-8")
+        except Exception:
+            pass
+        # Delete any stored photo files belonging to this user
+        try:
+            _data_dir = Path(os.getenv("DATA_DIR", "."))
+            for _f in _data_dir.glob(f"{chat_id}_*"):
+                _f.unlink(missing_ok=True)
+        except Exception:
+            pass
         await query.edit_message_text(
             "✅ All your data has been permanently deleted.\n\n"
             "Type /start if you want to begin again.",
@@ -4745,6 +4854,30 @@ async def cmd_freeze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+# ── Messaging helpers ─────────────────────────────────────────────────────────
+
+_TG_MAX = 4096
+
+
+async def _send_long(send_fn, text: str, **kwargs) -> None:
+    """Send text respecting Telegram's 4096-char limit by chunking at newlines."""
+    if len(text) <= _TG_MAX:
+        await send_fn(text, **kwargs)
+        return
+    chunks = []
+    while text:
+        if len(text) <= _TG_MAX:
+            chunks.append(text)
+            break
+        split = text.rfind("\n", 0, _TG_MAX)
+        if split == -1:
+            split = _TG_MAX
+        chunks.append(text[:split])
+        text = text[split:].lstrip("\n")
+    for chunk in chunks:
+        await send_fn(chunk, **kwargs)
+
+
 # ── Formatters ────────────────────────────────────────────────────────────────
 
 def _format_analysis(a: dict) -> str:
@@ -4758,13 +4891,13 @@ def _format_analysis(a: dict) -> str:
 
     muscle = a.get("muscle_development", {})
     muscle_lines = "\n".join(
-        f"  {k.capitalize()}: {v.get('score', '?')}/10 — {v.get('notes', '')}"
-        + (f"\n    → _{v['action']}_" if v.get("action") else "")
+        f"  {k.capitalize()}: {v.get('score', '?')}/10 — {esc(v.get('notes', ''))}"
+        + (f"\n    → _{esc(v['action'])}_" if v.get("action") else "")
         for k, v in muscle.items()
         if v.get("score") is not None
     )
-    strengths = "\n".join(f"✅ {s}" for s in a.get("strengths", []))
-    priorities = "\n".join(f"🎯 {s}" for s in a.get("priority_improvements", []))
+    strengths = "\n".join(f"✅ {esc(s)}" for s in a.get("strengths", []))
+    priorities = "\n".join(f"🎯 {esc(s)}" for s in a.get("priority_improvements", []))
 
     return (
         f"📊 *Physique Analysis*\n{angle_line}\n"
@@ -4773,8 +4906,8 @@ def _format_analysis(a: dict) -> str:
         f"*Muscle Development:*\n{muscle_lines}\n\n"
         f"*Strengths:*\n{strengths}\n\n"
         f"*Top Priorities:*\n{priorities}\n\n"
-        f"📐 {a.get('symmetry_notes', '')}\n\n"
-        f"_{a.get('coach_message', '')}_\n\n"
+        f"📐 {esc(a.get('symmetry_notes', ''))}\n\n"
+        f"_{esc(a.get('coach_message', ''))}_\n\n"
         f"_⚠️ AI estimate only — body fat ±5%, scores are relative. Not a medical assessment._"
     )
 
@@ -4823,10 +4956,10 @@ async def _send_plan(update: Update, plan: dict) -> None:
     day_keyboard = InlineKeyboardMarkup(day_buttons) if day_buttons else None
 
     await send(
-        f"🏋️ *Workout — {workout.get('split', '')}*\n"
+        f"🏋️ *Workout — {esc(workout.get('split', ''))}*\n"
         f"{days_text}\n"
-        f"📈 *Progression:* {workout.get('progression', '')}\n"
-        f"🔄 *Deload:* {workout.get('deload', '')}"
+        f"📈 *Progression:* {esc(workout.get('progression', ''))}\n"
+        f"🔄 *Deload:* {esc(workout.get('deload', ''))}"
         f"{zone2_line}",
         parse_mode="Markdown",
         reply_markup=day_keyboard,
@@ -4872,10 +5005,10 @@ async def _send_plan(update: Update, plan: dict) -> None:
         f"Carbs: *{diet.get('carbs_g', '?')}g* | "
         f"Fat: *{diet.get('fat_g', '?')}g*"
         f"{macro_variants}\n\n"
-        f"_{diet.get('rationale', '')}_\n\n"
-        f"*Meal Timing:*\n{diet.get('meal_timing', '')}\n\n"
+        f"_{esc(diet.get('rationale', ''))}_\n\n"
+        f"*Meal Timing:*\n{esc(diet.get('meal_timing', ''))}\n\n"
         f"*Sample Day:*\n{meals}\n\n"
-        f"*Prioritize:* {', '.join(diet.get('foods_to_prioritize', []))}"
+        f"*Prioritize:* {', '.join(esc(f) for f in diet.get('foods_to_prioritize', []))}"
         f"{_ed_warning}",
         parse_mode="Markdown",
     )
@@ -4895,12 +5028,12 @@ async def _send_plan(update: Update, plan: dict) -> None:
     # ── Coaching ──
     await send(
         f"💬 *Coaching Notes*\n\n"
-        f"🎯 *Top Priority:* {coaching.get('top_priority', '')}\n\n"
-        f"😴 *Sleep:* {coaching.get('sleep', '')}\n\n"
-        f"🧘 *Stress:* {coaching.get('stress', '')}\n\n"
-        f"📊 *Tracking:* {coaching.get('tracking', '')}\n\n"
-        f"📅 *12-Week Outlook:* {coaching.get('expectations', '')}\n\n"
-        f"_{coaching.get('coach_message', '')}_\n\n"
+        f"🎯 *Top Priority:* {esc(coaching.get('top_priority', ''))}\n\n"
+        f"😴 *Sleep:* {esc(coaching.get('sleep', ''))}\n\n"
+        f"🧘 *Stress:* {esc(coaching.get('stress', ''))}\n\n"
+        f"📊 *Tracking:* {esc(coaching.get('tracking', ''))}\n\n"
+        f"📅 *12-Week Outlook:* {esc(coaching.get('expectations', ''))}\n\n"
+        f"_{esc(coaching.get('coach_message', ''))}_\n\n"
         f"_⚠️ AI-generated plan — adjust based on how your body responds. "
         f"If anything feels wrong, trust your body and consult a coach or physio._",
         parse_mode="Markdown",
@@ -4944,11 +5077,13 @@ async def _weekly_stall_check() -> None:
             change = abs(recent[-1][1] - recent[0][1])
             if change < 0.3:
                 direction = "gaining weight" if goal == "bulk" else "losing weight"
+                w1 = _wfmt(recent[0][1], u)
+                w2 = _wfmt(recent[-1][1], u)
                 await _app.bot.send_message(
                     chat_id=chat_id,
                     text=(
                         f"📊 *Weekly Check-In*\n\n"
-                        f"Your weight has been stable for 2 weeks ({recent[0][1]}kg → {recent[-1][1]}kg).\n\n"
+                        f"Your weight has been stable for 2 weeks ({w1} → {w2}).\n\n"
                         f"For your *{goal}* goal you should be {direction}. "
                         f"{'Try adding 150-200 kcal/day to break the plateau.' if goal == 'bulk' else 'Try reducing calories by 150-200 kcal/day or adding 20 min cardio.'}\n\n"
                         f"Type /macros to review your nutrition or chat with me for a personalised fix."
