@@ -682,6 +682,9 @@ def _profile_menu_keyboard(profile: dict) -> InlineKeyboardMarkup:
             InlineKeyboardButton(f"🩹 Injuries: {_val('injuries')}", callback_data="prof:input:injuries"),
         ],
         [
+            InlineKeyboardButton(f"🥗 Diet: {_val('dietary_restrictions')}", callback_data="prof:input:dietary_restrictions"),
+        ],
+        [
             InlineKeyboardButton("✏️ Type custom (field=value)", callback_data="prof:custom"),
         ],
         [
@@ -1404,8 +1407,22 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             return
 
         session_sets = user["command_state"].get("current_session_sets", [])
-        total_volume = sum(s["weight_kg"] * s["reps"] for s in session_sets)
         total_sets = len(session_sets)
+
+        # Warn if ending a session with zero sets logged
+        if total_sets == 0 and "confirm" not in (context.args or []):
+            await update.message.reply_text(
+                "⚠️ You haven't logged any sets yet.\n\n"
+                "Log at least one set, or tap below to end the session anyway.",
+                parse_mode="Markdown",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🚫 Keep training", callback_data="wk:noop"),
+                    InlineKeyboardButton("✓ End anyway", callback_data="wk:end_confirm"),
+                ]]),
+            )
+            return
+
+        total_volume = sum(s["weight_kg"] * s["reps"] for s in session_sets)
         user["active_session_id"] = None
         user["command_state"]["current_session_sets"] = []
         user["command_state"].pop("active_session_day", None)
@@ -1730,14 +1747,44 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
             reply_markup=_ex_keyboard(exercises, has_session=user["active_session_id"] is not None),
         )
 
+    elif part == "noop":
+        pass  # "Keep training" button — do nothing, just dismiss the spinner
+
+    elif part == "end_confirm":
+        # Force-end session even with 0 sets
+        sid = user["active_session_id"]
+        if sid is None:
+            await query.edit_message_text("No open session.")
+            return
+        user["active_session_id"] = None
+        user["command_state"]["current_session_sets"] = []
+        user["command_state"].pop("active_session_day", None)
+        _save_store()
+        await query.edit_message_text(
+            f"✅ *Session #{sid} ended* (no sets logged).\n\nNext time, try to log at least one set to track progress!",
+            parse_mode="Markdown",
+        )
+
     elif part == "end":
         sid = user["active_session_id"]
         if sid is None:
             await query.edit_message_text("No open session. Use /log to start one.")
             return
         session_sets = user["command_state"].get("current_session_sets", [])
-        total_volume = sum(s["weight_kg"] * s["reps"] for s in session_sets)
         total_sets = len(session_sets)
+
+        # Warn if ending with zero sets
+        if total_sets == 0:
+            await query.edit_message_text(
+                "⚠️ You haven't logged any sets yet.\n\nLog at least one set, or end the session anyway.",
+                reply_markup=InlineKeyboardMarkup([[
+                    InlineKeyboardButton("🚫 Keep training", callback_data="wk:noop"),
+                    InlineKeyboardButton("✓ End anyway", callback_data="wk:end_confirm"),
+                ]]),
+            )
+            return
+
+        total_volume = sum(s["weight_kg"] * s["reps"] for s in session_sets)
         user["active_session_id"] = None
         user["command_state"]["current_session_sets"] = []
         user["command_state"].pop("active_session_day", None)
@@ -4089,6 +4136,8 @@ def _analyze_photo(images_b64: list[str], profile: dict, prev: dict | None = Non
 
 def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_str: str = "") -> str:
     injuries_note = profile.get("injuries", "") if profile else ""
+    diet_restrictions = profile.get("dietary_restrictions", "") if profile else ""
+    show_date = profile.get("show_date", "") if profile else ""
     profile_ctx = (
         f"Age: {profile.get('age', 'not specified')} | "
         f"Gender: {profile.get('gender', 'not specified')} | "
@@ -4098,6 +4147,7 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         f"Experience: {profile.get('experience', 'beginner')} | "
         f"Training days: {days}/week"
         + (f" | Injuries/limitations: {injuries_note}" if injuries_note else "")
+        + (f" | Dietary restrictions: {diet_restrictions}" if diet_restrictions else "")
     ) if profile else "No profile data — assume healthy adult beginner with general fitness goal."
 
     if analysis:
@@ -4118,6 +4168,33 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         f"{injuries_note}. Substitute with safe alternatives and note the substitution.\n\n"
         if injuries_note else "\n\n"
     )
+    diet_clause = (
+        f"ABSOLUTE DIETARY CONSTRAINT: This athlete has the following dietary restrictions: {diet_restrictions}. "
+        f"Every single meal, food suggestion, sample meal, and foods_to_prioritize item MUST comply strictly. "
+        f"Do NOT suggest any food that violates these restrictions under any circumstances. "
+        f"If vegan — no meat, fish, dairy, or eggs. If vegetarian — no meat or fish. "
+        f"If lactose intolerant — no dairy. If celiac or gluten-free — no wheat, barley, rye, or gluten. "
+        f"Violation of this constraint is a critical error.\n\n"
+        if diet_restrictions else ""
+    )
+    # Contest prep countdown
+    show_date_clause = ""
+    if show_date:
+        try:
+            from datetime import date as _date_cls
+            show_dt = _date_cls.fromisoformat(str(show_date))
+            days_out = (show_dt - _date_cls.today()).days
+            if days_out > 0:
+                show_date_clause = (
+                    f"CONTEST PREP: Show date is {show_date} — {days_out} days out. "
+                    f"This is competition prep. "
+                    + ("Peak week protocol (water/sodium manipulation, carb load) should be referenced." if days_out <= 14 else
+                       "Prioritise fat loss and conditioning. Include posing practice in coaching notes." if days_out <= 56 else
+                       "Prioritise building stage muscle retention while reducing body fat.")
+                    + "\n\n"
+                )
+        except Exception:
+            pass
     return (
         "You are an expert strength coach and sports nutritionist who works with all populations — "
         "beginners to advanced athletes, all ages (teens to 70+), all genders, all goals "
@@ -4128,6 +4205,8 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         "Tailor EVERYTHING to this specific athlete. A beginner gets simpler movements and lower volume. "
         "An older athlete gets joint-friendly exercise selection. Nutrition targets must match their "
         f"actual goal and body weight. {injury_clause}"
+        f"{diet_clause}"
+        f"{show_date_clause}"
         "Diet planning must account for gut health: "
         "(1) include at least one fermented probiotic food in foods_to_prioritize (Greek yogurt, kefir, kimchi, sauerkraut); "
         "(2) include prebiotic/high-fiber foods (garlic, onion, oats, legumes, bananas); "

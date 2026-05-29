@@ -184,12 +184,12 @@ Provide a detailed, honest, and constructive assessment. Return ONLY valid JSON 
     "body_fat_confidence": "medium",
     "overall_physique_score": 7.2,
     "muscle_development": {{
-        "chest": {{"score": 7, "notes": "Good upper chest development, lower chest needs work"}},
-        "back": {{"score": 6, "notes": "Width is decent, thickness/detail needs improvement"}},
-        "shoulders": {{"score": 7, "notes": "Good front delt development, laterals are lagging"}},
-        "arms": {{"score": 7, "notes": "Bicep peak is good, tricep mass needs work"}},
-        "legs": {{"score": 5, "notes": "Quads are underdeveloped relative to upper body"}},
-        "core": {{"score": 6, "notes": "Abs visible but obliques need more definition"}}
+        "chest": {{"score": 7, "notes": "Good upper chest development, lower chest needs work", "action": "Add 2 sets incline dumbbell press at 3×10-12 to target upper chest."}},
+        "back": {{"score": 6, "notes": "Width is decent, thickness/detail needs improvement", "action": "Add 3 sets of barbell rows to build mid-back thickness."}},
+        "shoulders": {{"score": 7, "notes": "Good front delt development, laterals are lagging", "action": "Add 4 sets of lateral raises 3×15-20 to bring up side delts."}},
+        "arms": {{"score": 7, "notes": "Bicep peak is good, tricep mass needs work", "action": "Add 3 sets of overhead tricep extensions to build long head mass."}},
+        "legs": {{"score": 5, "notes": "Quads are underdeveloped relative to upper body", "action": "Add a dedicated leg day with 4×8-10 squats and 3×10-12 leg press."}},
+        "core": {{"score": 6, "notes": "Abs visible but obliques need more definition", "action": "Add 3 sets of cable woodchops and side planks 3×30s to hit obliques."}}
     }},
     "strengths": [
         "Strong shoulder-to-waist ratio",
@@ -211,7 +211,7 @@ Provide a detailed, honest, and constructive assessment. Return ONLY valid JSON 
     "disclaimer": "Visual estimates are approximate. A DEXA scan or hydrostatic weighing provides clinical-grade body composition data."
 }}
 
-Be specific, honest, and actionable. Score muscle groups 1-10. Only return valid JSON — no other text."""
+Be specific, honest, and actionable. Score muscle groups 1-10. Each muscle_development entry MUST include an "action" field: one concrete exercise prescription (sets × reps) to address the weakness or maintain the strength. Only return valid JSON — no other text."""
 
     message = client.messages.create(
         model=ANALYSIS_MODEL,
