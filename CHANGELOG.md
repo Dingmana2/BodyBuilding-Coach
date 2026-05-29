@@ -1,6 +1,44 @@
 # CHANGELOG
 
-## 2026-05-29 (Sprint 6 — Tier Removal + Beta-Fix Rollout)
+## 2026-05-29 (Sprint 8 — Telegram Bot 50-User Beta Fix Sprint)
+
+### 27-bug audit: 4 critical crashes fixed, 7 high-severity flows fixed, 10 medium UX issues fixed
+
+**Files:** `telegram_bot.py` only
+
+**What changed:**
+
+**CRITICAL fixes:**
+- `/weakpoints` crashed 100% of the time: `asyncio.run_in_executor` doesn't exist at module level — changed to `asyncio.get_event_loop().run_in_executor` (one-line fix restoring the entire command)
+- Duplicate check-in corrupted streaks and recovery data: replaced `append` with a same-day overwrite — old entry is removed before the new one is stored
+- Chat-triggered plan regeneration froze the bot for 30-60 seconds for ALL users: `_generate_plan` / `_generate_plan_from_profile` now run in `run_in_executor` in the `handle_message` regen branch
+- Profile `days` field set to emoji/free-text (e.g. "🏋️ 5 days") crashed plan generation with `ValueError: invalid literal for int()`: both `_generate_plan` and `_generate_plan_from_profile` now strip non-numeric chars before `int()` with a safe fallback to 4; default days unified to 4 across both functions
+
+**HIGH fixes:**
+- `_parse_height`: added `5ft8`, `5ft10in`, `5feet8` regex branches — previously stored garbage heights for the most natural US format
+- `/fridge` dead-end: typing text while `awaiting_fridge_photo` silently fell to the AI coach and stuck the user forever — now returns a clear photo-prompt with cancel option
+- `/stats` 30-day volume histogram was wrong for all days 1-29 of the month: `replace(day=max(1,day-30))` replaced with `timedelta(days=30)`
+- `/research creatine timing` ignored "creatine timing" entirely — user query now passed as `topic` to `_fetch_research_summaries`; function signature updated
+- `handle_plan_days_callback` had no cooldown — could bypass the 5-minute plan spam limit by re-tapping the day picker; cooldown check added before `query.answer()`
+- `/logset` accepted weight=0 or negative silently corrupting PRs; validation added with clear error messages; improved error hint includes an example
+- `/workout` cleared `active_command` unconditionally — silently killed in-progress checkin/profile flows; now preserves `prev_active` context
+
+**MEDIUM fixes:**
+- `cmd_checkin`: added same-day duplicate warning at top with inline-format hint for updating
+- `dietary_restrictions` profile field had no input prompt — showed raw field name with underscores; added friendly prompt with examples
+- `/link` told users to type `/link-status` (hyphen) — actual command is `/link_status` (underscore); fixed
+- `_chat_with_coach` return type annotation was wrong (2-tuple vs actual 3-tuple)
+- Fallback recovery score ignored `joint_pain` and `motivation` — formula updated to include all 6 dimensions
+- `/peakweek` error only mentioned `prep` goal; updated to mention both `prep` and `cut`
+- Goal target date in the past was silently accepted — now validates and rejects with clear message
+- Inline `/checkin` only accepted 4 fields, silently defaulting `joint_pain=10` and `motivation=7`; optional fields now forwarded if provided
+- `/help` was missing `/link`, `/link_status`, `/billing`, `/freeze`, `/peakweek` — all added
+
+**Rollback:** Revert `telegram_bot.py` to `0ff9ef0`. No schema or external-service changes.
+
+---
+
+## 2026-05-29 (Sprint 7 — Remaining Backlog Features)
 
 ### Remove subscription tiers, billing UI, and roll out common-theme beta fixes
 

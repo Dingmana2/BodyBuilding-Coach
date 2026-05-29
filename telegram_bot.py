@@ -198,14 +198,20 @@ def _today() -> str:
 # ── Unit helpers ─────────────────────────────────────────────────────────────
 
 def _parse_height(s: str) -> str:
-    s = s.strip().lower().replace('’', "'").replace('‘', "'").replace('“', '').replace('”', '').replace('"', '').replace('"', '').replace(' ', '')
-    m = re.match(r"(\d+)'(\d+)", s)
+    s = s.strip().lower().replace(‘’’, “’”).replace(‘‘’, “’”).replace(‘”’, ‘’).replace(‘“’, ‘’).replace(‘”’, ‘’).replace(‘”’, ‘’).replace(‘ ‘, ‘’)
+    # feet-inches: 5’10, 5’10”, 5ft10, 5ft10in, 5feet10, 5feet10in
+    m = re.match(r”(\d+)[‘’ft][\s]*(\d+)”, s) or re.match(r”(\d+)feet(\d+)”, s)
     if m:
         return str(round(int(m.group(1)) * 30.48 + int(m.group(2)) * 2.54))
-    m = re.match(r"(\d+(?:\.\d+)?)in$", s)
+    # bare feet e.g. 5ft (no inches)
+    m = re.match(r”(\d+)ft$”, s)
+    if m:
+        return str(round(int(m.group(1)) * 30.48))
+    # bare inches e.g. 68in
+    m = re.match(r”(\d+(?:\.\d+)?)in$”, s)
     if m:
         return str(round(float(m.group(1)) * 2.54))
-    return re.sub(r"cm$", "", s)
+    return re.sub(r”cm$”, “”, s)
 
 
 def _parse_weight(s: str) -> str:
@@ -496,7 +502,11 @@ _HELP_TEXT = (
     "/reminders — Set daily reminders\n"
     "/units — Switch kg ↔ lbs\n"
     "/freeze — Protect today's streak (1 per 30 days)\n"
-    "/fridge — Scan fridge photo → macro-matched recipes\n\n"
+    "/fridge — Scan fridge photo → macro-matched recipes\n"
+    "/peakweek — Contest peak week protocol (prep/cut only)\n"
+    "/link — Link Telegram to the web app\n"
+    "/link\\_status — Check web-app link status\n"
+    "/billing — Billing & partnership info\n\n"
     "*🔒 Privacy*\n"
     "/privacy — View data policy\n"
     "/export — Download all your data (JSON)\n"
@@ -867,7 +877,8 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
             "age":     "Type your age (e.g. `28`):",
             "height":  "Type your height (e.g. `5'10\"` or `178cm`):",
             "weight":  "Type your weight (e.g. `85kg` or `188lbs`):",
-            "injuries": "Describe any injuries or pain areas (e.g. `bad left knee`):",
+            "injuries": "Describe any injuries or pain areas (e.g. `bad left knee, shoulder impingement`):",
+            "dietary_restrictions": "Describe your dietary restrictions (e.g. `vegan`, `gluten-free`, `lactose intolerant`, `nut allergy`, `no pork`):",
             "email":   "Type your email address:",
         }
         await query.edit_message_text(
@@ -1068,7 +1079,17 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user["active_command"] = None
     user["command_state"] = {}
 
-    # Allow inline: /checkin sleep=7 energy=6 soreness=5 stress=4
+    # Warn if already checked in today (allow update via inline format)
+    if not context.args and any(c.get("date") == _today() for c in user.get("checkins", [])):
+        await update.message.reply_text(
+            "✅ You've already checked in today!\n\n"
+            "To update it, use the inline format:\n"
+            "`/checkin sleep=8 energy=7 soreness=4 stress=3 joint_pain=9 motivation=8`",
+            parse_mode="Markdown",
+        )
+        return
+
+    # Allow inline: /checkin sleep=7 energy=6 soreness=5 stress=4 joint_pain=9 motivation=8
     if context.args:
         data: dict[str, int] = {}
         for arg in context.args:
@@ -1079,6 +1100,9 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 except ValueError:
                     pass
         if all(k in data for k in ("sleep", "energy", "soreness", "stress")):
+            # Fill optional fields with interactive-flow defaults if not provided
+            data.setdefault("joint_pain", 10)
+            data.setdefault("motivation", 7)
             await _finish_checkin(update, user, data)
             return
 
@@ -1226,7 +1250,9 @@ async def _finish_checkin(
             ctx_str,
         )
     except Exception:
-        score = round((data["sleep"] + data["energy"] + (11 - data["soreness"]) + (11 - data["stress"])) / 4 * 10)
+        jp = data.get("joint_pain", 10)
+        mot = data.get("motivation", 7)
+        score = round((data["sleep"] + data["energy"] + (11 - data["soreness"]) + (11 - data["stress"]) + jp + mot) / 6 * 10)
         tip = "Listen to your body and train accordingly today."
 
     joint_pain = data.get("joint_pain", 10)
@@ -1246,6 +1272,9 @@ async def _finish_checkin(
         "sleep_duration_hrs": garmin_data.get("sleep_duration_hrs") if garmin_data else None,
         "data_source": "garmin" if garmin_data else "manual",
     }
+    # Overwrite same-day entry if one exists, otherwise append
+    today = entry["date"]
+    user["checkins"] = [c for c in user["checkins"] if c.get("date") != today]
     user["checkins"].append(entry)
     user["checkins"] = user["checkins"][-90:]
     _save_store()
@@ -1368,9 +1397,12 @@ async def _finish_checkin(
 async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
+    prev_active = user.get("active_command")
     user["active_command"] = None
     user["command_state"] = {}
     sub = context.args[0].lower() if context.args else ""
+    if prev_active and prev_active not in ("checkin",) and sub in ("start", "end"):
+        pass  # silently discard stale state for non-critical commands
 
     if sub == "start":
         if user["active_session_id"] is not None:
@@ -1537,7 +1569,17 @@ async def cmd_logset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     weight_kg = _parse_logset_weight_kg(args[-2])
     if weight_kg is None:
-        await update.message.reply_text("Could not parse weight. Use `100kg`, `225lbs`, or bare `100`.", parse_mode="Markdown")
+        await update.message.reply_text(
+            "Could not parse weight. Use `100kg`, `225lbs`, or bare `100`.\n"
+            "Example: `/logset bench press 100kg 8`",
+            parse_mode="Markdown",
+        )
+        return
+    if weight_kg <= 0:
+        await update.message.reply_text("Weight must be greater than 0.", parse_mode="Markdown")
+        return
+    if reps <= 0:
+        await update.message.reply_text("Reps must be greater than 0.", parse_mode="Markdown")
         return
 
     exercise = " ".join(args[:-2]).title()
@@ -2518,7 +2560,7 @@ async def cmd_stats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     )
 
     # Volume per muscle group (last 30 days)
-    cutoff = str(_date.today().replace(day=max(1, _date.today().day - 30)))
+    cutoff = str(_date.today() - timedelta(days=30))
     recent_sets = [s for s in user["set_logs"] if s.get("date", "") >= cutoff]
     muscle_map = {
         "chest": ["bench", "chest", "fly", "push"],
@@ -2806,10 +2848,14 @@ async def cmd_mfp(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def cmd_research(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    msg = await update.message.reply_text("🔬 Fetching research + community insights…")
+    query_topic = " ".join(context.args).strip() if context.args else ""
+    msg = await update.message.reply_text(
+        f"🔬 Fetching research on *{query_topic}*…" if query_topic else "🔬 Fetching research + community insights…",
+        parse_mode="Markdown",
+    )
     try:
-        pubmed_task = asyncio.create_task(_fetch_research_summaries())
-        reddit_task = asyncio.create_task(_fetch_reddit_summaries())
+        pubmed_task = asyncio.create_task(_fetch_research_summaries(topic=query_topic or None))
+        reddit_task = asyncio.create_task(_fetch_reddit_summaries(topic=query_topic or None))
         pubmed, reddit = await asyncio.gather(pubmed_task, reddit_task, return_exceptions=True)
 
         parts: list[str] = []
@@ -3099,7 +3145,7 @@ async def cmd_weakpoints(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         from claude_service import analyze_weak_points
         all_analyses = user.get("analyses") or ([user["last_analysis"]] if user["last_analysis"] else [])
         ctx_str = _get_bot_context_str(user)
-        result = await asyncio.run_in_executor(
+        result = await asyncio.get_event_loop().run_in_executor(
             None, analyze_weak_points, all_analyses, recent_sets, user["profile"] or None, ctx_str
         )
         weak_pts = "\n".join(f"• {w}" for w in result.get("weak_points", []))
@@ -3289,7 +3335,7 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         f"1. Open the web app\n"
         f"2. Go to **Profile → Link Telegram**\n"
         f"3. Enter the code above\n\n"
-        f"_Code expires in 10 minutes. Use /link\\-status to verify._",
+        f"_Code expires in 10 minutes. Use /link\\_status to verify._",
         parse_mode="Markdown",
     )
 
@@ -3515,9 +3561,14 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles plan:days:{n} — stores chosen day count then generates the plan."""
     query = update.callback_query
-    await query.answer()
     chat_id = update.effective_chat.id
     user = get_user(chat_id)
+
+    remaining = _check_cooldown(_plan_cooldowns, chat_id, PLAN_COOLDOWN)
+    if remaining:
+        await query.answer(f"⏳ Wait {remaining}s before regenerating.", show_alert=True)
+        return
+    await query.answer()
 
     days = int(query.data.split(":")[-1])
     user["profile"]["days"] = str(days)
@@ -3617,6 +3668,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     if active in ("connect_garmin", "connect_mfp"):
         await _handle_connect_step(update, user, text)
+        return
+    if active == "awaiting_fridge_photo":
+        await update.message.reply_text(
+            "📷 Send a photo of your fridge or pantry and I'll suggest macro-matched recipes.\n\n"
+            "Or type /fridge to restart.",
+        )
         return
     if active == "fridge_reviewing":
         state = user.get("command_state") or {}
@@ -3794,6 +3851,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     pass
             elif field == "date":
                 if re.match(r"\d{4}-\d{2}-\d{2}", val):
+                    try:
+                        from datetime import date as _date_cls
+                        if _date_cls.fromisoformat(val[:10]) <= _date_cls.today():
+                            await update.message.reply_text(
+                                "❌ Target date must be in the future. Try again (e.g. `2027-01-01`):",
+                                parse_mode="Markdown",
+                            )
+                            return
+                    except ValueError:
+                        pass
                     active_goal["target_date"] = val[:10]
                     parsed_ok = True
             if not parsed_ok:
@@ -3941,10 +4008,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 "🧬 Got it — rebuilding your full plan with the changes… (30-60 seconds)"
             )
             try:
+                loop = asyncio.get_event_loop()
                 if user["last_analysis"]:
-                    plan = _generate_plan(user["last_analysis"], user["profile"])
+                    plan = await loop.run_in_executor(
+                        None, _generate_plan, user["last_analysis"], user["profile"]
+                    )
                 else:
-                    plan = _generate_plan_from_profile(user["profile"])
+                    plan = await loop.run_in_executor(
+                        None, _generate_plan_from_profile, user["profile"]
+                    )
                 user["last_plan"] = plan
                 _save_store()
                 await regen_msg.delete()
@@ -3964,7 +4036,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await msg.edit_text(f"❌ Something went wrong: {e}")
 
 
-def _chat_with_coach(text: str, user: dict, context_str: str = "") -> tuple[str, dict | None]:
+def _chat_with_coach(text: str, user: dict, context_str: str = "") -> tuple[str, dict | None, dict | None]:
     profile = user["profile"]
     plan = user["last_plan"]
     history = user["conversation_history"]
@@ -4310,30 +4382,37 @@ def _run_plan_api(prompt: str) -> dict:
 
 
 def _generate_plan(analysis: dict, profile: dict, context_str: str = "") -> dict:
-    days = int(profile.get("days", 4))
+    try:
+        days = int(re.sub(r"[^0-9]", "", str(profile.get("days", "4"))) or "4")
+    except (ValueError, TypeError):
+        days = 4
     prompt = _build_plan_prompt(profile, analysis, days, context_str)
     return _run_plan_api(prompt)
 
 
 def _generate_plan_from_profile(profile: dict, context_str: str = "") -> dict:
-    days = int(profile.get("days", 3))
+    try:
+        days = int(re.sub(r"[^0-9]", "", str(profile.get("days", "4"))) or "4")
+    except (ValueError, TypeError):
+        days = 4
     prompt = _build_plan_prompt(profile, None, days, context_str)
     return _run_plan_api(prompt)
 
 
 # ── Research ──────────────────────────────────────────────────────────────────
 
-async def _fetch_research_summaries() -> list[str]:
+async def _fetch_research_summaries(topic: str | None = None) -> list[str]:
     summaries = []
-    for topic in RESEARCH_TOPICS[:3]:
+    topics = [topic] if topic else RESEARCH_TOPICS[:3]
+    for t in topics:
         try:
-            papers = await _search_pubmed(topic)
+            papers = await _search_pubmed(t)
             if papers:
-                summary = _summarize_papers(topic, papers)
-                summaries.append(f"*{topic.replace('2024', '').strip().title()}*\n{summary}")
+                summary = _summarize_papers(t, papers)
+                summaries.append(f"*{t.replace('2024', '').strip().title()}*\n{summary}")
             await asyncio.sleep(0.5)
         except Exception as e:
-            print(f"Warning: research topic {topic!r} failed: {e}")
+            print(f"Warning: research topic {t!r} failed: {e}")
             continue
     return summaries or ["No research data available. Try again in a moment."]
 
@@ -4444,8 +4523,8 @@ def _summarize_reddit(subreddit: str, posts: list[dict]) -> str:
     return message.content[0].text.strip()
 
 
-async def _fetch_reddit_summaries(subreddits: list[str] | None = None) -> list[str]:
-    """Fetch and summarise hot posts from fitness subreddits."""
+async def _fetch_reddit_summaries(subreddits: list[str] | None = None, topic: str | None = None) -> list[str]:
+    """Fetch and summarise hot posts from fitness subreddits, optionally filtered by topic."""
     targets = (subreddits or REDDIT_SUBREDDITS)[:4]  # cap at 4 to control cost and latency
     summaries = []
     for sub in targets:
@@ -4565,7 +4644,9 @@ async def cmd_peakweek(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if profile.get("goal", "").lower() not in ("prep", "cut"):
         await update.message.reply_text(
             "⚠️ /peakweek is designed for athletes in contest prep or a final cut.\n\n"
-            "Set your goal first: `/profile goal=prep`",
+            "Set your goal to prep or cut first:\n"
+            "• `/profile goal=prep` — for contest prep\n"
+            "• `/profile goal=cut` — for a final cutting phase",
             parse_mode="Markdown",
         )
         return
