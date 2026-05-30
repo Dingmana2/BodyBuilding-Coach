@@ -42,6 +42,67 @@ const state = {
     latestCheckins: [],
 };
 
+/* ── Unit preferences ── */
+const UNIT_KEY = 'bb_unit_pref';
+
+function getUnitPref() {
+    const stored = localStorage.getItem(UNIT_KEY);
+    if (stored === 'imperial' || stored === 'metric') return stored;
+    const langs = Array.from(navigator.languages || [navigator.language || 'en']);
+    return langs.some(l => l === 'en-US') ? 'imperial' : 'metric';
+}
+
+function isImperial() { return getUnitPref() === 'imperial'; }
+
+function toggleUnitPref() {
+    localStorage.setItem(UNIT_KEY, isImperial() ? 'metric' : 'imperial');
+    applyUnitLabels();
+    const tok = getToken();
+    if (!tok) return;
+    const t = state.activeTab;
+    if (t === 'profile') loadProfile();
+    else if (t === 'progress') loadProgress();
+    else if (t === 'workout') loadWorkout();
+    else if (t === 'dashboard') loadDashboard();
+}
+
+function kgToLbs(kg)    { return Math.round(+kg * 2.20462 * 10) / 10; }
+function lbsToKg(lbs)   { return Math.round(+lbs / 2.20462 * 100) / 100; }
+function cmToIn(cm)     { return Math.round(+cm * 0.393701 * 10) / 10; }
+function inToCm(inches) { return Math.round(+inches / 0.393701 * 10) / 10; }
+
+function fmtWeight(kg) {
+    if (kg == null || kg === '' || isNaN(+kg)) return '—';
+    return isImperial() ? `${kgToLbs(+kg)} lbs` : `${parseFloat(+kg).toFixed(1)} kg`;
+}
+function fmtLength(cm) {
+    if (cm == null || cm === '' || isNaN(+cm)) return '—';
+    return isImperial() ? `${cmToIn(+cm)} in` : `${parseFloat(+cm).toFixed(1)} cm`;
+}
+function weightUnit() { return isImperial() ? 'lbs' : 'kg'; }
+function lengthUnit() { return isImperial() ? 'in' : 'cm'; }
+
+function applyUnitLabels() {
+    const imp = isImperial();
+    document.querySelectorAll('.unit-lbl-weight').forEach(el => { el.textContent = imp ? '(lbs)' : '(kg)'; });
+    document.querySelectorAll('.unit-lbl-height').forEach(el => { el.textContent = imp ? '(in)' : '(cm)'; });
+    document.querySelectorAll('.unit-lbl-length').forEach(el => { el.textContent = imp ? '(in)' : '(cm)'; });
+    const hf = document.querySelector('[name="height_cm"]');
+    if (hf) { hf.min = imp ? 40 : 100; hf.max = imp ? 100 : 250; hf.placeholder = imp ? '70' : '178'; }
+    const wf = document.querySelector('[name="weight_kg"]');
+    if (wf) { wf.min = imp ? 66 : 30; wf.max = imp ? 660 : 300; wf.placeholder = imp ? '187' : '85'; }
+    const mw = document.getElementById('m-weight');
+    if (mw) mw.placeholder = imp ? '185' : '85.0';
+    const mwa = document.getElementById('m-waist');
+    if (mwa) mwa.placeholder = imp ? '32' : '82';
+    const mc = document.getElementById('m-chest');
+    if (mc) mc.placeholder = imp ? '39' : '100';
+    const ma = document.getElementById('m-arm');
+    if (ma) ma.placeholder = imp ? '15' : '38';
+    const btn = document.getElementById('unit-toggle-btn');
+    if (btn) btn.textContent = imp ? 'Imperial' : 'Metric';
+}
+
 /* ── Auth ── */
 const AUTH_KEY = 'bb_auth_token';
 const USER_KEY = 'bb_auth_user';
@@ -1056,9 +1117,9 @@ function renderMeasurements(data) {
                 ${data.map(m => `
                     <tr style="border-bottom:1px solid var(--border)">
                         <td style="padding:8px">${esc(m.date)}</td>
-                        <td style="padding:8px;text-align:right;color:var(--gold)">${m.body_weight_kg != null ? `${m.body_weight_kg}kg` : '—'}</td>
-                        <td style="padding:8px;text-align:right">${m.waist_cm != null ? `${m.waist_cm}cm` : '—'}</td>
-                        <td style="padding:8px;text-align:right">${m.chest_cm != null ? `${m.chest_cm}cm` : '—'}</td>
+                        <td style="padding:8px;text-align:right;color:var(--gold)">${fmtWeight(m.body_weight_kg)}</td>
+                        <td style="padding:8px;text-align:right">${fmtLength(m.waist_cm)}</td>
+                        <td style="padding:8px;text-align:right">${fmtLength(m.chest_cm)}</td>
                         <td style="padding:8px;text-align:right">${m.left_arm_cm != null ? `${m.left_arm_cm}cm` : '—'}</td>
                     </tr>
                 `).join('')}
@@ -1069,10 +1130,17 @@ function renderMeasurements(data) {
 
 async function logMeasurement(event) {
     event.preventDefault();
-    const weight = parseFloat(document.getElementById('m-weight').value) || null;
-    const waist = parseFloat(document.getElementById('m-waist').value) || null;
-    const chest = parseFloat(document.getElementById('m-chest').value) || null;
-    const arm = parseFloat(document.getElementById('m-arm').value) || null;
+    let weight = parseFloat(document.getElementById('m-weight').value) || null;
+    let waist  = parseFloat(document.getElementById('m-waist').value) || null;
+    let chest  = parseFloat(document.getElementById('m-chest').value) || null;
+    let arm    = parseFloat(document.getElementById('m-arm').value) || null;
+
+    if (isImperial()) {
+        if (weight) weight = lbsToKg(weight);
+        if (waist)  waist  = inToCm(waist);
+        if (chest)  chest  = inToCm(chest);
+        if (arm)    arm    = inToCm(arm);
+    }
 
     if (!weight && !waist && !chest && !arm) {
         showToast('Enter at least one measurement.', 'error');
@@ -1107,18 +1175,19 @@ function renderPlateaus(data) {
 
         const trendDots = ex.weekly_trend.map((v, i) => {
             const isLast = i === ex.weekly_trend.length - 1;
-            return `<span style="font-size:${isLast ? '15px' : '13px'};font-weight:${isLast ? '700' : '400'};color:${isLast && ex.stalled ? '#ef4444' : 'var(--text-muted)'}">${v}</span>`;
+            const disp = isImperial() ? kgToLbs(v) : v;
+            return `<span style="font-size:${isLast ? '15px' : '13px'};font-weight:${isLast ? '700' : '400'};color:${isLast && ex.stalled ? '#ef4444' : 'var(--text-muted)'}">${disp}</span>`;
         }).join(' → ');
 
         return `
             <div style="padding:12px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
                 <div>
                     <div style="font-weight:600;font-size:14px">${esc(ex.exercise)}</div>
-                    <div style="font-size:12px;color:var(--text-muted);margin-top:3px">${trendDots} kg est. 1RM</div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:3px">${trendDots} ${weightUnit()} est. 1RM</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:12px">
                     <div style="text-align:right">
-                        <div style="font-size:18px;font-weight:700;color:var(--gold)">${esc(ex.current_1rm)}kg</div>
+                        <div style="font-size:18px;font-weight:700;color:var(--gold)">${fmtWeight(ex.current_1rm)}</div>
                         <div style="font-size:11px;color:var(--text-muted)">current est. 1RM</div>
                     </div>
                     ${badge}
@@ -1143,7 +1212,14 @@ async function loadProfile() {
             const el = form.querySelector(`[name="${field}"]`);
             if (el && profile[field] != null) el.value = profile[field];
         });
+        if (isImperial()) {
+            const hEl = form.querySelector('[name="height_cm"]');
+            if (hEl && hEl.value) hEl.value = cmToIn(parseFloat(hEl.value));
+            const wEl = form.querySelector('[name="weight_kg"]');
+            if (wEl && wEl.value) wEl.value = kgToLbs(parseFloat(wEl.value));
+        }
     }
+    applyUnitLabels();
 
     renderGoals(goals);
     loadBadgesAndStreaks();
@@ -1195,11 +1271,17 @@ async function linkTelegram() {
 async function saveProfile(event) {
     event.preventDefault();
     const form = event.target;
+    let height_cm = parseFloat(form.height_cm.value) || null;
+    let weight_kg = parseFloat(form.weight_kg.value) || null;
+    if (isImperial()) {
+        if (height_cm) height_cm = inToCm(height_cm);
+        if (weight_kg) weight_kg = lbsToKg(weight_kg);
+    }
     const data = {
         age: parseInt(form.age.value) || null,
         gender: form.gender.value || null,
-        height_cm: parseFloat(form.height_cm.value) || null,
-        weight_kg: parseFloat(form.weight_kg.value) || null,
+        height_cm,
+        weight_kg,
         goal: form.goal.value || null,
         training_experience: form.training_experience.value || null,
         training_days_per_week: parseInt(form.training_days_per_week.value) || null,
@@ -1225,7 +1307,7 @@ function renderGoals(goals) {
     }
     el.innerHTML = goals.map(g => {
         const parts = [];
-        if (g.target_weight_kg) parts.push(`→ ${g.target_weight_kg}kg`);
+        if (g.target_weight_kg) parts.push(`→ ${fmtWeight(g.target_weight_kg)}`);
         if (g.target_bf_pct) parts.push(`→ ${g.target_bf_pct}% BF`);
         if (g.target_date) parts.push(`by ${esc(g.target_date)}`);
         const badge = g.is_active
@@ -1246,9 +1328,11 @@ async function saveGoal(event) {
     event.preventDefault();
     const form = event.target;
     try {
+        let target_weight_kg = parseFloat(form.target_weight_kg.value) || null;
+        if (isImperial() && target_weight_kg) target_weight_kg = lbsToKg(target_weight_kg);
         await api('POST', '/goals', {
             goal_type: form.goal_type.value,
-            target_weight_kg: parseFloat(form.target_weight_kg.value) || null,
+            target_weight_kg,
             target_bf_pct: parseFloat(form.target_bf_pct.value) || null,
             target_date: form.target_date.value || null,
         });
@@ -1504,9 +1588,10 @@ function clearSelectedExercise() {
     document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
 }
 
-function adjustWeight(delta) {
+function adjustWeight(direction) {
+    const step = isImperial() ? 5 : 2.5;
     const input = document.getElementById('weight-input');
-    input.value = Math.max(0, Math.round((parseFloat(input.value || 0) + delta) * 10) / 10);
+    input.value = Math.max(0, Math.round((parseFloat(input.value || 0) + direction * step) * 10) / 10);
 }
 
 function adjustReps(delta) {
@@ -1518,7 +1603,7 @@ function updatePRHint(name) {
     const hint = document.getElementById('last-1rm-hint');
     const prRow = document.querySelector(`.pr-row[data-exercise="${CSS.escape(name)}"]`);
     if (prRow) {
-        hint.textContent = `Current PR: ${prRow.dataset.estimated1rm}kg est. 1RM`;
+        hint.textContent = `Current PR: ${fmtWeight(prRow.dataset.estimated1rm)} est. 1RM`;
     } else {
         hint.textContent = '';
     }
@@ -1546,7 +1631,7 @@ async function endSession() {
         state.activeSessionId = null;
         state.selectedExercise = null;
         showNoSession();
-        const volStr = summary.total_volume_kg > 0 ? ` · ${summary.total_volume_kg}kg volume` : '';
+        const volStr = summary.total_volume_kg > 0 ? ` · ${fmtWeight(summary.total_volume_kg)} volume` : '';
         const streakStr = summary.workout_streak > 1 ? ` 🔥 ${summary.workout_streak}-day streak!` : '';
         showToast(`Session done! ${summary.set_count} sets${volStr}${streakStr}`);
         if ([7, 14, 30, 60, 90].includes(summary.workout_streak)) {
@@ -1572,18 +1657,19 @@ function _showNextSessionTargets(targets) {
 
 async function logSet() {
     if (!state.activeSessionId || !state.selectedExercise) return;
-    const weight = parseFloat(document.getElementById('weight-input').value);
+    let weight = parseFloat(document.getElementById('weight-input').value);
     const reps = parseInt(document.getElementById('reps-input').value);
     if (!weight || weight <= 0 || !reps || reps <= 0) {
         showToast('Enter valid weight and reps.', 'error');
         return;
     }
+    const weight_kg = isImperial() ? lbsToKg(weight) : weight;
     const logBtn = document.querySelector('#log-set-card .btn-primary');
     if (logBtn) { logBtn.disabled = true; logBtn.textContent = 'Saving…'; }
     try {
         const result = await api('POST', `/sessions/${state.activeSessionId}/sets`, {
             exercise_name: state.selectedExercise,
-            weight_kg: weight,
+            weight_kg,
             reps,
         });
         const container = document.getElementById('session-sets-list');
@@ -1596,13 +1682,13 @@ async function logSet() {
         li.className = 'set-log-item';
         li.innerHTML = `
             <span class="set-exercise">${esc(result.exercise_name)}</span>
-            <span class="set-detail">${esc(result.weight_kg)}kg × ${esc(result.reps)}</span>
-            <span class="set-1rm">~${esc(result.estimated_1rm)}kg 1RM</span>
+            <span class="set-detail">${fmtWeight(result.weight_kg)} × ${esc(result.reps)}</span>
+            <span class="set-1rm">~${fmtWeight(result.estimated_1rm)} 1RM</span>
             ${prBadge}
         `;
         ul.prepend(li);
         if (result.is_pr) {
-            showToast(`🏆 New PR on ${result.exercise_name}! ${result.estimated_1rm}kg est. 1RM`);
+            showToast(`🏆 New PR on ${result.exercise_name}! ${fmtWeight(result.estimated_1rm)} est. 1RM`);
             invalidateCache('/prs');
             await loadPRs();
         }
@@ -1627,8 +1713,8 @@ function renderSessionSets(sets) {
     const items = [...sets].reverse().map(s => `
         <li class="set-log-item">
             <span class="set-exercise">${esc(s.exercise_name)}</span>
-            <span class="set-detail">${esc(s.weight_kg)}kg × ${esc(s.reps)}</span>
-            <span class="set-1rm">~${esc(s.estimated_1rm)}kg 1RM</span>
+            <span class="set-detail">${fmtWeight(s.weight_kg)} × ${esc(s.reps)}</span>
+            <span class="set-1rm">~${fmtWeight(s.estimated_1rm)} 1RM</span>
         </li>
     `).join('');
     container.innerHTML = `<ul class="set-log-list">${items}</ul>`;
@@ -1653,7 +1739,7 @@ function renderSessionHistory(history) {
                 <li class="session-history-item">
                     <div style="font-weight:600;font-size:14px">${esc(formatDate(s.started_at))}</div>
                     <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
-                        ${esc(s.set_count)} sets · ${esc(s.total_volume_kg)}kg volume${dur ? ` · ${esc(dur)}` : ''}
+                        ${esc(s.set_count)} sets · ${fmtWeight(s.total_volume_kg)} volume${dur ? ` · ${esc(dur)}` : ''}
                     </div>
                     ${exStr ? `<div style="font-size:12px;color:var(--text-muted)">${esc(exStr)}</div>` : ''}
                     ${targetsHtml}
@@ -1679,9 +1765,9 @@ function renderPRs(prs) {
                     ${prs.map(r => `
                         <tr class="pr-row" data-exercise="${esc(r.exercise_name)}" data-estimated1rm="${esc(r.estimated_1rm)}">
                             <td><strong>${esc(r.exercise_name)}</strong></td>
-                            <td>${esc(r.weight_kg)}kg</td>
+                            <td>${fmtWeight(r.weight_kg)}</td>
                             <td>${esc(r.reps)}</td>
-                            <td style="color:var(--gold);font-weight:600">${esc(r.estimated_1rm)}kg</td>
+                            <td style="color:var(--gold);font-weight:600">${fmtWeight(r.estimated_1rm)}</td>
                             <td style="color:var(--text-muted);font-size:13px">${esc(formatDate(r.achieved_at))}</td>
                         </tr>
                     `).join('')}
@@ -1863,6 +1949,7 @@ async function obLogin() {
 
 /* ── Init ── */
 document.addEventListener('DOMContentLoaded', async () => {
+    applyUnitLabels();
     await initAuth();
     const token = getToken();
     if (token) loadDashboard();

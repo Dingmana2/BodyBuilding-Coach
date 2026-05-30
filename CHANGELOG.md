@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 18: Automatic metric/imperial unit detection
+
+### Added
+- `static/app.js` — `getUnitPref()`: auto-detects imperial for `en-US` browsers, metric for all others; user preference stored in `localStorage`
+- `static/app.js` — `toggleUnitPref()`, `applyUnitLabels()`: live unit switching updates all form labels, input constraints, and placeholders
+- `static/app.js` — `fmtWeight(kg)`, `fmtLength(cm)`, `kgToLbs`, `lbsToKg`, `cmToIn`, `inToCm` conversion helpers
+
+### Changed
+- `static/app.js` — `loadProfile()`: converts stored kg/cm to display units when populating the form; `saveProfile()` converts back to metric before POST
+- `static/app.js` — `logMeasurement()`: converts lbs/in to kg/cm before POST
+- `static/app.js` — `logSet()` / `adjustWeight()`: weight input is in user's preferred unit; stepper step is 5 lbs or 2.5 kg; lbs converted to kg before POST
+- `static/app.js` — `renderPRs()`, `renderSessionSets()`, `renderSessionHistory()`, `renderPlateaus()`, `renderMeasurements()`, `renderGoals()`: all weight/length display uses `fmtWeight`/`fmtLength`
+- `static/index.html` — profile, measurement, workout, and goals form labels use `<span class="unit-lbl-*">` so JS can update them on toggle
+- `static/index.html` — added unit toggle button (Imperial/Metric) in the nav drawer
+
+### Rollback
+- `git revert HEAD` — frontend only, no schema or bot changes
+
 ## 2026-05-30 — Sprint 17: Simplified Auth Overlay + Photo Album Fix
 
 ### Changed
