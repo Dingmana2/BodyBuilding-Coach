@@ -1863,6 +1863,8 @@ const OB_STEPS = ['ob-step-0', 'ob-step-1', 'ob-step-2', 'ob-step-3', 'ob-step-4
 
 function obGoToStep(stepIndex) {
     _obCurrentStep = stepIndex;
+    const overlay = document.getElementById('onboarding-overlay');
+    if (overlay) overlay.style.display = 'flex';
     OB_STEPS.forEach((id, i) => {
         const el = document.getElementById(id);
         if (el) el.classList.toggle('active', i === stepIndex);
@@ -1902,7 +1904,7 @@ async function obLogin() {
     try {
         const data = await api('POST', '/auth/login', { email, password });
         setAuth(data.token, data.user);
-        await loadDashboard();
+        await obEnterApp();
     } catch (err) {
         errEl.textContent = err.message;
     }
