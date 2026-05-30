@@ -69,6 +69,42 @@ function toggleUnitPref() {
     else if (t === 'dashboard') loadDashboard();
 }
 
+const DARK_KEY = 'bb_dark_mode';
+
+function isDarkMode() { return localStorage.getItem(DARK_KEY) === 'true'; }
+
+function toggleDarkMode() {
+    const next = !isDarkMode();
+    localStorage.setItem(DARK_KEY, next ? 'true' : 'false');
+    applyDarkMode();
+}
+
+function applyDarkMode() {
+    const dark = isDarkMode();
+    document.body.classList.toggle('dark', dark);
+    const btn = document.getElementById('dark-mode-btn');
+    if (btn) btn.textContent = dark ? '☀️ Light' : '🌙 Dark';
+}
+
+const BODY_NEUTRAL_KEY = 'bb_body_neutral';
+
+function isBodyNeutral() { return localStorage.getItem(BODY_NEUTRAL_KEY) === 'true'; }
+
+function toggleBodyNeutral() {
+    localStorage.setItem(BODY_NEUTRAL_KEY, isBodyNeutral() ? 'false' : 'true');
+    applyBodyNeutral();
+}
+
+function applyBodyNeutral() {
+    const neutral = isBodyNeutral();
+    const btn = document.getElementById('body-neutral-btn');
+    if (btn) btn.textContent = neutral ? 'Show Scores' : 'Body-Neutral Mode';
+    const bfCard = document.querySelector('.stat-card:has(#stat-bf)');
+    const scoreCard = document.querySelector('.stat-card:has(#stat-score)');
+    if (bfCard) bfCard.style.display = neutral ? 'none' : '';
+    if (scoreCard) scoreCard.style.display = neutral ? 'none' : '';
+}
+
 function kgToLbs(kg)    { return Math.round(+kg * 2.20462 * 10) / 10; }
 function lbsToKg(lbs)   { return Math.round(+lbs / 2.20462 * 100) / 100; }
 function cmToIn(cm)     { return Math.round(+cm * 0.393701 * 10) / 10; }
@@ -86,6 +122,8 @@ function weightUnit() { return isImperial() ? 'lbs' : 'kg'; }
 function lengthUnit() { return isImperial() ? 'in' : 'cm'; }
 
 function applyUnitLabels() {
+    applyDarkMode();
+    applyBodyNeutral();
     const imp = isImperial();
     document.querySelectorAll('.unit-lbl-weight').forEach(el => { el.textContent = imp ? '(lbs)' : '(kg)'; });
     document.querySelectorAll('.unit-lbl-height').forEach(el => { el.textContent = imp ? '(in)' : '(cm)'; });
@@ -104,6 +142,8 @@ function applyUnitLabels() {
     if (ma) ma.placeholder = imp ? '15' : '38';
     const btn = document.getElementById('unit-toggle-btn');
     if (btn) btn.textContent = imp ? '→ Metric' : '→ Imperial';
+    const pul = document.getElementById('profile-unit-label');
+    if (pul) pul.textContent = imp ? 'Imperial' : 'Metric';
 
     // Rebuild height select (value always stored in cm, display in user's unit)
     const hSel = document.getElementById('profile-height');
@@ -366,6 +406,9 @@ function showTab(tab) {
         reports: loadReports,
     };
     if (loaders[tab]) loaders[tab]();
+    document.querySelectorAll('#bottom-tab-bar .bottom-tab').forEach(b => {
+        b.classList.toggle('active', b.dataset.tab === tab);
+    });
 }
 
 function showPlanTab(tab, el) {
@@ -404,7 +447,7 @@ async function loadDashboard() {
     ]);
 
     document.getElementById('setup-banner').style.display =
-        health.api_key_configured ? 'none' : 'block';
+        (!health.api_key_configured && !getToken()) ? 'block' : 'none';
 
     state.currentPlan = plan;
 

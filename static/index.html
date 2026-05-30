@@ -28,8 +28,9 @@
         </div>
         <div id="drawer-user" class="drawer-user">
             <span id="drawer-email" class="drawer-email"></span>
-            <div style="display:flex;gap:6px;margin-top:6px">
-                <button id="unit-toggle-btn" class="btn btn-ghost btn-sm" onclick="toggleUnitPref()" style="font-size:11px;padding:4px 10px">Metric</button>
+            <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
+                <button id="unit-toggle-btn" class="btn btn-ghost btn-sm" onclick="toggleUnitPref()" style="font-size:11px;padding:4px 10px">→ Imperial</button>
+                <button id="dark-mode-btn" class="btn btn-ghost btn-sm" onclick="toggleDarkMode()" style="font-size:11px;padding:4px 10px">🌙 Dark</button>
                 <button class="btn btn-ghost btn-sm" onclick="signOut();closeDrawer()">Sign Out</button>
             </div>
         </div>
@@ -48,9 +49,12 @@
     <main>
         <!-- DASHBOARD -->
         <section id="tab-dashboard" class="tab-content active">
-            <div class="page-header">
-                <h1>Dashboard</h1>
-                <p class="subtitle">Your AI-powered fitness command center</p>
+            <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+                <div>
+                    <h1>Dashboard</h1>
+                    <p class="subtitle">Your AI-powered fitness command center</p>
+                </div>
+                <button id="body-neutral-btn" class="btn btn-ghost btn-sm" onclick="toggleBodyNeutral()" style="font-size:12px;white-space:nowrap;margin-top:8px">Body-Neutral Mode</button>
             </div>
             <!-- Getting-started guide (hidden once user has data) -->
             <div id="getting-started-card" class="getting-started-card" style="display:none">
@@ -424,9 +428,12 @@
 
         <!-- PROFILE -->
         <section id="tab-profile" class="tab-content">
-            <div class="page-header">
-                <h1>Profile</h1>
-                <p class="subtitle">Your details power every recommendation</p>
+            <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+                <div>
+                    <h1>Profile</h1>
+                    <p class="subtitle">Your details power every recommendation</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="toggleUnitPref()" style="font-size:12px;white-space:nowrap;margin-top:8px">Units: <span id="profile-unit-label">Metric</span></button>
             </div>
             <div class="card">
                 <form id="profile-form" onsubmit="saveProfile(event)">
@@ -645,6 +652,30 @@
             <div id="reports-list"><p class="empty-state">No reports yet. Click "Generate Report Now" above to create your first weekly coaching summary.</p></div>
         </section>
     </main>
+
+    <!-- Bottom mobile tab bar -->
+    <nav id="bottom-tab-bar" role="navigation" aria-label="Primary navigation">
+        <button class="bottom-tab active" data-tab="dashboard" onclick="showTab('dashboard')" aria-label="Dashboard">
+            <span class="bottom-tab-icon">🏠</span>
+            <span class="bottom-tab-label">Home</span>
+        </button>
+        <button class="bottom-tab" data-tab="workout" onclick="showTab('workout')" aria-label="Workout">
+            <span class="bottom-tab-icon">💪</span>
+            <span class="bottom-tab-label">Workout</span>
+        </button>
+        <button class="bottom-tab" data-tab="nutrition" onclick="showTab('nutrition')" aria-label="Nutrition">
+            <span class="bottom-tab-icon">🥗</span>
+            <span class="bottom-tab-label">Nutrition</span>
+        </button>
+        <button class="bottom-tab" data-tab="progress" onclick="showTab('progress')" aria-label="Progress">
+            <span class="bottom-tab-icon">📈</span>
+            <span class="bottom-tab-label">Progress</span>
+        </button>
+        <button class="bottom-tab" data-tab="profile" onclick="showTab('profile')" aria-label="Profile">
+            <span class="bottom-tab-icon">👤</span>
+            <span class="bottom-tab-label">Profile</span>
+        </button>
+    </nav>
 
     <!-- Loading overlay -->
     <div id="loading-overlay" style="display:none">
