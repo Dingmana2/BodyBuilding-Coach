@@ -35,7 +35,10 @@ from prompt_builder import bot_json_context_block
 
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
+_raw_api_url = os.getenv("API_BASE_URL", "http://localhost:8000").strip().rstrip("/")
+if _raw_api_url and not _raw_api_url.startswith(("http://", "https://")):
+    _raw_api_url = f"https://{_raw_api_url}"
+API_BASE_URL = _raw_api_url
 BOT_SECRET = os.getenv("BOT_SECRET", "")
 CHAT_MODEL = "claude-sonnet-4-6"
 MAX_HISTORY = 20
@@ -3606,7 +3609,10 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     if not BOT_SECRET or not API_BASE_URL:
         await update.message.reply_text(
-            "⚠️ Account linking is not configured. Set BOT_SECRET and API_BASE_URL in the environment."
+            "⚠️ Web app linking is not set up yet.\n\n"
+            "The bot owner needs to set `BOT_SECRET` and `API_BASE_URL` "
+            "environment variables and redeploy.",
+            parse_mode="Markdown",
         )
         return
 
@@ -3617,7 +3623,7 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             _linked_user_ids[chat_id] = info["user_id"]
             await update.message.reply_text(
                 f"✅ *Already linked!*\n\n"
-                f"Your Telegram is connected to *{info.get('email', '?')}*.",
+                f"Your Telegram is connected to *{esc(info.get('email', '?'))}*.",
                 parse_mode="Markdown",
             )
             return
@@ -3635,18 +3641,35 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             r.raise_for_status()
             result = r.json()
         code = result["code"]
+    except httpx.ConnectError:
+        await update.message.reply_text(
+            "❌ Could not reach the web app. Make sure the web service is running."
+        )
+        return
     except Exception as e:
-        await update.message.reply_text(f"❌ Could not generate link code: {e}")
+        err = str(e).lower()
+        if "protocol" in err or "url" in err or "invalid" in err:
+            await update.message.reply_text(
+                "❌ Web app URL is misconfigured. "
+                "Check that `API_BASE_URL` starts with `https://`.",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                "❌ Could not generate a link code. Please try again in a moment."
+            )
         return
 
+    web_url = API_BASE_URL.removesuffix("/api")
     await update.message.reply_text(
         f"🔗 *Link your Telegram to the web app*\n\n"
         f"Your one-time code:\n\n"
-        f"```\n{code}\n```\n\n"
-        f"1. Open the web app\n"
-        f"2. Go to **Profile → Link Telegram**\n"
-        f"3. Enter the code above\n\n"
-        f"_Code expires in 10 minutes. Use /link\\_status to verify._",
+        f"`{code}`\n\n"
+        f"1. Open: {web_url}\n"
+        f"2. Register or sign in\n"
+        f"3. Go to *Profile → Link Telegram*\n"
+        f"4. Enter the code above\n\n"
+        f"_Code expires in 10 minutes._",
         parse_mode="Markdown",
     )
 
