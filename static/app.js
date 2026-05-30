@@ -137,8 +137,8 @@ function applyBodyNeutral() {
     const neutral = isBodyNeutral();
     const btn = document.getElementById('body-neutral-btn');
     if (btn) btn.textContent = neutral ? 'Show Scores' : 'Body-Neutral Mode';
-    const bfCard = document.querySelector('.stat-card:has(#stat-bf)');
-    const scoreCard = document.querySelector('.stat-card:has(#stat-score)');
+    const bfCard = document.getElementById('stat-bf')?.closest('.stat-card');
+    const scoreCard = document.getElementById('stat-score')?.closest('.stat-card');
     if (bfCard) bfCard.style.display = neutral ? 'none' : '';
     if (scoreCard) scoreCard.style.display = neutral ? 'none' : '';
 }
@@ -1041,6 +1041,7 @@ function printPlan() {
     if (!win) { showToast('Allow pop-ups to print the plan.', 'error'); return; }
     win.document.write(`<!DOCTYPE html><html><head><title>BB Coach AI — My Plan</title>
     <style>
+        :root { --gold: #e8b40a; --green: #22c55e; --text-muted: #666; --surface-2: #f5f5f5; --border: #ddd; --blue: #3b82f6; --red: #ef4444; }
         body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 0 auto; padding: 32px; color: #111; font-size: 14px; line-height: 1.6; }
         h2, h3 { margin-top: 24px; }
         table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 13px; }
@@ -1049,6 +1050,7 @@ function printPlan() {
         .macro-row { display: flex; gap: 20px; flex-wrap: wrap; margin: 16px 0; }
         .macro-card { text-align: center; padding: 12px 20px; background: #f9f9f9; border-radius: 8px; }
         .macro-value { font-size: 24px; font-weight: 800; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 600; }
         @media print { body { padding: 0; } }
     </style></head><body>
     <h1>My Coaching Plan</h1>
@@ -1955,7 +1957,11 @@ function selectExercise(name) {
     document.getElementById('log-set-card').style.display = 'block';
     const lastKg = _exercisePRWeights[name];
     if (lastKg != null) {
-        document.getElementById('weight-input').value = isImperial() ? kgToLbs(lastKg) : lastKg;
+        if (isImperial()) {
+            document.getElementById('weight-input').value = Math.round(kgToLbs(lastKg) / 5) * 5;
+        } else {
+            document.getElementById('weight-input').value = Math.round(lastKg / 2.5) * 2.5;
+        }
     }
     document.getElementById('log-set-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     document.querySelectorAll('.chip').forEach(c => {
