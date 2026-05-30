@@ -1,5 +1,19 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 13: Deload trends, auto-regulation, periodization, VO2max zones, supplement safety, meal timing
+
+### Added
+- `telegram_bot.py` — Feature 4: trend-based deload alert in `_finish_checkin`; scans 5 prior check-ins and surfaces a 🔴 deload-week-overdue warning when 3+ show recovery < 55
+- `telegram_bot.py` — Feature 5: auto-regulation readiness note in `cmd_workout` sub == "start"; reads today's check-in recovery score and surfaces a low/primed/neutral message before the exercise keyboard
+- `telegram_bot.py` — Feature 6C: periodization clause in `_build_plan_prompt`; supports `linear` (default, no clause), `undulating` (DUP rep ranges), and `block` (12-week 3-phase) from `profile["periodization"]`
+- `telegram_bot.py` — Feature 7B: both `_garmin_review_lines` call sites in `_finish_checkin` now pass `age_val` derived from `profile["age"]`; enables personalised HR zones in the check-in summary
+- `telegram_bot.py` — Feature 7C: `_build_plan_prompt` now accepts `garmin_data` kwarg; injects VO2max-derived Zone 2 HR target near CARDIO instruction; `_generate_plan` / `_generate_plan_from_profile` both accept and forward `garmin_data`; `handle_profile_callback` and `handle_plan_days_callback` fetch and pass Garmin cache
+- `telegram_bot.py` — Feature 9C: `med_clause` in `_build_plan_prompt`; reads `profile["medications"]`, calls `_check_supplement_interactions`, injects known interaction warnings near SUPPLEMENTS section
+- `telegram_bot.py` — Feature 10: `timing_clause` in `_build_plan_prompt`; reads `profile["workout_time"]` and populates the `meal_timing` field with timed pre/intra/post-workout nutrition windows
+
+### Rollback
+- `git revert HEAD` — no schema changes, no migrations
+
 ## 2026-05-29 — Expert Beta Simulation: 250 domain experts, 1–18 month simulation
 
 ### Added

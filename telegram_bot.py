@@ -135,6 +135,33 @@ _EXERCISE_DEFAULTS_LBS: dict[str, list[float]] = {
 }
 
 
+_SUPPLEMENT_INTERACTIONS: dict[str, list[tuple[str, str]]] = {
+    "blood thinner":   [("Omega-3 Fish Oil", "increases bleeding risk"), ("Vitamin E", "increases bleeding risk")],
+    "warfarin":        [("Omega-3 Fish Oil", "increases bleeding risk"), ("Vitamin K", "antagonises warfarin — avoid high-dose K2")],
+    "ssri":            [("5-HTP", "serotonin syndrome risk"), ("St John's Wort", "serotonin syndrome risk")],
+    "antidepressant":  [("5-HTP", "serotonin syndrome risk"), ("St John's Wort", "serotonin syndrome risk")],
+    "maoi":            [("Caffeine", "hypertensive crisis risk — avoid stimulants"), ("5-HTP", "serotonin syndrome risk")],
+    "thyroid":         [("Calcium", "impairs thyroid medication absorption — take 4hr apart"), ("Iron", "impairs thyroid medication absorption"), ("Magnesium", "impairs thyroid medication absorption")],
+    "statin":          [("Red Yeast Rice", "additive myopathy risk"), ("Niacin", "additive myopathy risk")],
+    "metformin":       [("Berberine", "additive blood glucose lowering — monitor closely")],
+    "aspirin":         [("Omega-3 Fish Oil", "increased bleeding risk at high doses")],
+    "beta-blocker":    [("Caffeine", "blunts cardio-protective effect; avoid high doses")],
+}
+
+
+def _check_supplement_interactions(medications_str: str) -> list[str]:
+    """Return advisory warnings for supplement-medication interactions."""
+    if not medications_str or medications_str.lower() == "none":
+        return []
+    meds_lower = medications_str.lower()
+    warnings: list[str] = []
+    for kw, interactions in _SUPPLEMENT_INTERACTIONS.items():
+        if kw in meds_lower:
+            for supp, risk in interactions:
+                warnings.append(f"⚠️ *{supp}* + {kw}: {risk}")
+    return warnings
+
+
 def _default_weights_for(exercise_name: str, user: dict) -> list[float]:
     """Return 5 first-time weight options in kg, matched to the exercise and unit system."""
     name = exercise_name.lower()
@@ -831,6 +858,10 @@ def _profile_menu_keyboard(profile: dict, user: dict | None = None) -> InlineKey
             InlineKeyboardButton(f"⚤ Gender: {_val('gender')}", callback_data="prof:f:gender"),
         ],
         [
+            InlineKeyboardButton(f"📈 Periodization: {_val('periodization', 'linear')}", callback_data="prof:f:periodization"),
+            InlineKeyboardButton(f"🕐 Workout time: {_val('workout_time', 'variable')}", callback_data="prof:f:workout_time"),
+        ],
+        [
             InlineKeyboardButton(f"🎂 Age: {_val('age')}", callback_data="prof:input:age"),
             InlineKeyboardButton(f"📏 Height: {_val('height')} {_height_unit}", callback_data="prof:input:height"),
             InlineKeyboardButton(f"⚖️ Weight: {_val('weight')} {_weight_unit}", callback_data="prof:input:weight"),
@@ -846,6 +877,9 @@ def _profile_menu_keyboard(profile: dict, user: dict | None = None) -> InlineKey
         ],
         [
             InlineKeyboardButton(f"🥗 Diet: {_val('dietary_restrictions')}", callback_data="prof:input:dietary_restrictions"),
+        ],
+        [
+            InlineKeyboardButton(f"💊 Medications: {_val('medications', 'none')}", callback_data="prof:input:medications"),
         ],
         [
             InlineKeyboardButton("✏️ Type custom (field=value)", callback_data="prof:custom"),
@@ -996,6 +1030,8 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         "experience":        ["beginner", "intermediate", "advanced"],
         "days":              ["2", "3", "4", "5", "6"],
         "gender":            ["male", "female", "non-binary", "other"],
+        "periodization":     ["linear", "undulating", "block"],
+        "workout_time":      ["morning", "afternoon", "evening", "variable"],
     }
 
     def _current_summary() -> str:
@@ -1060,6 +1096,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
             "injuries": "Describe any injuries or pain areas (e.g. `bad left knee, shoulder impingement`):",
             "dietary_restrictions": "Describe your dietary restrictions (e.g. `vegan`, `gluten-free`, `lactose intolerant`, `nut allergy`, `no pork`):",
             "email":   "Type your email address:",
+            "medications": "List any medications or supplements you already take (e.g. `metformin, SSRIs, blood thinners`). Type 'none' if none:",
         }
         await query.edit_message_text(
             _prompts.get(field, f"Type your *{esc(field)}*:"),
@@ -1093,13 +1130,18 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         ctx_str = _get_bot_context_str(user)
         loop = asyncio.get_running_loop()
         try:
+            import garmin_service as _gs_prof
+            _gd_prof = _gs_prof.get_cached(chat_id)
+        except Exception:
+            _gd_prof = None
+        try:
             if user["last_analysis"]:
                 plan = await loop.run_in_executor(
-                    None, _generate_plan, user["last_analysis"], user["profile"], ctx_str, user.get("units", "kg")
+                    None, _generate_plan, user["last_analysis"], user["profile"], ctx_str, user.get("units", "kg"), _gd_prof
                 )
             else:
                 plan = await loop.run_in_executor(
-                    None, _generate_plan_from_profile, user["profile"], ctx_str, user.get("units", "kg")
+                    None, _generate_plan_from_profile, user["profile"], ctx_str, user.get("units", "kg"), _gd_prof
                 )
             user["last_plan"] = plan
             _save_store()
@@ -1186,7 +1228,7 @@ def _nutrition_today_summary(user: dict) -> str:
     return f"Nutrition today: {cals} kcal | {prot}g protein | {carbs}g carbs | {fat}g fat"
 
 
-def _garmin_review_lines(garmin_data: dict) -> list[str]:
+def _garmin_review_lines(garmin_data: dict, age: int | None = None) -> list[str]:
     """Human-readable metric parts from a Garmin cache entry for display and context."""
     parts: list[str] = []
     if garmin_data.get("sleep_duration_hrs"):
@@ -1215,7 +1257,16 @@ def _garmin_review_lines(garmin_data: dict) -> list[str]:
     if garmin_data.get("steps_yesterday"):
         parts.append(f"Steps {garmin_data['steps_yesterday']:,}")
     if garmin_data.get("vo2_max"):
-        parts.append(f"VO2max {garmin_data['vo2_max']:.0f}")
+        vo2 = garmin_data["vo2_max"]
+        if age:
+            max_hr = 220 - age
+            z2_lo, z2_hi = int(max_hr * 0.60), int(max_hr * 0.70)
+            z3_lo, z3_hi = int(max_hr * 0.70), int(max_hr * 0.80)
+            parts.append(
+                f"VO2max {vo2:.0f} → Zone2 {z2_lo}–{z2_hi}bpm | Zone3 {z3_lo}–{z3_hi}bpm"
+            )
+        else:
+            parts.append(f"VO2max {vo2:.0f}")
     return parts
 
 
@@ -1414,8 +1465,13 @@ async def _finish_checkin(
 
     # Build context string enriched with today's objective data
     ctx_str = _get_bot_context_str(user)
+    age_val = None
+    try:
+        age_val = int(user["profile"].get("age", 0)) or None
+    except (TypeError, ValueError):
+        pass
     if garmin_data:
-        garmin_parts = _garmin_review_lines(garmin_data)
+        garmin_parts = _garmin_review_lines(garmin_data, age=age_val)
         if garmin_parts:
             ctx_str += f"\nGarmin today: {' | '.join(garmin_parts)}"
     if workout_summary:
@@ -1518,6 +1574,20 @@ async def _finish_checkin(
     if score < 50:
         deload_hint = "\n\n⚠️ _Recovery is low — consider a deload or active recovery session today._"
 
+    deload_trend_alert = ""
+    prior_checkins = sorted(
+        [c for c in user["checkins"] if c.get("date", "") < _today()],
+        key=lambda c: c.get("date", "")
+    )[-5:]
+    if len(prior_checkins) >= 4:
+        poor_count = sum(1 for c in prior_checkins if c.get("recovery_score", 100) < 55)
+        if poor_count >= 3:
+            deload_trend_alert = (
+                f"\n\n🔴 *Deload Week Overdue* — {poor_count} of your last {len(prior_checkins)} "
+                "check-ins showed low recovery. Schedule a deload this week: cut volume by 40%, "
+                "keep frequency, use lighter loads. Your body needs to consolidate its gains."
+            )
+
     # Joint pain red flag
     joint_alert = ""
     if joint_pain <= 3:
@@ -1537,7 +1607,7 @@ async def _finish_checkin(
     # Build optional data sections (only shown when data is present)
     garmin_section = ""
     if garmin_data:
-        garmin_parts = _garmin_review_lines(garmin_data)
+        garmin_parts = _garmin_review_lines(garmin_data, age=age_val)
         if garmin_parts:
             garmin_section = f"\n📡 *Garmin:* {' | '.join(garmin_parts)}"
 
@@ -1570,7 +1640,7 @@ async def _finish_checkin(
         f"_(0 = completely exhausted · 100 = peak readiness)_"
         f"{garmin_section}{load_section}{nutrition_section}"
         f"{scores_line}\n\n"
-        f"💡 _{tip}_{deload_hint}{joint_alert}{motivation_alert}{sleep_tip}{hrv_note}"
+        f"💡 _{tip}_{deload_hint}{joint_alert}{motivation_alert}{sleep_tip}{hrv_note}{deload_trend_alert}"
         + _next_steps(
             ("/workout start", "train now"),
             ("/progress", "see trends"),
@@ -1604,6 +1674,28 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         user["command_state"]["current_session_sets"] = []
         _save_store()
 
+        readiness_note = ""
+        today_str = _today()
+        today_checkin = next(
+            (c for c in reversed(user.get("checkins", [])) if c.get("date") == today_str),
+            None,
+        )
+        if today_checkin:
+            rec = today_checkin.get("recovery_score", 70)
+            if rec < 50:
+                readiness_note = (
+                    f"\n\n⚠️ *Recovery {rec}/100 — Low readiness.* "
+                    "Reduce working weight by 5–10% and drop one set per exercise. "
+                    "A quality sub-max session beats grinding while depleted."
+                )
+            elif rec >= 85:
+                readiness_note = (
+                    f"\n\n✨ *Recovery {rec}/100 — You're primed!* "
+                    "Great day to push for PRs or add an extra set where you feel strong."
+                )
+            else:
+                readiness_note = f"\n\n📊 *Recovery: {rec}/100*"
+
         exercises = _get_session_exercises(user)
         plan_text = ""
         if user.get("last_plan"):
@@ -1614,7 +1706,7 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             plan_text = f"\n*{session_day} — {focus}*" if focus else ""
 
         await update.message.reply_text(
-            f"🏋️ *Session #{sid} started!*{plan_text}\n\nTap an exercise to log a set:",
+            f"🏋️ *Session #{sid} started!*{plan_text}{readiness_note}\n\nTap an exercise to log a set:",
             parse_mode="Markdown",
             reply_markup=_ex_keyboard(exercises, has_session=True),
         )
@@ -3824,13 +3916,18 @@ async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAUL
     ctx_str = _get_bot_context_str(user)
     loop = asyncio.get_running_loop()
     try:
+        import garmin_service as _gs_days
+        _gd_days = _gs_days.get_cached(chat_id)
+    except Exception:
+        _gd_days = None
+    try:
         if user["last_analysis"]:
             plan = await loop.run_in_executor(
-                None, _generate_plan, user["last_analysis"], user["profile"], ctx_str, user.get("units", "kg")
+                None, _generate_plan, user["last_analysis"], user["profile"], ctx_str, user.get("units", "kg"), _gd_days
             )
         else:
             plan = await loop.run_in_executor(
-                None, _generate_plan_from_profile, user["profile"], ctx_str, user.get("units", "kg")
+                None, _generate_plan_from_profile, user["profile"], ctx_str, user.get("units", "kg"), _gd_days
             )
         user["last_plan"] = plan
         _save_store()
@@ -4494,7 +4591,7 @@ def _analyze_photo(images_b64: list[str], profile: dict, prev: dict | None = Non
 
 # ── Claude: plan generation ───────────────────────────────────────────────────
 
-def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_str: str = "", user_units: str = "kg") -> str:
+def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_str: str = "", user_units: str = "kg", garmin_data: dict | None = None) -> str:
     injuries_note = profile.get("injuries", "") if profile else ""
     diet_restrictions = profile.get("dietary_restrictions", "") if profile else ""
     show_date = profile.get("show_date", "") if profile else ""
@@ -4575,6 +4672,67 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
                 )
         except Exception:
             pass
+
+    periodization = profile.get("periodization", "linear") if profile else "linear"
+    if periodization == "undulating":
+        perio_clause = (
+            "PERIODIZATION: Use Daily Undulating Periodization (DUP). "
+            "Rotate rep ranges across the week: heavy day (3–5 reps, 85–90% 1RM), "
+            "moderate day (6–10 reps, 70–80% 1RM), light day (12–15 reps, 60–70% 1RM). "
+            "Label each day clearly by type (Heavy/Moderate/Light).\n\n"
+        )
+    elif periodization == "block":
+        perio_clause = (
+            "PERIODIZATION: Use Block Periodization. Design a 12-week plan in three phases: "
+            "Hypertrophy (weeks 1–4, 8–12 reps, 65–75% 1RM, high volume), "
+            "Strength (weeks 5–8, 4–6 reps, 80–90% 1RM, moderate volume), "
+            "Peaking (weeks 9–12, 1–3 reps, 90–95% 1RM, low volume). "
+            "Label each phase and its goals in the coaching section.\n\n"
+        )
+    else:
+        perio_clause = ""
+
+    vo2_clause = ""
+    if garmin_data and garmin_data.get("vo2_max") and profile and profile.get("age"):
+        try:
+            age_int = int(profile["age"])
+            max_hr = 220 - age_int
+            z2_lo, z2_hi = int(max_hr * 0.60), int(max_hr * 0.70)
+            vo2_clause = (
+                f"CARDIO ZONES: Athlete VO2max = {garmin_data['vo2_max']:.0f} ml/kg/min (Garmin). "
+                f"Estimated max HR = {max_hr}bpm (age {age_int}). "
+                f"Zone 2 target: {z2_lo}–{z2_hi}bpm. Use these exact numbers in zone2_cardio recommendations.\n\n"
+            )
+        except (TypeError, ValueError):
+            pass
+
+    med_clause = ""
+    medications = profile.get("medications", "") if profile else ""
+    if medications and medications.lower() != "none":
+        interaction_warnings = _check_supplement_interactions(medications)
+        med_clause = (
+            f"MEDICATIONS: Athlete takes: {medications}. "
+            "Review ALL supplement recommendations for interactions with these medications. "
+        )
+        if interaction_warnings:
+            med_clause += "Known interactions to flag in the plan: " + "; ".join(
+                w.replace("*", "").replace("⚠️ ", "") for w in interaction_warnings
+            ) + ". "
+        med_clause += "Add interaction warnings to the relevant supplement entries' 'benefit' field.\n\n"
+
+    workout_time = profile.get("workout_time", "variable") if profile else "variable"
+    timing_clause = (
+        f"MEAL TIMING: Athlete trains in the {workout_time}. "
+        "Populate the meal_timing field with specific, timed nutrition windows:\n"
+        "• Pre-workout (60–90 min before): 0.4g/kg body weight fast carbs (banana, white rice, sports drink) "
+        "+ 20–30g fast-digesting protein (whey shake, Greek yogurt). "
+        "Avoid high fat/fibre in this window.\n"
+        "• Post-workout (within 30–45 min): 0.4g/kg protein + 0.8g/kg fast carbs. "
+        "This is the anabolic window — do not skip.\n"
+        "• Intra-workout (only for sessions >60 min): 30–60g/hr fast carbs (gels, banana, diluted juice).\n"
+        "Tailor the exact foods and times to this athlete's schedule and dietary preferences.\n\n"
+    )
+
     return (
         "You are an expert strength coach and sports nutritionist who works with all populations — "
         "beginners to advanced athletes, all ages (teens to 70+), all genders, all goals "
@@ -4587,6 +4745,7 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         f"actual goal and body weight. {injury_clause}"
         f"{diet_clause}"
         f"{show_date_clause}"
+        f"{perio_clause}"
         "Diet planning must account for gut health: "
         "(1) include at least one fermented probiotic food in foods_to_prioritize (Greek yogurt, kefir, kimchi, sauerkraut); "
         "(2) include prebiotic/high-fiber foods (garlic, onion, oats, legumes, bananas); "
@@ -4594,11 +4753,14 @@ def _build_plan_prompt(profile: dict, analysis: dict | None, days: int, context_
         "(4) flag any patterns likely to impair gut health (excess alcohol, low fiber, ultra-processed foods).\n\n"
         "WARM-UP: every training day MUST include a 5-minute warm-up block in the 'warmup' field — "
         "at least 2 specific warm-up exercises (e.g. band pull-aparts, hip circles, light goblet squats).\n\n"
+        f"{vo2_clause}"
         "CARDIO: include 'zone2_cardio' in workout — recommend 2-3 sessions per week of 25-40 min "
         "Zone 2 (conversational pace, 60-70% max HR) for cardiovascular health and fat oxidation. "
         "Adjust volume based on goal (more for cut/recomp, less for pure bulk/strength).\n\n"
         "MACROS: provide BOTH training-day and rest-day macro variants in the diet section. "
         "Training days: higher carbs. Rest days: slightly lower carbs, same protein.\n\n"
+        f"{timing_clause}"
+        f"{med_clause}"
         "SUPPLEMENTS: always include Beta-Alanine (grade B) at priority 4 — "
         "3.2-6.4g/day for high-rep work (endurance/hypertrophy), causes tingling harmless paresthesia.\n\n"
         f"UNITS: This athlete uses {unit_label}. Output ALL weight references throughout the plan "
@@ -4693,21 +4855,23 @@ def _run_plan_api(prompt: str) -> dict:
     return _parse_plan_response(resp.content[0].text)
 
 
-def _generate_plan(analysis: dict, profile: dict, context_str: str = "", user_units: str = "kg") -> dict:
+def _generate_plan(analysis: dict, profile: dict, context_str: str = "", user_units: str = "kg", garmin_data: dict | None = None) -> dict:
+    """Generate a full training plan from photo analysis + profile."""
     try:
         days = int(re.sub(r"[^0-9]", "", str(profile.get("days", "4"))) or "4")
     except (ValueError, TypeError):
         days = 4
-    prompt = _build_plan_prompt(profile, analysis, days, context_str, user_units)
+    prompt = _build_plan_prompt(profile, analysis, days, context_str, user_units, garmin_data=garmin_data)
     return _run_plan_api(prompt)
 
 
-def _generate_plan_from_profile(profile: dict, context_str: str = "", user_units: str = "kg") -> dict:
+def _generate_plan_from_profile(profile: dict, context_str: str = "", user_units: str = "kg", garmin_data: dict | None = None) -> dict:
+    """Generate a full training plan from profile data only."""
     try:
         days = int(re.sub(r"[^0-9]", "", str(profile.get("days", "4"))) or "4")
     except (ValueError, TypeError):
         days = 4
-    prompt = _build_plan_prompt(profile, None, days, context_str, user_units)
+    prompt = _build_plan_prompt(profile, None, days, context_str, user_units, garmin_data=garmin_data)
     return _run_plan_api(prompt)
 
 
