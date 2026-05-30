@@ -1,5 +1,25 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 20: Critical safety fixes + new user onboarding
+
+### Added
+- `static/index.html` / `static/app.js` — Getting-started card on Dashboard: shows 3 steps (Profile → Photo → Plan) with checkmarks as user completes each; auto-hides once plan and analysis exist
+- `static/app.js` — Injury escalation warning: detects acute/surgical injury keywords in chips or free-text and shows a yellow physician-referral banner inline in the Profile form
+- `static/app.js` / `static/style.css` — `.banner-injury`, `.banner-calorie-warn`, `.banner-info` CSS classes for contextual safety notices
+- `static/app.js` — Calorie floor warning in diet plan: if AI targets < 1,600 kcal, a red banner prompts dietitian consultation
+- `static/app.js` — Supplement disclaimer upgraded to a full medical disclaimer banner (was a tiny 12px line)
+- `static/index.html` — Macro estimation disclaimer in Nutrition tab: "AI estimates may vary ±20%" info banner
+- `static/style.css` — `:focus-visible` global outline for keyboard navigation accessibility (WCAG AA)
+- `static/style.css` — `.getting-started-card` / `.gs-step` styles for the onboarding steps UI
+
+### Changed
+- `static/style.css` — Base font size 15px → 16px (accessibility improvement for elderly/low-vision users)
+- `static/index.html` — Plans tab empty state removes photo requirement; adds inline "Generate My Plan" CTA button
+- `static/app.js` — `_buildProfileChips` for injuries now wires each chip and the free-text field to `_checkInjuryWarning()`
+
+### Rollback
+- `git revert HEAD` — frontend only; no schema or bot changes
+
 ## 2026-05-30 — Sprint 19: Profile dropdowns, background AI, 100-person beta + bug fixes
 
 ### Added

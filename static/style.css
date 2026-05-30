@@ -24,7 +24,7 @@ body {
     background-size: 28px 28px;
     color: var(--text);
     font-family: var(--font);
-    font-size: 15px;
+    font-size: 16px;
     line-height: 1.6;
     min-height: 100vh;
 }
@@ -599,6 +599,90 @@ input, select, textarea {
 input:focus, select:focus, textarea:focus {
     border-color: #111111;
 }
+
+/* Keyboard navigation focus rings (accessibility) */
+:focus-visible {
+    outline: 2px solid #111111;
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+button:focus-visible { outline-offset: 3px; }
+
+/* ── Safety & warning banners ── */
+.banner-injury {
+    background: rgba(239,165,0,0.1);
+    border: 1px solid rgba(239,165,0,0.4);
+    border-left: 4px solid #f0a500;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #7a5200;
+    margin-top: 10px;
+}
+.banner-calorie-warn {
+    background: rgba(239,68,68,0.08);
+    border: 1px solid rgba(239,68,68,0.3);
+    border-left: 4px solid #ef4444;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #991b1b;
+    margin-bottom: 16px;
+}
+.banner-info {
+    background: rgba(59,130,246,0.08);
+    border: 1px solid rgba(59,130,246,0.25);
+    border-left: 4px solid #3b82f6;
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: 13px;
+    color: #1e40af;
+    margin-bottom: 12px;
+}
+
+/* ── Getting-started card ── */
+.getting-started-card {
+    background: #ffffff;
+    border: 1.5px solid #e0e0dd;
+    border-radius: 20px;
+    padding: 28px;
+    margin-bottom: 20px;
+}
+.getting-started-steps {
+    display: grid;
+    gap: 12px;
+    margin-top: 16px;
+}
+.gs-step {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 14px 16px;
+    background: var(--surface-2);
+    border-radius: 12px;
+    cursor: pointer;
+    transition: background 0.15s;
+    border: none;
+    width: 100%;
+    text-align: left;
+}
+.gs-step:hover { background: #e6e6e2; }
+.gs-step-num {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: #111;
+    color: #fff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 14px;
+    flex-shrink: 0;
+}
+.gs-step-num.done { background: #22c55e; }
+.gs-step-text { font-weight: 600; font-size: 14px; }
+.gs-step-sub { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
 
 /* ── Misc ── */
 .empty-state {

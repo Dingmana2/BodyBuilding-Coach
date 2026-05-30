@@ -160,6 +160,8 @@ const INJURY_OPTIONS = [
     'Wrist / elbow pain', 'Ankle injury', 'Neck pain', 'No injuries',
 ];
 
+const ACUTE_INJURY_KEYWORDS = ['surgery', 'surgical', 'acl', 'torn', 'rupture', 'fracture', 'broken', 'herniated', 'disc', 'spinal', 'acute', 'recent injury', 'post-op', 'rehabilitation'];
+
 function _buildProfileChips(containerId, options, activeSet) {
     const container = document.getElementById(containerId);
     if (!container) return;
@@ -169,9 +171,29 @@ function _buildProfileChips(containerId, options, activeSet) {
         btn.type = 'button';
         btn.textContent = opt;
         btn.className = 'profile-chip' + (activeSet.has(opt.toLowerCase()) ? ' selected' : '');
-        btn.onclick = () => btn.classList.toggle('selected');
+        btn.onclick = () => { btn.classList.toggle('selected'); _checkInjuryWarning(); };
         container.appendChild(btn);
     });
+}
+
+function _checkInjuryWarning() {
+    const chips = _getChipValues('injury-chips');
+    const other = (document.getElementById('injury-other')?.value || '').toLowerCase();
+    const allText = [...chips.map(c => c.toLowerCase()), other].join(' ');
+    const hasAcute = ACUTE_INJURY_KEYWORDS.some(k => allText.includes(k));
+    const hasAnyInjury = chips.length > 0 && !chips.includes('No injuries');
+    let warn = document.getElementById('injury-safety-warn');
+    if ((hasAcute || hasAnyInjury) && !chips.includes('No injuries')) {
+        if (!warn) {
+            warn = document.createElement('p');
+            warn.id = 'injury-safety-warn';
+            warn.className = 'banner-injury';
+            warn.textContent = '⚠️ If you have an acute injury or recent surgery, consult a physician or physical therapist before starting any AI-generated training program.';
+            document.getElementById('injury-chips')?.after(warn);
+        }
+    } else if (warn) {
+        warn.remove();
+    }
 }
 
 function _getChipValues(containerId) {
@@ -417,6 +439,7 @@ async function loadDashboard() {
     state.latestCheckins = checkins;
     renderRecoveryWidget(summary, checkins);
     renderRetentionWidget(summary);
+    renderGettingStarted(plan, summary);
     loadMemory();
 }
 
@@ -497,6 +520,22 @@ function renderRetentionWidget(summary) {
     }
 
     card.style.display = hasContent ? 'block' : 'none';
+}
+
+function renderGettingStarted(plan, summary) {
+    const card = document.getElementById('getting-started-card');
+    if (!card) return;
+    const hasAnalysis = !!plan?.latest_analysis;
+    const hasPlan = !!(plan?.workout_plan || plan?.diet_plan);
+    const hasCheckin = (summary?.streaks?.checkin ?? 0) > 0;
+    if (hasAnalysis && hasPlan) { card.style.display = 'none'; return; }
+    card.style.display = 'block';
+    const step1 = document.getElementById('gs-num-1');
+    const step2 = document.getElementById('gs-num-2');
+    const step3 = document.getElementById('gs-num-3');
+    if ((hasPlan || hasCheckin) && step1) { step1.textContent = '✓'; step1.className = 'gs-step-num done'; }
+    if (hasAnalysis && step2) { step2.textContent = '✓'; step2.className = 'gs-step-num done'; }
+    if (hasPlan && step3) { step3.textContent = '✓'; step3.className = 'gs-step-num done'; }
 }
 
 function _scoreColor(score) {
@@ -958,6 +997,10 @@ function renderDietPlan(diet) {
         <h3>Nutrition Plan</h3>
         <p style="color:var(--text-muted);margin-bottom:20px;font-size:14px">${esc(diet.goal_phase)}</p>
 
+        ${(diet.daily_calories && +diet.daily_calories < 1600) ? `
+        <div class="banner-calorie-warn">
+            ⚠️ <strong>Low calorie target (${esc(String(diet.daily_calories))} kcal):</strong> Targets below 1,600 kcal may be insufficient for most people. Please consult a registered dietitian before following this plan.
+        </div>` : ''}
         <div class="macro-row">
             <div class="macro-card">
                 <div class="macro-value">${esc(diet.daily_calories) || '—'}</div>
@@ -1044,7 +1087,7 @@ function renderSupplementPlan(supplements) {
                 <tbody>${rows}</tbody>
             </table>
         </div>
-        <p style="font-size:12px;color:var(--text-muted);margin-top:16px">Consult a healthcare provider before starting any new supplement protocol.</p>
+        <div class="banner-injury" style="margin-top:16px">⚠️ <strong>Medical disclaimer:</strong> These supplement recommendations are AI-generated and not a substitute for personalised medical advice. Dosing needs vary by individual. Consult a physician or registered dietitian before starting any supplement protocol, especially if you are on medication or have a health condition.</div>
     `;
 }
 
@@ -1359,6 +1402,9 @@ async function loadProfile() {
         const otherInj = INJURY_OPTIONS.reduce((s, o) => s.replace(o.toLowerCase(), '').replace(',', '').trim(), injStr);
         const injOther = document.getElementById('injury-other');
         if (injOther && otherInj) injOther.value = otherInj;
+        // Wire free-text to trigger warning
+        injOther?.addEventListener('input', _checkInjuryWarning);
+        _checkInjuryWarning();
     } else {
         // First load — build empty chips
         _buildProfileChips('diet-chips', DIET_OPTIONS, new Set());
