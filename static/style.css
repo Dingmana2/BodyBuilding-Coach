@@ -1056,5 +1056,21 @@ input:focus, select:focus, textarea:focus {
 
 .form-error { color: var(--red); font-size: 13px; }
 
+/* ── Profile chip multi-select ── */
+.profile-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.profile-chip {
+    padding: 6px 14px;
+    border: 1.5px solid var(--border);
+    border-radius: 50px;
+    background: var(--surface-2);
+    color: var(--text-muted);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+.profile-chip:hover { border-color: #111; color: #111; }
+.profile-chip.selected { background: #111; border-color: #111; color: #fff; }
+
 /* ── Misc utilities ── */
 .btn-block { width: 100%; margin-top: auto; }

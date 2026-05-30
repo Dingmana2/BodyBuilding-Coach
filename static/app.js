@@ -14,7 +14,8 @@ const _cache = {};
 const CACHE_TTL_MS = 30_000;
 
 async function cachedApi(method, path) {
-    const key = `${method}:${path}`;
+    if (method !== 'GET') return api(method, path);
+    const key = `GET:${path}`;
     const hit = _cache[key];
     if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.data;
     const data = await api(method, path);
@@ -101,6 +102,111 @@ function applyUnitLabels() {
     if (ma) ma.placeholder = imp ? '15' : '38';
     const btn = document.getElementById('unit-toggle-btn');
     if (btn) btn.textContent = imp ? 'Imperial' : 'Metric';
+
+    // Rebuild height select (value always stored in cm, display in user's unit)
+    const hSel = document.getElementById('profile-height');
+    if (hSel) {
+        const prev = hSel.value;
+        hSel.innerHTML = '<option value="">Select height…</option>';
+        for (let cm = 140; cm <= 220; cm += 2) {
+            const opt = document.createElement('option');
+            opt.value = cm;
+            if (imp) {
+                const totalIn = cm * 0.393701;
+                const ft = Math.floor(totalIn / 12);
+                const inches = Math.round(totalIn % 12);
+                opt.textContent = `${ft}'${inches}"`;
+            } else {
+                opt.textContent = `${cm} cm`;
+            }
+            hSel.appendChild(opt);
+        }
+        if (prev) hSel.value = prev;
+    }
+
+    // Rebuild weight select (value always stored in kg, display in user's unit)
+    const wSel = document.getElementById('profile-weight');
+    if (wSel) {
+        const prev = wSel.value;
+        wSel.innerHTML = '<option value="">Select weight…</option>';
+        for (let kg = 40; kg <= 200; kg += 2.5) {
+            const opt = document.createElement('option');
+            opt.value = kg;
+            opt.textContent = imp ? `${kgToLbs(kg)} lbs` : `${kg} kg`;
+            wSel.appendChild(opt);
+        }
+        if (prev) wSel.value = prev;
+    }
+
+    // Age select
+    const aSel = document.getElementById('profile-age');
+    if (aSel && aSel.options.length <= 1) {
+        for (let age = 16; age <= 80; age++) {
+            const opt = document.createElement('option');
+            opt.value = age;
+            opt.textContent = `${age} years old`;
+            aSel.appendChild(opt);
+        }
+    }
+}
+
+/* ── Profile chip selectors ── */
+const DIET_OPTIONS = [
+    'Vegetarian', 'Vegan', 'Gluten-free', 'Dairy-free', 'Nut allergy',
+    'Halal', 'Kosher', 'No shellfish', 'No pork', 'Low-carb / Keto',
+];
+const INJURY_OPTIONS = [
+    'Lower back pain', 'Knee injury', 'Shoulder impingement', 'Hip pain',
+    'Wrist / elbow pain', 'Ankle injury', 'Neck pain', 'No injuries',
+];
+
+function _buildProfileChips(containerId, options, activeSet) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    options.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = opt;
+        btn.className = 'profile-chip' + (activeSet.has(opt.toLowerCase()) ? ' selected' : '');
+        btn.onclick = () => btn.classList.toggle('selected');
+        container.appendChild(btn);
+    });
+}
+
+function _getChipValues(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return [];
+    return Array.from(container.querySelectorAll('.profile-chip.selected')).map(b => b.textContent);
+}
+
+/* ── Background task indicator ── */
+let _bgTaskCount = 0;
+
+function showBgTask(msg) {
+    _bgTaskCount++;
+    const bar = document.getElementById('bg-task-bar');
+    const msgEl = document.getElementById('bg-task-msg');
+    if (bar && msgEl) { msgEl.textContent = msg; bar.style.display = 'flex'; }
+}
+
+function hideBgTask(doneMsg) {
+    _bgTaskCount = Math.max(0, _bgTaskCount - 1);
+    if (_bgTaskCount > 0) return;
+    const bar = document.getElementById('bg-task-bar');
+    const msgEl = document.getElementById('bg-task-msg');
+    const spinner = document.getElementById('bg-task-spinner');
+    if (!bar || !msgEl) return;
+    if (doneMsg) {
+        if (spinner) spinner.style.display = 'none';
+        msgEl.textContent = doneMsg;
+        setTimeout(() => {
+            bar.style.display = 'none';
+            if (spinner) spinner.style.display = '';
+        }, 3000);
+    } else {
+        bar.style.display = 'none';
+    }
 }
 
 /* ── Auth ── */
@@ -363,9 +469,10 @@ function renderRetentionWidget(summary) {
             hasContent = true;
         }
     }
+    // Check-in nudge only shows if workout nudge hasn't claimed the slot
     if (summary.last_checkin_date && summary.last_checkin_date < today) {
         const daysSince = Math.floor((Date.now() - new Date(summary.last_checkin_date)) / 86400000);
-        if (daysSince >= 2 && !nudge.style.display?.includes('block')) {
+        if (daysSince >= 2 && nudge.style.display !== 'block') {
             nudge.textContent = `📊 Check in today to maintain your recovery data streak!`;
             nudge.style.background = 'rgba(59,130,246,0.1)';
             nudge.style.color = 'var(--blue)';
@@ -374,18 +481,18 @@ function renderRetentionWidget(summary) {
         }
     }
 
+    // Competition countdown overrides lapse nudges (higher priority)
     if (summary.days_to_show != null) {
         const d = summary.days_to_show;
-        const compNudge = document.getElementById('lapse-nudge');
         const compText = d <= 0
             ? '🏆 Show day! Good luck today!'
             : d <= 7 ? `🚨 ${d} day${d !== 1 ? 's' : ''} to show — peak week protocols active!`
             : d <= 30 ? `⚡ ${d} days to show — stay sharp!`
             : `📅 ${d} days to show — comp prep in progress`;
-        compNudge.textContent = compText;
-        compNudge.style.background = d <= 7 ? 'rgba(239,68,68,0.12)' : 'rgba(240,165,0,0.1)';
-        compNudge.style.color = d <= 7 ? '#ef4444' : 'var(--gold)';
-        compNudge.style.display = 'block';
+        nudge.textContent = compText;
+        nudge.style.background = d <= 7 ? 'rgba(239,68,68,0.12)' : 'rgba(240,165,0,0.1)';
+        nudge.style.color = d <= 7 ? '#ef4444' : 'var(--gold)';
+        nudge.style.display = 'block';
         hasContent = true;
     }
 
@@ -563,23 +670,24 @@ async function submitAnalysis() {
     }
 
     const btn = document.getElementById('analyze-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'Analyzing…'; }
-    showLoading('Analyzing your physique with AI… This takes 20-40 seconds.');
-    try {
-        const result = await api('POST', '/analyze', formData, true);
-        invalidateCache('/plan/current', '/progress', '/analyses');
-        hideLoading();
+    if (btn) { btn.disabled = true; btn.textContent = 'Queued…'; }
+    showBgTask('AI analyzing your physique… (20-40 sec)');
+    api('POST', '/analyze', formData, true).then(async result => {
+        invalidateCache('/plan/current', '/progress', '/analyses', '/dashboard/summary');
         clearUpload();
         renderAnalysisResult(result.analysis, result.created_at);
         document.getElementById('analysis-result').style.display = 'block';
         await loadAnalyses();
+        // Silently refresh dashboard stats if user is there
+        if (state.activeTab === 'dashboard') await loadDashboard();
+        hideBgTask('✅ Analysis complete!');
         showToast('Analysis complete!');
-    } catch (err) {
-        hideLoading();
+    }).catch(err => {
+        hideBgTask();
         showToast(`Analysis failed: ${err.message}`, 'error');
-    } finally {
+    }).finally(() => {
         if (btn) { btn.disabled = false; btn.textContent = 'Analyze Photo'; }
-    }
+    });
 }
 
 function renderAnalysisResult(analysis, createdAt) {
@@ -723,9 +831,8 @@ async function generateWeakPoints() {
 
 /* ── Plans ── */
 async function generatePlan() {
-    showLoading('Generating your personalized plan based on analysis + latest research… (30-60 seconds)');
-    try {
-        const plan = await api('POST', '/plan/generate');
+    showBgTask('Building your personalized plan… (30-60 sec)');
+    api('POST', '/plan/generate').then(plan => {
         state.currentPlan = {
             workout_plan: plan.workout_plan,
             diet_plan: plan.diet_plan,
@@ -733,14 +840,14 @@ async function generatePlan() {
             coaching_notes: plan.coaching_notes,
         };
         invalidateCache('/plan/current');
-        hideLoading();
+        hideBgTask('✅ Plan ready!');
         showToast('Plan generated!');
         showTab('plans');
         renderPlan(plan);
-    } catch (err) {
-        hideLoading();
+    }).catch(err => {
+        hideBgTask();
         showToast(`Plan generation failed: ${err.message}`, 'error');
-    }
+    });
 }
 
 async function loadCurrentPlan() {
@@ -756,6 +863,7 @@ async function loadCurrentPlan() {
         workout_plan: data.workout_plan,
         diet_plan: data.diet_plan,
         supplement_plan: data.supplement_plan,
+        coaching_notes: data.coaching_notes,
     });
 }
 
@@ -1120,7 +1228,7 @@ function renderMeasurements(data) {
                         <td style="padding:8px;text-align:right;color:var(--gold)">${fmtWeight(m.body_weight_kg)}</td>
                         <td style="padding:8px;text-align:right">${fmtLength(m.waist_cm)}</td>
                         <td style="padding:8px;text-align:right">${fmtLength(m.chest_cm)}</td>
-                        <td style="padding:8px;text-align:right">${m.left_arm_cm != null ? `${m.left_arm_cm}cm` : '—'}</td>
+                        <td style="padding:8px;text-align:right">${fmtLength(m.left_arm_cm)}</td>
                     </tr>
                 `).join('')}
             </tbody>
@@ -1153,7 +1261,7 @@ async function logMeasurement(event) {
         });
         ['m-weight', 'm-waist', 'm-chest', 'm-arm'].forEach(id => { document.getElementById(id).value = ''; });
         showToast('Measurements logged!');
-        invalidateCache('/measurements?limit=30', '/dashboard/summary');
+        invalidateCache('/measurements?limit=30', '/dashboard/summary', '/progress', '/progress/plateaus');
         const updated = await api('GET', '/measurements?limit=30').catch(() => []);
         renderMeasurements(updated);
     } catch (e) {
@@ -1205,21 +1313,58 @@ async function loadProfile() {
         api('GET', '/goals').catch(() => []),
     ]);
 
-    if (profile && profile.age) {
+    applyUnitLabels(); // ensures dropdowns are populated before we set values
+    if (profile && Object.keys(profile).length) {
         const form = document.getElementById('profile-form');
-        const fields = ['age', 'gender', 'height_cm', 'weight_kg', 'goal', 'training_experience', 'training_days_per_week', 'dietary_restrictions', 'show_date'];
-        fields.forEach(field => {
+        // Simple fields
+        ['age', 'gender', 'goal', 'training_experience', 'training_days_per_week', 'show_date'].forEach(field => {
             const el = form.querySelector(`[name="${field}"]`);
             if (el && profile[field] != null) el.value = profile[field];
         });
-        if (isImperial()) {
-            const hEl = form.querySelector('[name="height_cm"]');
-            if (hEl && hEl.value) hEl.value = cmToIn(parseFloat(hEl.value));
-            const wEl = form.querySelector('[name="weight_kg"]');
-            if (wEl && wEl.value) wEl.value = kgToLbs(parseFloat(wEl.value));
+        // Height: select value is always cm, find closest option
+        const hSel = document.getElementById('profile-height');
+        if (hSel && profile.height_cm) {
+            const cm = parseFloat(profile.height_cm);
+            let closest = null, minDiff = Infinity;
+            Array.from(hSel.options).forEach(o => {
+                if (!o.value) return;
+                const diff = Math.abs(parseFloat(o.value) - cm);
+                if (diff < minDiff) { minDiff = diff; closest = o.value; }
+            });
+            if (closest) hSel.value = closest;
         }
+        // Weight: select value is always kg, find closest option
+        const wSel = document.getElementById('profile-weight');
+        if (wSel && profile.weight_kg) {
+            const kg = parseFloat(profile.weight_kg);
+            let closest = null, minDiff = Infinity;
+            Array.from(wSel.options).forEach(o => {
+                if (!o.value) return;
+                const diff = Math.abs(parseFloat(o.value) - kg);
+                if (diff < minDiff) { minDiff = diff; closest = o.value; }
+            });
+            if (closest) wSel.value = closest;
+        }
+        // Dietary restrictions chips
+        const dietStr = (profile.dietary_restrictions || '').toLowerCase();
+        const dietActive = new Set(DIET_OPTIONS.filter(o => dietStr.includes(o.toLowerCase())));
+        _buildProfileChips('diet-chips', DIET_OPTIONS, dietActive);
+        const otherDiet = DIET_OPTIONS.reduce((s, o) => s.replace(o.toLowerCase(), '').replace(',', '').trim(), dietStr);
+        const dietOther = document.getElementById('diet-other');
+        if (dietOther && otherDiet) dietOther.value = otherDiet;
+        // Injury chips
+        const injStr = (profile.injuries || '').toLowerCase();
+        const injActive = new Set(INJURY_OPTIONS.filter(o => injStr.includes(o.toLowerCase())));
+        _buildProfileChips('injury-chips', INJURY_OPTIONS, injActive);
+        const otherInj = INJURY_OPTIONS.reduce((s, o) => s.replace(o.toLowerCase(), '').replace(',', '').trim(), injStr);
+        const injOther = document.getElementById('injury-other');
+        if (injOther && otherInj) injOther.value = otherInj;
+    } else {
+        // First load — build empty chips
+        _buildProfileChips('diet-chips', DIET_OPTIONS, new Set());
+        _buildProfileChips('injury-chips', INJURY_OPTIONS, new Set());
+        applyUnitLabels();
     }
-    applyUnitLabels();
 
     renderGoals(goals);
     loadBadgesAndStreaks();
@@ -1271,12 +1416,17 @@ async function linkTelegram() {
 async function saveProfile(event) {
     event.preventDefault();
     const form = event.target;
-    let height_cm = parseFloat(form.height_cm.value) || null;
-    let weight_kg = parseFloat(form.weight_kg.value) || null;
-    if (isImperial()) {
-        if (height_cm) height_cm = inToCm(height_cm);
-        if (weight_kg) weight_kg = lbsToKg(weight_kg);
-    }
+    // Height and weight selects always store metric values directly
+    const height_cm = parseFloat(form.height_cm.value) || null;
+    const weight_kg = parseFloat(form.weight_kg.value) || null;
+    // Collect dietary chips + other text
+    const dietChips = _getChipValues('diet-chips');
+    const dietOther = (document.getElementById('diet-other')?.value || '').trim();
+    const dietAll = [...dietChips, ...(dietOther ? [dietOther] : [])].join(', ') || null;
+    // Collect injury chips + other text
+    const injChips = _getChipValues('injury-chips');
+    const injOther = (document.getElementById('injury-other')?.value || '').trim();
+    const injAll = [...injChips, ...(injOther ? [injOther] : [])].join(', ') || null;
     const data = {
         age: parseInt(form.age.value) || null,
         gender: form.gender.value || null,
@@ -1285,7 +1435,8 @@ async function saveProfile(event) {
         goal: form.goal.value || null,
         training_experience: form.training_experience.value || null,
         training_days_per_week: parseInt(form.training_days_per_week.value) || null,
-        dietary_restrictions: form.dietary_restrictions.value || null,
+        dietary_restrictions: dietAll,
+        injuries: injAll,
         show_date: form.show_date?.value || null,
     };
 
@@ -1640,7 +1791,7 @@ async function endSession() {
         if (summary.next_session_targets) {
             _showNextSessionTargets(summary.next_session_targets);
         }
-        invalidateCache('/sessions/history');
+        invalidateCache('/sessions/history', '/prs', '/dashboard/summary');
         await loadWorkout();
     } catch (err) {
         showToast(`Failed to end session: ${err.message}`, 'error');
@@ -1827,7 +1978,7 @@ function printReport(id) {
     const r = _reportsById[id];
     if (!r) return;
     const win = window.open('', '_blank', 'width=800,height=700');
-    const insightsHtml = (r.ai_insights || []).map(i => `<li style="margin-bottom:8px">${i}</li>`).join('');
+    const insightsHtml = (r.ai_insights || []).map(i => `<li style="margin-bottom:8px">${esc(i)}</li>`).join('');
     win.document.write(`<!DOCTYPE html><html><head><title>Weekly Report — Week of ${r.week_start}</title>
     <style>body{font-family:sans-serif;max-width:700px;margin:40px auto;color:#111}
     h1{font-size:22px}h2{font-size:16px;margin-top:24px;border-bottom:1px solid #ddd}
@@ -1951,6 +2102,5 @@ async function obLogin() {
 document.addEventListener('DOMContentLoaded', async () => {
     applyUnitLabels();
     await initAuth();
-    const token = getToken();
-    if (token) loadDashboard();
+    if (getToken()) loadDashboard();
 });

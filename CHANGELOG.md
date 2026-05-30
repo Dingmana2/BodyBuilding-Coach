@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 19: Profile dropdowns, background AI, 100-person beta + bug fixes
+
+### Added
+- `static/index.html` — Profile form: all manual inputs replaced with dropdown selects (age 16-80, height in metric or imperial, weight in metric or imperial, training days 2-7); dietary restrictions and injuries now use quick-tap chip multi-selects + optional free-text field
+- `static/app.js` — `DIET_OPTIONS`, `INJURY_OPTIONS`, `_buildProfileChips()`, `_getChipValues()` — chip selector helpers
+- `static/app.js` — `showBgTask(msg)` / `hideBgTask(doneMsg)` — non-blocking floating task-pill at bottom of screen
+- `static/index.html` — `#bg-task-bar` pill element (fixed bottom, non-modal)
+- `static/style.css` — `.profile-chip` / `.profile-chips` styles for the new multi-select chips
+
+### Changed
+- `static/app.js` — `submitAnalysis()` is now fully non-blocking: fires with `.then()`, user can navigate freely; also invalidates `/dashboard/summary` and reloads Dashboard if it's the active tab
+- `static/app.js` — `generatePlan()` is now non-blocking; background pill shows "Building your plan…" until complete
+- `static/app.js` — `loadProfile()` / `saveProfile()` updated to populate and read new dropdown + chip selectors; height and weight select values are always stored in metric (cm/kg) regardless of display unit
+- `static/app.js` — `applyUnitLabels()` now rebuilds height/weight dropdowns and age select when unit preference changes
+- `static/app.js` — `cachedApi()` now guards against non-GET calls (BUG-18 fix)
+- `static/app.js` — `DOMContentLoaded` reads `getToken()` after `initAuth` completes instead of using a pre-captured stale variable (BUG-19)
+
+### Fixed (bug audit)
+- `static/app.js` — BUG-1: Arm column in measurements history now uses `fmtLength()` instead of hardcoded `cm` suffix
+- `static/app.js` — BUG-3: `endSession` now invalidates `/prs` and `/dashboard/summary` in addition to `/sessions/history`
+- `static/app.js` — BUG-4/9: `logMeasurement` now invalidates `/progress` and `/progress/plateaus`
+- `static/app.js` — BUG-5: `submitAnalysis` invalidates `/dashboard/summary`; dashboard reloads automatically if it is the active tab
+- `static/app.js` — BUG-6: `loadCurrentPlan` now passes `coaching_notes` to `renderPlan`, fixing the blank Coaching Notes sub-tab
+- `static/app.js` — BUG-11: `printReport` now wraps AI insights in `esc()` (XSS fix in print window)
+- `static/app.js` — BUG-14/15: Retention widget nudge priority fixed — check-in nudge only shows if workout nudge is absent; competition countdown correctly overrides both
+
+### Rollback
+- `git revert HEAD` — frontend only; no schema or bot changes
+
 ## 2026-05-30 — Sprint 18: Automatic metric/imperial unit detection
 
 ### Added
