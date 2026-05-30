@@ -132,6 +132,10 @@ def _migrate_db():
         ("workout_sessions", "next_session_targets", "TEXT"),
         ("weekly_reports", "next_week_focus", "TEXT"),
         ("weekly_reports", "adherence_rating", "VARCHAR"),
+        # Sprint 15: per-user plan rows from bot sync
+        ("workout_plans", "user_id", "INTEGER"),
+        ("diet_plans", "user_id", "INTEGER"),
+        ("supplement_plans", "user_id", "INTEGER"),
     ]
     indexes = [
         "CREATE INDEX IF NOT EXISTS ix_daily_checkins_chat_date ON daily_checkins(chat_id, date)",
@@ -672,15 +676,16 @@ async def generate_plan(
     diet_data = plan.get("diet_plan", {})
     supps_data = plan.get("supplement_plan", [])
 
-    workout = models.WorkoutPlan(raw_plan=json.dumps(workout_data))
+    workout = models.WorkoutPlan(raw_plan=json.dumps(workout_data), user_id=current_user_id or None)
     diet = models.DietPlan(
         calories=diet_data.get("daily_calories"),
         protein_g=diet_data.get("macros", {}).get("protein_g"),
         carbs_g=diet_data.get("macros", {}).get("carbs_g"),
         fat_g=diet_data.get("macros", {}).get("fat_g"),
         raw_plan=json.dumps(diet_data),
+        user_id=current_user_id or None,
     )
-    supps = models.SupplementPlan(raw_plan=json.dumps(supps_data))
+    supps = models.SupplementPlan(raw_plan=json.dumps(supps_data), user_id=current_user_id or None)
 
     db.add_all([workout, diet, supps])
     db.commit()
@@ -689,22 +694,25 @@ async def generate_plan(
 
 
 @app.get("/api/plan/current")
-def get_current_plan(db: Session = Depends(get_db)):
-    workout = (
-        db.query(models.WorkoutPlan)
-        .order_by(models.WorkoutPlan.created_at.desc())
-        .first()
-    )
-    diet = (
-        db.query(models.DietPlan)
-        .order_by(models.DietPlan.created_at.desc())
-        .first()
-    )
-    supps = (
-        db.query(models.SupplementPlan)
-        .order_by(models.SupplementPlan.created_at.desc())
-        .first()
-    )
+def get_current_plan(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    def _latest_plan(model):
+        q = db.query(model)
+        if current_user_id:
+            # Prefer user-specific row; fall back to any row if none found
+            user_row = (
+                q.filter(model.user_id == current_user_id)
+                .order_by(model.created_at.desc())
+                .first()
+            )
+            return user_row or q.order_by(model.created_at.desc()).first()
+        return q.order_by(model.created_at.desc()).first()
+
+    workout = _latest_plan(models.WorkoutPlan)
+    diet = _latest_plan(models.DietPlan)
+    supps = _latest_plan(models.SupplementPlan)
     analysis = (
         db.query(models.BodyAnalysis)
         .order_by(models.BodyAnalysis.created_at.desc())

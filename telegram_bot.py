@@ -234,6 +234,233 @@ user_data: dict[int, dict] = _load_store()
 _linked_user_ids: dict[int, int] = {}
 
 
+def _eff_uid(chat_id: int, user: dict) -> int:
+    """Return web User.id for SQLite writes; falls back to Telegram chat_id if not linked."""
+    return _linked_user_ids.get(chat_id) or int(user.get("web_user_id") or chat_id)
+
+
+# ── Bot→SQLite sync helpers ───────────────────────────────────────────────────
+# Each helper is synchronous and safe to call from run_in_executor.
+# All use _eff_uid() so rows land under the web User.id when the account is linked.
+
+def _db_sync_profile(chat_id: int, user: dict) -> None:
+    """Upsert UserProfile in SQLite from the bot's in-memory profile dict."""
+    uid = _eff_uid(chat_id, user)
+    p = user.get("profile", {})
+    if not p:
+        return
+    try:
+        from database import SessionLocal
+        import models as _m
+        _db = SessionLocal()
+        try:
+            row = _db.query(_m.UserProfile).filter(_m.UserProfile.user_id == uid).first()
+            if not row:
+                row = _m.UserProfile(user_id=uid)
+                _db.add(row)
+            try:
+                row.age = int(p["age"]) if p.get("age") else None
+            except (ValueError, TypeError):
+                pass
+            row.gender = p.get("gender")
+            try:
+                row.height_cm = float(p["height"]) if p.get("height") else None
+            except (ValueError, TypeError):
+                pass
+            try:
+                row.weight_kg = float(p["weight"]) if p.get("weight") else None
+            except (ValueError, TypeError):
+                pass
+            row.goal = p.get("goal")
+            row.training_experience = p.get("experience")
+            try:
+                row.training_days_per_week = int(p["days"]) if p.get("days") else None
+            except (ValueError, TypeError):
+                pass
+            row.dietary_restrictions = p.get("dietary_restrictions")
+            row.injuries = p.get("injuries")
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: profile DB sync failed: {_e}")
+
+
+def _db_sync_session_start(chat_id: int, user: dict) -> None:
+    """Create a WorkoutSession row and store its DB id in user['active_session_db_id']."""
+    uid = _eff_uid(chat_id, user)
+    try:
+        from database import SessionLocal
+        import models as _m
+        from datetime import datetime, timezone
+        _db = SessionLocal()
+        try:
+            row = _m.WorkoutSession(chat_id=uid, user_id=uid, started_at=datetime.now(timezone.utc))
+            _db.add(row)
+            _db.commit()
+            _db.refresh(row)
+            user["active_session_db_id"] = row.id
+            _save_store()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: session start DB sync failed: {_e}")
+
+
+def _db_sync_session_end(chat_id: int, user: dict) -> None:
+    """Mark the active WorkoutSession as ended."""
+    db_id = user.get("active_session_db_id")
+    if not db_id:
+        return
+    try:
+        from database import SessionLocal
+        import models as _m
+        from datetime import datetime, timezone
+        _db = SessionLocal()
+        try:
+            row = _db.query(_m.WorkoutSession).filter(_m.WorkoutSession.id == db_id).first()
+            if row:
+                row.ended_at = datetime.now(timezone.utc)
+                _db.commit()
+            user.pop("active_session_db_id", None)
+            _save_store()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: session end DB sync failed: {_e}")
+
+
+def _db_sync_set(chat_id: int, user: dict, entry: dict) -> None:
+    """Append a SetLog row to the active WorkoutSession."""
+    db_session_id = user.get("active_session_db_id")
+    if not db_session_id:
+        return
+    try:
+        from database import SessionLocal
+        import models as _m
+        from datetime import datetime, timezone
+        _db = SessionLocal()
+        try:
+            _db.add(_m.SetLog(
+                session_id=db_session_id,
+                exercise_name=entry["exercise_name"],
+                weight_kg=entry.get("weight_kg"),
+                reps=entry.get("reps"),
+                estimated_1rm=entry.get("estimated_1rm"),
+                logged_at=datetime.now(timezone.utc),
+            ))
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: set DB sync failed: {_e}")
+
+
+def _db_sync_pr(chat_id: int, user: dict, exercise: str, weight_kg: float, reps: int, e1rm: float) -> None:
+    """Upsert a PersonalRecord row."""
+    uid = _eff_uid(chat_id, user)
+    try:
+        from database import SessionLocal
+        import models as _m
+        from datetime import datetime, timezone
+        _db = SessionLocal()
+        try:
+            existing = _db.query(_m.PersonalRecord).filter(
+                _m.PersonalRecord.chat_id == uid,
+                _m.PersonalRecord.exercise_name == exercise,
+            ).first()
+            if existing:
+                existing.weight_kg = weight_kg
+                existing.reps = reps
+                existing.estimated_1rm = e1rm
+                existing.achieved_at = datetime.now(timezone.utc)
+            else:
+                _db.add(_m.PersonalRecord(
+                    chat_id=uid, exercise_name=exercise,
+                    weight_kg=weight_kg, reps=reps, estimated_1rm=e1rm,
+                    achieved_at=datetime.now(timezone.utc),
+                ))
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: PR DB sync failed: {_e}")
+
+
+def _db_sync_meal(chat_id: int, user: dict, entry: dict) -> None:
+    """Append a MealLog row."""
+    uid = _eff_uid(chat_id, user)
+    try:
+        from database import SessionLocal
+        import models as _m
+        _db = SessionLocal()
+        try:
+            _db.add(_m.MealLog(
+                chat_id=uid,
+                date=entry["date"],
+                description=entry.get("description", ""),
+                calories=entry.get("calories"),
+                protein_g=entry.get("protein_g"),
+                carbs_g=entry.get("carbs_g"),
+                fat_g=entry.get("fat_g"),
+                macro_source=entry.get("macro_source", "estimated"),
+            ))
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: meal DB sync failed: {_e}")
+
+
+def _db_sync_measurement(chat_id: int, user: dict, entry: dict) -> None:
+    """Append a BodyMeasurement row."""
+    uid = _eff_uid(chat_id, user)
+    try:
+        from database import SessionLocal
+        import models as _m
+        _db = SessionLocal()
+        try:
+            _db.add(_m.BodyMeasurement(
+                chat_id=uid,
+                date=entry["date"],
+                body_weight_kg=entry.get("body_weight_kg"),
+                waist_cm=entry.get("waist_cm"),
+                chest_cm=entry.get("chest_cm"),
+                hips_cm=entry.get("hips_cm"),
+                left_arm_cm=entry.get("left_arm_cm"),
+                right_arm_cm=entry.get("right_arm_cm"),
+                left_thigh_cm=entry.get("left_thigh_cm"),
+                right_thigh_cm=entry.get("right_thigh_cm"),
+            ))
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: measurement DB sync failed: {_e}")
+
+
+def _db_sync_plan(chat_id: int, user: dict, plan: dict) -> None:
+    """Write generated plan as a WorkoutPlan row (with user_id if linked)."""
+    import json as _json
+    uid = _eff_uid(chat_id, user)
+    if not uid or not plan:
+        return
+    try:
+        from database import SessionLocal
+        import models as _m
+        _db = SessionLocal()
+        try:
+            _db.add(_m.WorkoutPlan(
+                raw_plan=_json.dumps(plan),
+                user_id=uid,
+            ))
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: plan DB sync failed: {_e}")
+
+
 async def _api_get(path: str, chat_id: int | None = None) -> dict:
     """Call the FastAPI backend as the bot. Returns parsed JSON or raises."""
     headers = {}
@@ -817,6 +1044,7 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
             )
             user["last_plan"] = plan
             _save_store()
+            await asyncio.get_running_loop().run_in_executor(None, _db_sync_plan, chat_id, user, plan)
             try:
                 await query.delete_message()
             except Exception:
@@ -1081,6 +1309,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
         profile[field] = value
         user["profile"] = profile
         _save_store()
+        await asyncio.get_running_loop().run_in_executor(None, _db_sync_profile, chat_id, user)
         await query.edit_message_text(
             f"*Your Profile*\n{_current_summary()}\n\nTap a field to update it:",
             parse_mode="Markdown",
@@ -1148,6 +1377,7 @@ async def handle_profile_callback(update: Update, context: ContextTypes.DEFAULT_
                 )
             user["last_plan"] = plan
             _save_store()
+            await asyncio.get_running_loop().run_in_executor(None, _db_sync_plan, chat_id, user, plan)
             try:
                 await query.delete_message()
             except Exception:
@@ -1530,14 +1760,15 @@ async def _finish_checkin(
         from database import SessionLocal
         from models import DailyCheckIn as _DailyCheckInModel
         _db = SessionLocal()
+        _uid = _eff_uid(chat_id, user)
         try:
             _existing = _db.query(_DailyCheckInModel).filter(
-                _DailyCheckInModel.chat_id == chat_id,
+                _DailyCheckInModel.chat_id == _uid,
                 _DailyCheckInModel.date == entry["date"],
             ).first()
             if not _existing:
                 _row = _DailyCheckInModel(
-                    chat_id=chat_id,
+                    chat_id=_uid,
                     date=entry["date"],
                     sleep_score=entry["sleep_score"],
                     energy_score=entry["energy_score"],
@@ -1676,6 +1907,8 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         user["active_session_id"] = sid
         user["command_state"]["current_session_sets"] = []
         _save_store()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _db_sync_session_start, chat_id, user)
 
         readiness_note = ""
         today_str = _today()
@@ -1741,6 +1974,8 @@ async def cmd_workout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         user["command_state"]["current_session_sets"] = []
         user["command_state"].pop("active_session_day", None)
         _save_store()
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, _db_sync_session_end, chat_id, user)
 
         exercise_summary = ""
         if session_sets:
@@ -1930,6 +2165,7 @@ async def cmd_log(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user["active_session_id"] = sid
         user["command_state"]["current_session_sets"] = []
         _save_store()
+        await asyncio.get_running_loop().run_in_executor(None, _db_sync_session_start, chat_id, user)
         exercises = _get_session_exercises(user)
         await update.message.reply_text(
             f"🏋️ *Session #{sid} started!* Tap an exercise:",
@@ -1966,6 +2202,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
         user["active_session_id"] = sid
         user["command_state"]["current_session_sets"] = []
         _save_store()
+        await asyncio.get_running_loop().run_in_executor(None, _db_sync_session_start, chat_id, user)
         exercises = _get_session_exercises(user)
         await query.edit_message_text(
             f"🏋️ *Session #{sid} started!* Tap an exercise:",
@@ -2025,6 +2262,10 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
                 await query.edit_message_text("Session state lost. Start over with /log.")
                 return
             entry, is_pr = _do_log_set(user, ex, weight, reps)
+            _loop = asyncio.get_running_loop()
+            await _loop.run_in_executor(None, _db_sync_set, chat_id, user, entry)
+            if is_pr:
+                await _loop.run_in_executor(None, _db_sync_pr, chat_id, user, ex, weight, reps, entry["estimated_1rm"])
             pr_badge = " 🏆 *NEW PR!*" if is_pr else ""
             await query.edit_message_text(
                 f"✅ *{ex}* — {_wfmt(weight, user)} × {reps}{pr_badge}\n"
@@ -2088,6 +2329,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
         user["command_state"]["current_session_sets"] = []
         user["command_state"].pop("active_session_day", None)
         _save_store()
+        await asyncio.get_running_loop().run_in_executor(None, _db_sync_session_end, chat_id, user)
         await query.edit_message_text(
             f"✅ *Session #{sid} ended* (no sets logged).\n\nNext time, try to log at least one set to track progress!",
             parse_mode="Markdown",
@@ -2117,6 +2359,7 @@ async def handle_workout_callback(update: Update, context: ContextTypes.DEFAULT_
         user["command_state"]["current_session_sets"] = []
         user["command_state"].pop("active_session_day", None)
         _save_store()
+        await asyncio.get_running_loop().run_in_executor(None, _db_sync_session_end, chat_id, user)
 
         ex_summary = ""
         if session_sets:
@@ -2309,6 +2552,7 @@ async def cmd_measurements(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     user["measurements"].append(entry)
     user["measurements"] = user["measurements"][-100:]
     _save_store()
+    await asyncio.get_running_loop().run_in_executor(None, _db_sync_measurement, chat_id, user, entry)
 
     lines = [f"✅ *Measurements saved ({_today()})*\n"]
     for db_key, val in entry.items():
@@ -2420,6 +2664,7 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user["meal_logs"].append(entry)
         user["meal_logs"] = user["meal_logs"][-200:]
         _save_store()
+        await asyncio.get_running_loop().run_in_executor(None, _db_sync_meal, chat_id, user, entry)
         today_meals = [m for m in user["meal_logs"] if m["date"] == _today()]
         day_cals = sum(m["calories"] for m in today_meals)
         day_protein = round(sum(m["protein_g"] for m in today_meals), 1)
@@ -2456,6 +2701,7 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Keep last 200 entries
     user["meal_logs"] = user["meal_logs"][-200:]
     _save_store()
+    await asyncio.get_running_loop().run_in_executor(None, _db_sync_meal, chat_id, user, entry)
 
     today_meals = [m for m in user["meal_logs"] if m["date"] == _today()]
     day_cals = sum(m["calories"] for m in today_meals)
@@ -3241,6 +3487,7 @@ async def cmd_weight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     user["measurements"].append(entry)
     user["measurements"] = user["measurements"][-100:]
     _save_store()
+    await asyncio.get_running_loop().run_in_executor(None, _db_sync_measurement, chat_id, user, entry)
 
     # Compare to previous weight log
     prev_weights = [m for m in user["measurements"][:-1] if m.get("body_weight_kg")]
@@ -3787,6 +4034,7 @@ async def _auto_plan_after_analysis(update: Update, user: dict, chat_id: int) ->
             )
             user["last_plan"] = plan
             _save_store()
+            await asyncio.get_running_loop().run_in_executor(None, _db_sync_plan, chat_id, user, plan)
             try:
                 await gen_msg.delete()
             except Exception:
@@ -3954,6 +4202,7 @@ async def handle_plan_days_callback(update: Update, context: ContextTypes.DEFAUL
             )
         user["last_plan"] = plan
         _save_store()
+        await loop.run_in_executor(None, _db_sync_plan, chat_id, user, plan)
         try:
             await query.delete_message()
         except Exception:
@@ -4140,6 +4389,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             user["last_plan"] = plan
             _save_store()
+            await loop.run_in_executor(None, _db_sync_plan, chat_id, user, plan)
             try:
                 await gen_msg.delete()
             except Exception:
@@ -4191,6 +4441,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         user["active_command"] = None
         user["command_state"] = {}
         _save_store()
+        await asyncio.get_running_loop().run_in_executor(None, _db_sync_profile, chat_id, user)
         profile = user["profile"]
         current = "\n".join(f"• {k}: {esc(str(v))}" for k, v in profile.items() if k not in _HIDDEN_PROFILE_KEYS) or "Not set yet."
         await update.message.reply_text(
@@ -4321,6 +4572,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             user["measurements"].append(entry)
             user["measurements"] = user["measurements"][-100:]
             _save_store()
+            await asyncio.get_running_loop().run_in_executor(None, _db_sync_measurement, chat_id, user, entry)
             lines = [f"✅ *Measurement saved ({_today()})*\n"]
             for db_key, val in entry.items():
                 if db_key == "date":
@@ -4387,6 +4639,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await update.message.reply_text("Session state lost. Start over with /log.")
             return
         entry, is_pr = _do_log_set(user, ex, weight, reps)
+        _loop = asyncio.get_running_loop()
+        await _loop.run_in_executor(None, _db_sync_set, chat_id, user, entry)
+        if is_pr:
+            await _loop.run_in_executor(None, _db_sync_pr, chat_id, user, ex, weight, reps, entry["estimated_1rm"])
         pr_badge = " 🏆 *NEW PR!*" if is_pr else ""
         await update.message.reply_text(
             f"✅ *{ex}* — {_wfmt(weight, user)} × {reps}{pr_badge}\n"
@@ -4420,6 +4676,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     )
                 user["last_plan"] = plan
                 _save_store()
+                await loop.run_in_executor(None, _db_sync_plan, chat_id, user, plan)
                 await regen_msg.delete()
                 await msg.edit_text(reply, parse_mode="Markdown")
                 await _send_plan(update, plan)

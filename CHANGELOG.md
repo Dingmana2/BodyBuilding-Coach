@@ -1,5 +1,20 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 15: Bot→Web full data sync
+
+### Fixed
+- `telegram_bot.py` — `_finish_checkin`: fixed ID mismatch — was writing `DailyCheckIn(chat_id=telegram_chat_id)` but web API filters by `web_user_id`; now uses `_eff_uid()` so check-ins become visible on the web immediately after `/link`
+
+### Added
+- `telegram_bot.py` — `_eff_uid(chat_id, user)`: single-point helper that returns the web `User.id` (from `_linked_user_ids` or `user["web_user_id"]`) for all SQLite writes, falling back to Telegram `chat_id` when not linked
+- `telegram_bot.py` — 8 sync helper functions (`_db_sync_profile`, `_db_sync_session_start`, `_db_sync_session_end`, `_db_sync_set`, `_db_sync_pr`, `_db_sync_meal`, `_db_sync_measurement`, `_db_sync_plan`) — each is synchronous, safe to call from `run_in_executor`, wrapped in try/except so failures never crash bot handlers
+- `telegram_bot.py` — sync call sites: profile (2 sites), session start (3 sites), session end (3 sites), set + PR (2 sites), meal (2 sites), measurement (3 sites), plan (6 sites) — all via `asyncio.get_running_loop().run_in_executor()`
+- `main.py` — `_migrate_db()`: added `user_id` column to `workout_plans`, `diet_plans`, `supplement_plans` (idempotent ALTER TABLE); `/api/plan/current` now filters by `current_user_id` first, falling back to global latest; plan generation endpoint stamps `user_id` on new rows
+- `static/app.js` — `renderWorkoutPlan()`: handles bot-synced plans (`{"text": "...", "source": "telegram_bot"}`) as a pre-formatted block alongside the existing rich table format
+
+### Rollback
+- `git revert HEAD` — all `_migrate_db()` changes are additive (new nullable columns); no data loss; bot_state.json unaffected
+
 ## 2026-05-30 — Sprint 14: Web-Telegram stale-session fix + integration beta 69/69
 
 ### Fixed

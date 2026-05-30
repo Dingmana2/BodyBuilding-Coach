@@ -718,6 +718,12 @@ function renderPlan(plan) {
 }
 
 function renderWorkoutPlan(workout) {
+    // Bot-synced plans arrive as {text: "...", source: "telegram_bot"}
+    if (workout.text) {
+        document.getElementById('plan-workout').innerHTML =
+            '<pre style="white-space:pre-wrap;font-size:14px;line-height:1.6">' + esc(workout.text) + '</pre>';
+        return;
+    }
     const days = (workout.days || []).map(day => {
         const exerciseRows = (day.exercises || []).map(ex => `
             <tr>
