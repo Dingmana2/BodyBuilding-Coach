@@ -359,7 +359,14 @@ async def link_telegram(
 
     user = db.query(models.User).filter(models.User.id == current_user_id).first()
     if not user:
-        raise HTTPException(status_code=404, detail="User not found.")
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Account not found — the server may have restarted and your session is stale. "
+                "Please sign out (top-right), register again with your email, "
+                "then use /link in Telegram for a new code."
+            ),
+        )
 
     # Check if this Telegram chat_id is already linked to another account
     existing = db.query(models.User).filter(

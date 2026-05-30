@@ -420,6 +420,46 @@ def test_async_contract() -> None:
 # Category 15 — User-facing error quality
 # ─────────────────────────────────────────────────────────────────────────────
 
+def test_stale_session_handling() -> None:
+    """After a Railway redeployment the SQLite DB is wiped; old JWTs reference non-existent users.
+
+    Checks:
+    - link_telegram returns an actionable message (not bare "User not found.")
+    - Frontend detects the message and shows a Sign Out button
+    """
+    APP = _src("static/app.js")
+
+    # Backend: actionable error message (not bare "User not found.")
+    if "Account not found" in WEB or "register again" in WEB.lower():
+        ok("Backend: stale-JWT error is actionable ('register again' hint present)")
+    else:
+        fail(
+            "Backend: link_telegram returns bare 'User not found.' with no hint to re-register. "
+            "Users get stuck after a Railway redeployment wipes the SQLite DB."
+        )
+
+    # Backend: check that the message mentions sign-out
+    if "sign out" in WEB.lower():
+        ok("Backend: error message mentions 'sign out' step")
+    else:
+        warn("Backend: error message could also mention 'sign out' to guide users")
+
+    # Frontend: Sign Out & Register button shown for stale-session errors
+    if "Sign Out & Register" in APP or "signout-btn" in APP or "sign out" in APP.lower():
+        ok("Frontend: 'Sign Out & Register Again' button shown on stale-session error")
+    else:
+        fail(
+            "Frontend: no recovery button for stale-session error — user sees error text "
+            "but no obvious next step"
+        )
+
+    # Frontend: error detection uses case-insensitive check
+    if "toLowerCase().includes" in APP and "account not found" in APP.lower():
+        ok("Frontend: case-insensitive detection of stale-session error message")
+    else:
+        warn("Frontend: may not detect all variants of the stale-session error message")
+
+
 def test_error_quality() -> None:
     """Users get helpful messages when things go wrong."""
     link_fn_start = BOT.find("async def cmd_link(")
@@ -450,7 +490,7 @@ def test_simulated_users() -> None:
     import hashlib
 
     scenarios = {
-        "fresh_user_links_successfully":        40,
+        "fresh_user_links_successfully":        35,
         "user_already_linked":                  20,
         "user_types_expired_code":              10,
         "user_types_wrong_code":                10,
@@ -458,19 +498,26 @@ def test_simulated_users() -> None:
         "api_base_url_missing_protocol":         5,
         "api_base_url_not_set":                  5,
         "user_tries_to_link_twice":              5,
+        "stale_session_after_redeployment":      5,
     }
 
     total = sum(scenarios.values())
 
+    APP = _src("static/app.js")
     handled_states = {
-        "fresh_user_links_successfully": "cmd_link" in BOT and "link-code/generate" in BOT,
-        "user_already_linked":           "already linked" in BOT.lower() or "Already linked" in BOT,
-        "user_types_expired_code":       "410" in WEB or "expired" in WEB.lower(),
-        "user_types_wrong_code":         "404" in WEB or "not found" in WEB.lower(),
-        "web_app_unreachable":           "ConnectError" in BOT,
-        "api_base_url_missing_protocol": "_raw_api_url" in BOT and "https://" in BOT,
-        "api_base_url_not_set":          "not set up yet" in BOT or "not configured" in BOT,
-        "user_tries_to_link_twice":      "409" in WEB or "already linked to another" in WEB.lower(),
+        "fresh_user_links_successfully":    "cmd_link" in BOT and "link-code/generate" in BOT,
+        "user_already_linked":              "already linked" in BOT.lower() or "Already linked" in BOT,
+        "user_types_expired_code":          "410" in WEB or "expired" in WEB.lower(),
+        "user_types_wrong_code":            "404" in WEB or "not found" in WEB.lower(),
+        "web_app_unreachable":              "ConnectError" in BOT,
+        "api_base_url_missing_protocol":    "_raw_api_url" in BOT and "https://" in BOT,
+        "api_base_url_not_set":             "not set up yet" in BOT or "not configured" in BOT,
+        "user_tries_to_link_twice":         "409" in WEB or "already linked to another" in WEB.lower(),
+        "stale_session_after_redeployment": (
+            "Account not found" in WEB or "register again" in WEB.lower()
+        ) and (
+            "Sign Out & Register" in APP or "signout-btn" in APP
+        ),
     }
 
     handled_count = sum(scenarios[s] for s, ok_val in handled_states.items() if ok_val)
@@ -542,6 +589,7 @@ def main() -> None:
     test_link_code_security()
     test_database_schema()
     test_async_contract()
+    test_stale_session_handling()
     test_error_quality()
     test_simulated_users()
 

@@ -1177,8 +1177,22 @@ async function linkTelegram() {
         invalidateCache('/auth/me');
         await loadProfile();
     } catch (err) {
-        errEl.textContent = err.message || 'Invalid or expired code.';
+        const msg = err.message || 'Invalid or expired code.';
+        errEl.textContent = msg;
         errEl.style.display = '';
+        // Remove any stale sign-out helper from a previous attempt
+        const prev = document.getElementById('telegram-signout-btn');
+        if (prev) prev.remove();
+        // Stale session: server was restarted and wiped the DB — guide the user to re-register
+        if (msg.toLowerCase().includes('account not found') || msg.toLowerCase().includes('sign out')) {
+            const btn = document.createElement('button');
+            btn.id = 'telegram-signout-btn';
+            btn.textContent = 'Sign Out & Register Again';
+            btn.className = 'btn btn-secondary';
+            btn.style.cssText = 'margin-top:8px;width:100%';
+            btn.onclick = () => signOut();
+            errEl.after(btn);
+        }
     }
 }
 

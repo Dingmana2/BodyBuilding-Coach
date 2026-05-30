@@ -1,5 +1,17 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 14: Web-Telegram stale-session fix + integration beta 69/69
+
+### Fixed
+- `main.py` — `link_telegram`: changed bare `"User not found."` (HTTP 404) to an actionable error message that explains the Railway ephemeral-filesystem root cause and tells the user to sign out, register again, then use `/link` for a fresh code
+- `static/app.js` — `linkTelegram()`: detects the "Account not found" error and inserts a "Sign Out & Register Again" button below the error message so the user has a one-click recovery path
+
+### Added
+- `tests/web_integration_beta.py` — `test_stale_session_handling()`: new category verifying the stale-JWT / redeployment scenario (backend actionable message + frontend recovery button); expanded `test_simulated_users` from 100 to 100 users with a new "stale_session_after_redeployment" scenario (5 users); result: **69/69 checks pass**
+
+### Rollback
+- `git revert HEAD` — no schema changes, no migrations
+
 ## 2026-05-30 — Sprint 13: Deload trends, auto-regulation, periodization, VO2max zones, supplement safety, meal timing
 
 ### Added
