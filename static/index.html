@@ -274,10 +274,15 @@
 
         <!-- PLANS -->
         <section id="tab-plans" class="tab-content">
-            <div class="page-header">
-                <h1>Your Plans</h1>
-                <p class="subtitle">Science-backed workout, diet &amp; supplement programs</p>
-                <button class="btn btn-primary" onclick="generatePlan()">Generate New Plan</button>
+            <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+                <div>
+                    <h1>My Training Plan</h1>
+                    <p class="subtitle">Your AI-generated roadmap — personalized to your profile and goals</p>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+                    <button class="btn btn-ghost btn-sm" onclick="printPlan()" style="font-size:13px">🖨️ Print</button>
+                    <button class="btn btn-primary" onclick="generatePlan()" style="font-size:13px">Generate New Plan</button>
+                </div>
             </div>
 
             <div id="no-plan-message" class="card" style="display:none">
@@ -350,7 +355,7 @@
                             <div class="section-label" style="margin-top:0">Weight <span class="unit-lbl-weight">(kg)</span></div>
                             <div class="stepper">
                                 <button class="stepper-btn" onclick="adjustWeight(-1)" aria-label="Decrease weight">−</button>
-                                <input type="number" id="weight-input" class="stepper-input" value="60" step="2.5" min="0" />
+                                <input type="number" id="weight-input" class="stepper-input" value="60" step="2.5" min="0" oninput="updateWarmupSuggestions()" />
                                 <button class="stepper-btn" onclick="adjustWeight(1)" aria-label="Increase weight">+</button>
                             </div>
                         </div>
@@ -363,10 +368,42 @@
                             </div>
                         </div>
                     </div>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
+                        <div>
+                            <div class="section-label" style="margin-top:0">RPE <span style="font-size:11px;color:var(--text-muted)">(perceived effort 1-10)</span></div>
+                            <select id="rpe-input" style="width:100%">
+                                <option value="">Skip</option>
+                                <option value="6">6 — Easy</option>
+                                <option value="7">7 — Moderate</option>
+                                <option value="8">8 — Hard</option>
+                                <option value="8.5">8.5 — Very Hard</option>
+                                <option value="9">9 — Near Maximal</option>
+                                <option value="9.5">9.5 — Maximal-ish</option>
+                                <option value="10">10 — True Max</option>
+                            </select>
+                        </div>
+                        <div>
+                            <div class="section-label" style="margin-top:0">RIR <span style="font-size:11px;color:var(--text-muted)">(reps left in tank)</span></div>
+                            <select id="rir-input" style="width:100%">
+                                <option value="">Skip</option>
+                                <option value="0">0 — Failure</option>
+                                <option value="1">1 rep left</option>
+                                <option value="2">2 reps left</option>
+                                <option value="3">3 reps left</option>
+                                <option value="4">4 reps left</option>
+                                <option value="5">5+ reps left</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="margin-bottom:14px">
+                        <input type="text" id="set-notes-input" placeholder="Set notes (optional — form cue, pain, etc.)" maxlength="200" style="width:100%" />
+                    </div>
                     <div style="display:flex;align-items:center;gap:12px">
                         <button class="btn-primary" onclick="logSet()" style="flex:1;justify-content:center;font-size:14px;padding:12px 20px">Log Set</button>
                         <div id="last-1rm-hint" style="font-size:12px;color:var(--text-muted)"></div>
+                        <button class="btn btn-ghost btn-sm" onclick="openPlateCalc()" style="font-size:12px;padding:8px 14px;white-space:nowrap">🏋️ Plates</button>
                     </div>
+                    <div id="warmup-suggestions" style="display:none;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:10px"></div>
                 </div>
 
                 <div class="card">
@@ -422,6 +459,7 @@
                     </div>
                     <button type="submit" class="btn-primary" style="font-size:13px;padding:10px 20px">Log Measurements</button>
                 </form>
+                <div id="weight-chart" style="display:none;margin-bottom:16px;padding:8px 0"></div>
                 <div id="measurements-history"><p class="empty-state">No measurements logged yet.</p></div>
             </div>
         </section>
@@ -652,6 +690,28 @@
             <div id="reports-list"><p class="empty-state">No reports yet. Click "Generate Report Now" above to create your first weekly coaching summary.</p></div>
         </section>
     </main>
+
+    <!-- Plate calculator modal -->
+    <div id="plate-calc-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9500;align-items:center;justify-content:center;padding:16px">
+        <div style="background:var(--surface);border-radius:20px;padding:24px;max-width:340px;width:100%">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+                <h3 style="margin:0">Plate Calculator</h3>
+                <button onclick="closePlateCalc()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">✕</button>
+            </div>
+            <div style="margin-bottom:12px">
+                <label style="font-size:13px;color:var(--text-muted)">Target weight (<span class="unit-lbl-weight">kg</span>)</label>
+                <input type="number" id="plate-calc-input" min="0" step="2.5" style="width:100%;margin-top:6px" oninput="calcPlates()" />
+            </div>
+            <div id="plate-calc-result" style="padding:14px;background:var(--surface-2);border-radius:10px;font-size:14px;line-height:1.6"></div>
+        </div>
+    </div>
+
+    <!-- Rest timer pill -->
+    <div id="rest-timer-bar" style="display:none;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#22c55e;color:#fff;padding:10px 20px;border-radius:50px;font-size:14px;font-weight:700;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:8887;align-items:center;gap:12px;white-space:nowrap">
+        <span>⏱ Rest</span>
+        <span id="rest-timer-countdown">1:30</span>
+        <button onclick="clearRestTimer()" style="background:rgba(255,255,255,0.25);border:none;color:#fff;border-radius:50px;padding:2px 10px;font-size:12px;cursor:pointer">Skip</button>
+    </div>
 
     <!-- Bottom mobile tab bar -->
     <nav id="bottom-tab-bar" role="navigation" aria-label="Primary navigation">
