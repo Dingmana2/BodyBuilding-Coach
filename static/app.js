@@ -56,7 +56,6 @@ function setAuth(token, user) {
     localStorage.setItem(USER_KEY, JSON.stringify(user));
     updateUserBadge(user);
     document.getElementById('auth-overlay').style.display = 'none';
-    document.getElementById('onboarding-overlay').style.display = 'none';
     const drawerUser = document.getElementById('drawer-user');
     const drawerEmail = document.getElementById('drawer-email');
     if (drawerUser && drawerEmail) {
