@@ -189,6 +189,10 @@
                             <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🧠 Stress Level &nbsp;<span style="font-weight:800" id="ci-stress-val">5</span>/10</label>
                             <input type="range" id="ci-stress" min="1" max="10" value="5" aria-label="Stress level 1 to 10" style="width:100%" oninput="document.getElementById('ci-stress-val').textContent=this.value">
                         </div>
+                        <div>
+                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🌙 Sleep Duration &nbsp;<span style="font-weight:800" id="ci-sleep-hrs-val">7.5</span> hrs</label>
+                            <input type="range" id="ci-sleep-hrs" min="0" max="12" value="7.5" step="0.5" aria-label="Sleep duration in hours" style="width:100%" oninput="document.getElementById('ci-sleep-hrs-val').textContent=+this.value">
+                        </div>
                     </div>
                     <div style="display:flex;gap:10px;margin-top:16px">
                         <button id="ci-submit-btn" class="btn-primary" onclick="submitCheckin()" style="font-size:13px;padding:10px 20px">Submit</button>
@@ -341,17 +345,17 @@
                         <div>
                             <div class="section-label" style="margin-top:0">Weight <span class="unit-lbl-weight">(kg)</span></div>
                             <div class="stepper">
-                                <button class="stepper-btn" onclick="adjustWeight(-1)">−</button>
+                                <button class="stepper-btn" onclick="adjustWeight(-1)" aria-label="Decrease weight">−</button>
                                 <input type="number" id="weight-input" class="stepper-input" value="60" step="2.5" min="0" />
-                                <button class="stepper-btn" onclick="adjustWeight(1)">+</button>
+                                <button class="stepper-btn" onclick="adjustWeight(1)" aria-label="Increase weight">+</button>
                             </div>
                         </div>
                         <div>
                             <div class="section-label" style="margin-top:0">Reps</div>
                             <div class="stepper">
-                                <button class="stepper-btn" onclick="adjustReps(-1)">−</button>
+                                <button class="stepper-btn" onclick="adjustReps(-1)" aria-label="Decrease reps">−</button>
                                 <input type="number" id="reps-input" class="stepper-input" value="8" step="1" min="1" />
-                                <button class="stepper-btn" onclick="adjustReps(1)">+</button>
+                                <button class="stepper-btn" onclick="adjustReps(1)" aria-label="Increase reps">+</button>
                             </div>
                         </div>
                     </div>
@@ -580,11 +584,31 @@
             </div>
             <div class="card">
                 <h3>Today's Macros</h3>
-                <div style="display:flex;gap:24px;flex-wrap:wrap;margin:12px 0 20px">
-                    <div><div class="stat-label">Calories</div><div id="nt-calories" style="font-size:22px;font-weight:800">—</div></div>
-                    <div><div class="stat-label">Protein</div><div id="nt-protein" style="font-size:22px;font-weight:800;color:var(--green)">—</div></div>
-                    <div><div class="stat-label">Carbs</div><div id="nt-carbs" style="font-size:22px;font-weight:800">—</div></div>
-                    <div><div class="stat-label">Fat</div><div id="nt-fat" style="font-size:22px;font-weight:800">—</div></div>
+                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:12px 0 20px">
+                    <div>
+                        <div class="stat-label">Calories</div>
+                        <div id="nt-calories" style="font-size:22px;font-weight:800">—</div>
+                        <div class="macro-progress"><div id="nt-cal-fill" class="macro-fill" style="background:#111;width:0%"></div></div>
+                        <div id="nt-cal-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Protein</div>
+                        <div id="nt-protein" style="font-size:22px;font-weight:800;color:var(--green)">—</div>
+                        <div class="macro-progress"><div id="nt-prot-fill" class="macro-fill" style="background:var(--green);width:0%"></div></div>
+                        <div id="nt-prot-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Carbs</div>
+                        <div id="nt-carbs" style="font-size:22px;font-weight:800">—</div>
+                        <div class="macro-progress"><div id="nt-carb-fill" class="macro-fill" style="background:#6366f1;width:0%"></div></div>
+                        <div id="nt-carb-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+                    </div>
+                    <div>
+                        <div class="stat-label">Fat</div>
+                        <div id="nt-fat" style="font-size:22px;font-weight:800">—</div>
+                        <div class="macro-progress"><div id="nt-fat-fill" class="macro-fill" style="background:#f59e0b;width:0%"></div></div>
+                        <div id="nt-fat-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
+                    </div>
                 </div>
                 <form id="meal-form" onsubmit="logMeal(event)">
                     <div class="form-group" style="margin-bottom:10px">

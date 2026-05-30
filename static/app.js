@@ -43,6 +43,8 @@ const state = {
     latestCheckins: [],
 };
 
+const _exercisePRWeights = {};
+
 /* ── Unit preferences ── */
 const UNIT_KEY = 'bb_unit_pref';
 
@@ -101,7 +103,7 @@ function applyUnitLabels() {
     const ma = document.getElementById('m-arm');
     if (ma) ma.placeholder = imp ? '15' : '38';
     const btn = document.getElementById('unit-toggle-btn');
-    if (btn) btn.textContent = imp ? 'Imperial' : 'Metric';
+    if (btn) btn.textContent = imp ? '→ Metric' : '→ Imperial';
 
     // Rebuild height select (value always stored in cm, display in user's unit)
     const hSel = document.getElementById('profile-height');
@@ -170,8 +172,14 @@ function _buildProfileChips(containerId, options, activeSet) {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.textContent = opt;
-        btn.className = 'profile-chip' + (activeSet.has(opt.toLowerCase()) ? ' selected' : '');
-        btn.onclick = () => { btn.classList.toggle('selected'); _checkInjuryWarning(); };
+        const isSelected = activeSet.has(opt.toLowerCase());
+        btn.className = 'profile-chip' + (isSelected ? ' selected' : '');
+        btn.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
+        btn.onclick = () => {
+            btn.classList.toggle('selected');
+            btn.setAttribute('aria-pressed', btn.classList.contains('selected') ? 'true' : 'false');
+            _checkInjuryWarning();
+        };
         container.appendChild(btn);
     });
 }
@@ -618,6 +626,13 @@ function openCheckinForm() {
             document.getElementById(`ci-${k}-val`).textContent = 5;
         });
     }
+    const sleepHrsEl = document.getElementById('ci-sleep-hrs');
+    const sleepHrsValEl = document.getElementById('ci-sleep-hrs-val');
+    if (sleepHrsEl && sleepHrsValEl) {
+        const hrs = todayCheckin?.sleep_duration_hrs ?? 7.5;
+        sleepHrsEl.value = hrs;
+        sleepHrsValEl.textContent = hrs;
+    }
     document.getElementById('checkin-form-panel').style.display = 'block';
     document.getElementById('checkin-btn').style.display = 'none';
 }
@@ -636,6 +651,7 @@ async function submitCheckin() {
         energy_score: parseInt(document.getElementById('ci-energy').value),
         soreness_score: parseInt(document.getElementById('ci-soreness').value),
         stress_score: parseInt(document.getElementById('ci-stress').value),
+        sleep_duration_hrs: parseFloat(document.getElementById('ci-sleep-hrs')?.value) || null,
     };
     try {
         let result;
@@ -1547,9 +1563,10 @@ async function saveGoal(event) {
 
 /* ── Nutrition ── */
 async function loadNutrition() {
-    const [today, recent] = await Promise.all([
+    const [today, recent, plan] = await Promise.all([
         api('GET', '/meals/today').catch(() => ({ meals: [], totals: {} })),
         api('GET', '/meals?limit=30').catch(() => []),
+        cachedApi('GET', '/plan/current').catch(() => null),
     ]);
 
     const t = today.totals || {};
@@ -1557,6 +1574,28 @@ async function loadNutrition() {
     document.getElementById('nt-protein').textContent = t.protein_g ? `${t.protein_g}g` : '—';
     document.getElementById('nt-carbs').textContent = t.carbs_g ? `${t.carbs_g}g` : '—';
     document.getElementById('nt-fat').textContent = t.fat_g ? `${t.fat_g}g` : '—';
+
+    const calTarget = plan?.diet_plan?.daily_calories || plan?.diet_macros?.calories;
+    const protTarget = plan?.diet_plan?.macros?.protein_g || plan?.diet_macros?.protein_g;
+    const carbTarget = plan?.diet_plan?.macros?.carbs_g;
+    const fatTarget = plan?.diet_plan?.macros?.fat_g;
+    function _setMacroBar(fillId, targetId, actual, target, unit) {
+        const fill = document.getElementById(fillId);
+        const lbl = document.getElementById(targetId);
+        if (!fill || !lbl) return;
+        if (target) {
+            const pct = actual ? Math.min(100, Math.round(+actual / +target * 100)) : 0;
+            fill.style.width = pct + '%';
+            lbl.textContent = actual ? `${actual} / ${target} ${unit}` : `Target: ${target} ${unit}`;
+        } else {
+            fill.style.width = '0%';
+            lbl.textContent = '';
+        }
+    }
+    _setMacroBar('nt-cal-fill', 'nt-cal-target', t.calories, calTarget, 'kcal');
+    _setMacroBar('nt-prot-fill', 'nt-prot-target', t.protein_g, protTarget, 'g');
+    _setMacroBar('nt-carb-fill', 'nt-carb-target', t.carbs_g, carbTarget, 'g');
+    _setMacroBar('nt-fat-fill', 'nt-fat-target', t.fat_g, fatTarget, 'g');
 
     const todayList = document.getElementById('meals-today-list');
     if (today.meals.length) {
@@ -1767,6 +1806,10 @@ function selectExercise(name) {
     state.selectedExercise = name;
     document.getElementById('selected-exercise-name').textContent = name;
     document.getElementById('log-set-card').style.display = 'block';
+    const lastKg = _exercisePRWeights[name];
+    if (lastKg != null) {
+        document.getElementById('weight-input').value = isImperial() ? kgToLbs(lastKg) : lastKg;
+    }
     document.getElementById('log-set-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     document.querySelectorAll('.chip').forEach(c => {
         c.classList.toggle('active', c.textContent === name);
@@ -1947,6 +1990,7 @@ function renderSessionHistory(history) {
 }
 
 function renderPRs(prs) {
+    prs.forEach(r => { if (r.weight_kg != null) _exercisePRWeights[r.exercise_name] = +r.weight_kg; });
     const container = document.getElementById('prs-list');
     if (!prs.length) {
         container.innerHTML = '<p class="empty-state">No personal records yet.</p>';
