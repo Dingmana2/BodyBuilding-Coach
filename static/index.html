@@ -201,7 +201,7 @@
                     <div class="drop-icon">📸</div>
                     <div class="drop-text">Drop photos here or click to select</div>
                     <div class="drop-subtext">JPG, PNG, WebP • Max 20MB each • Up to 3 angles (front, back, side)</div>
-                    <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" multiple capture="environment" style="display:none" onchange="handleFileSelect(this)" />
+                    <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" multiple style="display:none" onchange="handleFileSelect(this)" />
                 </div>
                 <div id="upload-preview" style="display:none">
                     <div id="preview-strip" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
@@ -583,164 +583,34 @@
     <!-- Toast -->
     <div id="toast" class="toast" role="alert" aria-live="assertive" style="display:none"></div>
 
-    <!-- ── Onboarding wizard ── -->
+    <!-- ── Auth overlay ── -->
     <div id="onboarding-overlay" style="display:none">
         <div id="onboarding-inner">
-            <div id="step-dots">
-                <div class="ob-dot active" id="dot-0"></div>
-                <div class="ob-dot" id="dot-1"></div>
-                <div class="ob-dot" id="dot-2"></div>
-                <div class="ob-dot" id="dot-3"></div>
-                <div class="ob-dot" id="dot-4"></div>
-                <div class="ob-dot" id="dot-5"></div>
-                <div class="ob-dot" id="dot-6"></div>
-            </div>
-
-            <!-- Step 0: Welcome/Hero -->
-            <div class="ob-step active" id="ob-step-0">
+            <!-- Panel A: Register -->
+            <div id="ob-panel-register" class="ob-step active">
                 <div class="ob-badge">🏋️ AI Coaching</div>
                 <h1>Finally, coaching that<br><strong>actually works</strong></h1>
-                <p>Your personal AI bodybuilding coach — plans, tracking, and weekly insights tailored to you.</p>
-                <button class="btn-primary" onclick="obNext()">Get Started →</button>
-                <button class="btn-secondary" onclick="obShowLogin()">I already have an account</button>
+                <p class="ob-sub">Create your free account to get started.</p>
+                <input id="ob-email" placeholder="Email" type="email" />
+                <input id="ob-password" placeholder="Password (8+ chars)" type="password" />
+                <p id="ob-auth-error" class="form-error"></p>
+                <button class="btn-primary" onclick="obCreateAccount()">Create Account →</button>
+                <button class="btn-ghost" onclick="obShowLogin()">I already have an account</button>
                 <ul class="ob-checklist">
                     <li>✓ Personalized workout &amp; diet plans</li>
                     <li>✓ Syncs with your Telegram bot</li>
                     <li>✓ See results in 4 weeks</li>
                 </ul>
             </div>
-
-            <!-- Login sub-form (shown when "I already have an account" is clicked) -->
-            <div class="ob-step" id="ob-step-login">
+            <!-- Panel B: Login -->
+            <div id="ob-panel-login" class="ob-step">
                 <h2>Welcome back</h2>
-                <p class="ob-sub">Sign in to your account</p>
+                <p class="ob-sub">Sign in to continue.</p>
                 <input id="ob-login-email" placeholder="Email" type="email" />
                 <input id="ob-login-password" placeholder="Password" type="password" />
                 <p id="ob-login-error" class="form-error"></p>
                 <button class="btn-primary" onclick="obLogin()">Sign In →</button>
-                <button class="btn-ghost" onclick="obGoToStep(0)">← Back</button>
-            </div>
-
-            <!-- Step 1: Create Account -->
-            <div class="ob-step" id="ob-step-1">
-                <h2>Create your account</h2>
-                <p class="ob-sub">It's free — no credit card required</p>
-                <input id="ob-email" placeholder="Email" type="email" />
-                <input id="ob-password" placeholder="Password (8+ chars)" type="password" />
-                <p id="ob-auth-error" class="form-error"></p>
-                <button class="btn-primary" onclick="obCreateAccount()">Continue →</button>
-                <button class="btn-ghost" onclick="obGoToStep(0)">← Back</button>
-            </div>
-
-            <!-- Step 2: Basic Profile -->
-            <div class="ob-step" id="ob-step-2">
-                <h2>About you</h2>
-                <p class="ob-sub">This personalizes your plan</p>
-                <div class="ob-field-row">
-                    <input id="ob-age" type="number" placeholder="Age" min="16" max="80" />
-                    <select id="ob-gender">
-                        <option value="">Gender</option>
-                        <option value="male">Male</option>
-                        <option value="female">Female</option>
-                        <option value="non-binary">Non-binary</option>
-                        <option value="other">Other</option>
-                    </select>
-                </div>
-                <div class="ob-field-row">
-                    <input id="ob-height" type="number" placeholder="Height (cm)" min="100" max="250" />
-                    <input id="ob-weight" type="number" placeholder="Weight (kg)" min="30" max="300" step="0.1" />
-                </div>
-                <button class="btn-primary" onclick="obSaveBasicProfile()">Continue →</button>
-                <button class="btn-ghost" onclick="obSkip()">Skip for now</button>
-            </div>
-
-            <!-- Step 3: Training Goals -->
-            <div class="ob-step" id="ob-step-3">
-                <h2>What's your goal?</h2>
-                <div class="ob-chips" id="ob-goal-chips">
-                    <button class="ob-chip" data-val="bulk" onclick="obSelectChip(this,'goal')">Bulk</button>
-                    <button class="ob-chip" data-val="cut" onclick="obSelectChip(this,'goal')">Cut</button>
-                    <button class="ob-chip" data-val="recomp" onclick="obSelectChip(this,'goal')">Recomp</button>
-                    <button class="ob-chip" data-val="strength" onclick="obSelectChip(this,'goal')">Strength</button>
-                    <button class="ob-chip" data-val="health" onclick="obSelectChip(this,'goal')">Health</button>
-                    <button class="ob-chip" data-val="contest_prep" onclick="obSelectChip(this,'goal')">Contest Prep</button>
-                    <button class="ob-chip" data-val="maintain" onclick="obSelectChip(this,'goal')">Maintain</button>
-                </div>
-                <h3>Experience level</h3>
-                <div class="ob-chips" id="ob-exp-chips">
-                    <button class="ob-chip" data-val="beginner" onclick="obSelectChip(this,'exp')">Beginner</button>
-                    <button class="ob-chip" data-val="intermediate" onclick="obSelectChip(this,'exp')">Intermediate</button>
-                    <button class="ob-chip" data-val="advanced" onclick="obSelectChip(this,'exp')">Advanced</button>
-                </div>
-                <h3>Days per week</h3>
-                <div class="ob-chips" id="ob-days-chips">
-                    <button class="ob-chip" data-val="2" onclick="obSelectChip(this,'days')">2</button>
-                    <button class="ob-chip" data-val="3" onclick="obSelectChip(this,'days')">3</button>
-                    <button class="ob-chip" data-val="4" onclick="obSelectChip(this,'days')">4</button>
-                    <button class="ob-chip" data-val="5" onclick="obSelectChip(this,'days')">5</button>
-                    <button class="ob-chip" data-val="6" onclick="obSelectChip(this,'days')">6</button>
-                </div>
-                <button class="btn-primary" onclick="obSaveGoals()">Continue →</button>
-                <button class="btn-ghost" onclick="obSkip()">Skip for now</button>
-            </div>
-
-            <!-- Step 4: Dietary Info -->
-            <div class="ob-step" id="ob-step-4">
-                <h2>Any dietary needs?</h2>
-                <p class="ob-sub">Helps us tailor your nutrition plan</p>
-                <textarea id="ob-diet" rows="3" placeholder="e.g. vegetarian, gluten-free, nut allergy — or leave blank" style="resize:vertical;margin-bottom:8px"></textarea>
-                <button class="btn-primary" onclick="obSaveDiet()">Continue →</button>
-                <button class="btn-ghost" onclick="obSkip()">Skip</button>
-            </div>
-
-            <!-- Step 5: Telegram Link (optional) -->
-            <div class="ob-step" id="ob-step-5">
-                <h2>Already use the Telegram bot?</h2>
-                <p class="ob-sub">Link your account to sync your existing workouts, check-ins, and plans.</p>
-                <div id="ob-link-section">
-                    <input id="ob-link-code" placeholder="Code from /link in Telegram" style="letter-spacing:3px;text-transform:uppercase;font-family:monospace;font-size:18px" maxlength="8" />
-                    <button class="btn-primary" onclick="obLinkTelegram()">Link &amp; Sync →</button>
-                    <p id="ob-link-status"></p>
-                </div>
-                <button class="btn-secondary" onclick="obFinish()">Skip — set up later</button>
-            </div>
-
-            <!-- Step 6: All Set -->
-            <div class="ob-step" id="ob-step-6">
-                <div class="ob-success-icon">🎉</div>
-                <h2>You're all set!</h2>
-                <p id="ob-finish-msg" class="ob-sub">Your coaching dashboard is ready.</p>
-                <button class="btn-primary" onclick="obEnterApp()">Open Dashboard →</button>
-            </div>
-        </div>
-    </div>
-
-    <!-- Auth overlay (fallback login for existing users not in onboarding) -->
-    <div id="auth-overlay" style="display:none">
-        <div class="auth-box">
-            <div class="auth-logo">⚡ BodyBuilding Coach AI</div>
-            <div id="auth-tabs" class="auth-tabs">
-                <button class="auth-tab active" onclick="switchAuthTab('login')">Sign In</button>
-                <button class="auth-tab" onclick="switchAuthTab('register')">Create Account</button>
-            </div>
-
-            <form id="auth-form" onsubmit="submitAuth(event)">
-                <div class="form-group" style="margin-bottom:16px">
-                    <label style="font-size:13px;color:var(--text-muted)">Email</label>
-                    <input type="email" id="auth-email" required autocomplete="email"
-                           style="width:100%;margin-top:6px" placeholder="you@example.com" />
-                </div>
-                <div class="form-group" style="margin-bottom:24px">
-                    <label style="font-size:13px;color:var(--text-muted)">Password</label>
-                    <input type="password" id="auth-password" required autocomplete="current-password"
-                           style="width:100%;margin-top:6px" placeholder="••••••••" />
-                </div>
-                <div id="auth-error" class="auth-error" style="display:none"></div>
-                <button type="submit" class="btn-primary" style="width:100%;justify-content:center" id="auth-submit-btn">Sign In</button>
-            </form>
-
-            <div class="auth-footer">
-                Your data stays private and is tied to your account.
+                <button class="btn-ghost" onclick="obShowRegister()">← Create a new account</button>
             </div>
         </div>
     </div>

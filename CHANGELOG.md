@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 17: Simplified Auth Overlay + Photo Album Fix
+
+### Changed
+- `static/index.html` — replaced the 6-step onboarding wizard with a simple 2-panel overlay (Register + Login); removed old `#auth-overlay` fallback form
+- `static/app.js` — replaced ~130-line wizard state machine with a 4-function slim version (`obShowRegister`, `obShowLogin`, `obCreateAccount`, `obLogin`); new registration goes directly to Profile tab with a setup toast instead of a multi-step wizard
+- `static/index.html` — removed `capture="environment"` from `#photo-input` so mobile users see the full photo picker (Camera + Photo Library) instead of being forced to the camera
+
+### Rollback
+- `git revert HEAD` — HTML/JS changes only; no schema or bot changes
+
 ## 2026-05-30 — Sprint 16: Full UI Redesign + Onboarding Wizard + /sync Command
 
 ### Changed
