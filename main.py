@@ -136,6 +136,10 @@ def _migrate_db():
         ("workout_plans", "user_id", "INTEGER"),
         ("diet_plans", "user_id", "INTEGER"),
         ("supplement_plans", "user_id", "INTEGER"),
+        # Sprint 22: RPE, RIR, set notes on set_logs
+        ("set_logs", "rpe", "INTEGER"),
+        ("set_logs", "rir", "INTEGER"),
+        ("set_logs", "set_notes", "TEXT"),
     ]
     indexes = [
         "CREATE INDEX IF NOT EXISTS ix_daily_checkins_chat_date ON daily_checkins(chat_id, date)",
@@ -942,6 +946,13 @@ async def log_set(
     weight_kg = float(data["weight_kg"])
     reps = int(data["reps"])
     estimated_1rm = epley_1rm(weight_kg, reps)
+    rpe = data.get("rpe")
+    if rpe is not None:
+        rpe = int(rpe)
+    rir = data.get("rir")
+    if rir is not None:
+        rir = int(rir)
+    set_notes = data.get("set_notes") or None
 
     set_log = models.SetLog(
         session_id=session_id,
@@ -949,6 +960,9 @@ async def log_set(
         weight_kg=weight_kg,
         reps=reps,
         estimated_1rm=estimated_1rm,
+        rpe=rpe,
+        rir=rir,
+        set_notes=set_notes,
     )
     db.add(set_log)
     db.flush()
@@ -1012,6 +1026,9 @@ async def log_set(
         "logged_at": set_log.logged_at.isoformat(),
         "is_pr": is_pr,
         "prev_pr": prev_pr,
+        "rpe": set_log.rpe,
+        "rir": set_log.rir,
+        "set_notes": set_log.set_notes,
     }
 
 

@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 22: Add RPE, RIR, set_notes to SetLog model and API
+
+### Added
+- `models.py` — Three nullable columns on `SetLog`: `rpe` (INTEGER), `rir` (INTEGER), `set_notes` (TEXT)
+- `main.py` — `_migrate_db()` entries to ADD COLUMN for the three new set_logs fields on existing databases
+- `main.py` — `POST /api/sessions/{session_id}/sets` now reads, stores, and returns `rpe`, `rir`, `set_notes` from the request body; all fields remain optional
+
+### Rollback
+- `git revert <hash>` — columns are additive (nullable); removing them requires a manual `ALTER TABLE set_logs DROP COLUMN` per column
+
 ## 2026-05-30 — Sprint 20: Critical safety fixes + new user onboarding
 
 ### Added
