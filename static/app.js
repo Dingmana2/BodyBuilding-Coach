@@ -56,28 +56,40 @@ function setAuth(token, user) {
     localStorage.setItem(USER_KEY, JSON.stringify(user));
     updateUserBadge(user);
     document.getElementById('auth-overlay').style.display = 'none';
+    document.getElementById('onboarding-overlay').style.display = 'none';
+    const drawerUser = document.getElementById('drawer-user');
+    const drawerEmail = document.getElementById('drawer-email');
+    if (drawerUser && drawerEmail) {
+        drawerEmail.textContent = user.email || '';
+        drawerUser.classList.add('visible');
+    }
 }
 
 function clearAuth() {
     localStorage.removeItem(AUTH_KEY);
     localStorage.removeItem(USER_KEY);
-    document.getElementById('user-badge').style.display = 'none';
-    showAuthOverlay();
+    const drawerUser = document.getElementById('drawer-user');
+    if (drawerUser) drawerUser.classList.remove('visible');
+    showOnboardingOverlay();
 }
 
 function updateUserBadge(user) {
-    const badge = document.getElementById('user-badge');
-    const emailEl = document.getElementById('user-email-short');
-    if (user) {
-        const short = user.email.split('@')[0];
-        emailEl.textContent = short;
-        badge.style.display = 'flex';
+    const drawerUser = document.getElementById('drawer-user');
+    const drawerEmail = document.getElementById('drawer-email');
+    if (user && drawerUser && drawerEmail) {
+        drawerEmail.textContent = user.email || '';
+        drawerUser.classList.add('visible');
     }
 }
 
 function showAuthOverlay(mode = 'login') {
     document.getElementById('auth-overlay').style.display = 'flex';
     switchAuthTab(mode);
+}
+
+function showOnboardingOverlay() {
+    document.getElementById('onboarding-overlay').style.display = 'flex';
+    obGoToStep(0);
 }
 
 let _authMode = 'login';
@@ -122,7 +134,7 @@ function signOut() {
 
 async function initAuth() {
     const token = getToken();
-    if (!token) { showAuthOverlay(); return; }
+    if (!token) { showOnboardingOverlay(); return; }
     const user = getStoredUser();
     if (user) { updateUserBadge(user); }
     try {
@@ -159,13 +171,33 @@ async function api(method, path, body = null, isFormData = false) {
     return res.json();
 }
 
+/* ── Hamburger nav drawer ── */
+function toggleDrawer() {
+    const drawer = document.getElementById('nav-drawer');
+    const backdrop = document.getElementById('nav-drawer-backdrop');
+    const isOpen = drawer.classList.contains('open');
+    if (isOpen) {
+        drawer.classList.remove('open');
+        backdrop.classList.remove('open');
+    } else {
+        drawer.classList.add('open');
+        backdrop.classList.add('open');
+    }
+}
+
+function closeDrawer() {
+    document.getElementById('nav-drawer').classList.remove('open');
+    document.getElementById('nav-drawer-backdrop').classList.remove('open');
+}
+
 /* ── Tab navigation ── */
 function showTab(tab) {
     state.activeTab = tab;
     document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-    document.querySelectorAll('.nav-tab').forEach(el => el.classList.remove('active'));
+    document.querySelectorAll('.drawer-nav-item').forEach(el => el.classList.remove('active'));
     document.getElementById(`tab-${tab}`).classList.add('active');
-    document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+    const navEl = document.querySelector(`.drawer-nav-item[data-tab="${tab}"]`);
+    if (navEl) navEl.classList.add('active');
 
     const loaders = {
         dashboard: loadDashboard,
@@ -1822,6 +1854,140 @@ function formatDate(iso) {
     if (!iso) return '';
     const d = new Date(iso);
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+/* ── Onboarding wizard ── */
+const _obState = { goal: null, exp: null, days: null };
+let _obCurrentStep = 0;
+
+const OB_STEPS = ['ob-step-0', 'ob-step-1', 'ob-step-2', 'ob-step-3', 'ob-step-4', 'ob-step-5', 'ob-step-6'];
+
+function obGoToStep(stepIndex) {
+    _obCurrentStep = stepIndex;
+    OB_STEPS.forEach((id, i) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('active', i === stepIndex);
+    });
+    const loginStep = document.getElementById('ob-step-login');
+    if (loginStep) loginStep.classList.remove('active');
+    for (let i = 0; i <= 6; i++) {
+        const dot = document.getElementById(`dot-${i}`);
+        if (dot) dot.classList.toggle('active', i === stepIndex);
+    }
+}
+
+function obNext() { obGoToStep(_obCurrentStep + 1); }
+function obSkip() { obGoToStep(_obCurrentStep + 1); }
+
+function obShowLogin() {
+    OB_STEPS.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove('active');
+    });
+    document.getElementById('ob-step-login').classList.add('active');
+}
+
+function obSelectChip(el, group) {
+    const container = el.closest('.ob-chips');
+    container.querySelectorAll('.ob-chip').forEach(c => c.classList.remove('selected'));
+    el.classList.add('selected');
+    _obState[group] = el.dataset.val;
+}
+
+async function obLogin() {
+    const email = document.getElementById('ob-login-email').value.trim();
+    const password = document.getElementById('ob-login-password').value;
+    const errEl = document.getElementById('ob-login-error');
+    errEl.textContent = '';
+    if (!email || !password) { errEl.textContent = 'Please fill in all fields.'; return; }
+    try {
+        const data = await api('POST', '/auth/login', { email, password });
+        setAuth(data.token, data.user);
+        await loadDashboard();
+    } catch (err) {
+        errEl.textContent = err.message;
+    }
+}
+
+async function obCreateAccount() {
+    const email = document.getElementById('ob-email').value.trim();
+    const password = document.getElementById('ob-password').value;
+    const errEl = document.getElementById('ob-auth-error');
+    errEl.textContent = '';
+    if (!email || !password) { errEl.textContent = 'Please fill in all fields.'; return; }
+    if (password.length < 8) { errEl.textContent = 'Password must be at least 8 characters.'; return; }
+    try {
+        const data = await api('POST', '/auth/register', { email, password });
+        setAuth(data.token, data.user);
+        obGoToStep(2);
+    } catch (err) {
+        errEl.textContent = err.message;
+    }
+}
+
+async function obSaveBasicProfile() {
+    const age = document.getElementById('ob-age').value;
+    const gender = document.getElementById('ob-gender').value;
+    const height = document.getElementById('ob-height').value;
+    const weight = document.getElementById('ob-weight').value;
+    const body = {};
+    if (age) body.age = parseInt(age);
+    if (gender) body.gender = gender;
+    if (height) body.height_cm = parseFloat(height);
+    if (weight) body.weight_kg = parseFloat(weight);
+    if (Object.keys(body).length > 0) {
+        await api('POST', '/profile', body).catch(() => {});
+        invalidateCache('/profile');
+    }
+    obGoToStep(3);
+}
+
+async function obSaveGoals() {
+    const body = {};
+    if (_obState.goal) body.goal = _obState.goal;
+    if (_obState.exp) body.training_experience = _obState.exp;
+    if (_obState.days) body.training_days_per_week = parseInt(_obState.days);
+    if (Object.keys(body).length > 0) {
+        await api('POST', '/profile', body).catch(() => {});
+        invalidateCache('/profile');
+    }
+    obGoToStep(4);
+}
+
+async function obSaveDiet() {
+    const diet = document.getElementById('ob-diet').value.trim();
+    if (diet) {
+        await api('POST', '/profile', { dietary_restrictions: diet }).catch(() => {});
+        invalidateCache('/profile');
+    }
+    obGoToStep(5);
+}
+
+async function obLinkTelegram() {
+    const code = document.getElementById('ob-link-code').value.trim().toUpperCase();
+    const statusEl = document.getElementById('ob-link-status');
+    statusEl.textContent = '';
+    if (!code) { statusEl.style.color = 'var(--red)'; statusEl.textContent = 'Enter the code from /link in Telegram.'; return; }
+    try {
+        await api('POST', '/auth/link-telegram', { code });
+        invalidateCache('/auth/me');
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = '✅ Linked! Now type /sync in Telegram to import your history, then refresh the dashboard.';
+        setTimeout(() => obGoToStep(6), 2500);
+    } catch (err) {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = err.message;
+    }
+}
+
+function obFinish() {
+    document.getElementById('ob-finish-msg').textContent = 'Your coaching dashboard is ready. You can link Telegram anytime from the Profile tab.';
+    obGoToStep(6);
+}
+
+async function obEnterApp() {
+    document.getElementById('onboarding-overlay').style.display = 'none';
+    await loadDashboard();
 }
 
 /* ── Init ── */

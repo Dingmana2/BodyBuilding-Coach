@@ -461,6 +461,45 @@ def _db_sync_plan(chat_id: int, user: dict, plan: dict) -> None:
         print(f"Warning: plan DB sync failed: {_e}")
 
 
+def _db_sync_checkin_entry(chat_id: int, user: dict, entry: dict) -> None:
+    """Upsert a historical DailyCheckIn row (skips duplicates by date)."""
+    uid = _eff_uid(chat_id, user)
+    date_str = entry.get("date") or entry.get("timestamp", "")[:10]
+    if not date_str:
+        return
+    try:
+        from database import SessionLocal
+        import models as _m
+        _db = SessionLocal()
+        try:
+            existing = _db.query(_m.DailyCheckIn).filter(
+                _m.DailyCheckIn.chat_id == uid,
+                _m.DailyCheckIn.date == date_str,
+            ).first()
+            if existing:
+                return
+            score = entry.get("recovery_score") or 0
+            _db.add(_m.DailyCheckIn(
+                chat_id=uid,
+                date=date_str,
+                sleep_quality=entry.get("sleep_quality"),
+                energy_level=entry.get("energy_level"),
+                muscle_soreness=entry.get("muscle_soreness"),
+                stress_level=entry.get("stress_level"),
+                recovery_score=score,
+                ai_tip=entry.get("ai_tip", ""),
+            ))
+            streak_row = _db.query(_m.UserStreak).filter(_m.UserStreak.chat_id == uid).first()
+            if not streak_row:
+                streak_row = _m.UserStreak(chat_id=uid, checkin_streak=0, workout_streak=0)
+                _db.add(streak_row)
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: checkin_entry DB sync failed: {_e}")
+
+
 async def _api_get(path: str, chat_id: int | None = None) -> dict:
     """Call the FastAPI backend as the bot. Returns parsed JSON or raises."""
     headers = {}
@@ -5505,6 +5544,59 @@ async def cmd_freeze(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/sync — push all historical bot data to the web dashboard."""
+    chat_id = update.effective_chat.id
+    user = get_user(chat_id)
+    uid = _eff_uid(chat_id, user)
+
+    if uid == chat_id and chat_id not in _linked_user_ids:
+        await update.message.reply_text(
+            "⚠️ Link your account first.\n\nGo to the web app → Profile → Telegram Account → enter the code from /link."
+        )
+        return
+
+    await update.message.reply_text("⏳ Syncing your history to the web app… this may take a moment.")
+    loop = asyncio.get_running_loop()
+
+    await loop.run_in_executor(None, _db_sync_profile, chat_id, user)
+
+    if user.get("last_plan"):
+        await loop.run_in_executor(None, _db_sync_plan, chat_id, user, user["last_plan"])
+
+    for entry in user.get("checkins", []):
+        await loop.run_in_executor(None, _db_sync_checkin_entry, chat_id, user, entry)
+
+    for entry in user.get("meal_logs", []):
+        await loop.run_in_executor(None, _db_sync_meal, chat_id, user, entry)
+
+    for entry in user.get("measurements", []):
+        await loop.run_in_executor(None, _db_sync_measurement, chat_id, user, entry)
+
+    for ex, pr in user.get("prs", {}).items():
+        if isinstance(pr, dict):
+            await loop.run_in_executor(
+                None, _db_sync_pr, chat_id, user,
+                ex,
+                float(pr.get("weight_kg") or 0),
+                int(pr.get("reps") or 0),
+                float(pr.get("estimated_1rm") or 0),
+            )
+
+    counts = {
+        "checkins": len(user.get("checkins", [])),
+        "meals": len(user.get("meal_logs", [])),
+        "measurements": len(user.get("measurements", [])),
+        "PRs": len(user.get("prs", {})),
+    }
+    summary_parts = [f"{v} {k}" for k, v in counts.items() if v]
+    summary_line = " | ".join(summary_parts) if summary_parts else "nothing to sync yet"
+    await update.message.reply_text(
+        f"✅ *Sync complete!*\n\n{esc(summary_line)}\n\nRefresh your web dashboard to see everything.",
+        parse_mode="Markdown",
+    )
+
+
 # ── Messaging helpers ─────────────────────────────────────────────────────────
 
 _TG_MAX = 4096
@@ -6027,6 +6119,7 @@ def main() -> None:
     app.add_handler(CommandHandler("export", cmd_export))
     app.add_handler(CommandHandler("freeze", cmd_freeze))
     app.add_handler(CommandHandler("peakweek", cmd_peakweek))
+    app.add_handler(CommandHandler("sync", cmd_sync))
     app.add_handler(CallbackQueryHandler(handle_progress_callback, pattern=r"^progress:"))
     app.add_handler(CallbackQueryHandler(handle_onboard_callback, pattern=r"^onboard:"))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
@@ -6079,6 +6172,7 @@ def main() -> None:
             BotCommand("export",          "Download your full data as JSON"),
             BotCommand("freeze",          "Protect today's streak (1 per 30 days)"),
             BotCommand("peakweek",        "Contest peak week protocol (prep/cut only)"),
+            BotCommand("sync",            "Push all bot history to the web dashboard"),
         ])
 
         _scheduler.add_job(

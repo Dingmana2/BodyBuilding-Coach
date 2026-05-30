@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 2026-05-30 — Sprint 16: Full UI Redesign + Onboarding Wizard + /sync Command
+
+### Changed
+- `static/style.css` — full light theme rewrite: `--bg: #f7f7f5` (warm off-white), `+` grid texture via `radial-gradient`, pill buttons (`border-radius: 50px`), white cards with `box-shadow`, `#111111` primary CTAs, all text updated from light-on-dark to dark-on-light
+- `static/index.html` — replaced horizontal scrolling nav with hamburger `≡` button opening a slide-in drawer from the right; replaced `#auth-overlay` login box with a 6-step full-screen onboarding wizard
+- `static/app.js` — updated `showTab()` to use `.drawer-nav-item`; updated `setAuth()`/`clearAuth()` for onboarding overlay; updated `initAuth()` to show wizard for unauthenticated users; added hamburger drawer functions (`toggleDrawer`, `closeDrawer`)
+
+### Added
+- `static/index.html` — 6-step onboarding wizard: Welcome → Create Account → Basic Profile → Training Goals → Dietary Needs → Telegram Link → All Set
+- `static/app.js` — full onboarding state machine: `obGoToStep`, `obNext`, `obSkip`, `obShowLogin`, `obLogin`, `obCreateAccount`, `obSaveBasicProfile`, `obSaveGoals`, `obSaveDiet`, `obLinkTelegram`, `obFinish`, `obEnterApp`, `obSelectChip`
+- `telegram_bot.py` — `_db_sync_checkin_entry(chat_id, user, entry)`: upsert historical check-in rows skipping duplicates by date
+- `telegram_bot.py` — `cmd_sync`: `/sync` command that bulk-pushes all historical `bot_state.json` data (profile, plan, checkins, meals, measurements, PRs) to SQLite via existing `_db_sync_*` helpers; replies with counts summary
+
+### Rollback
+- `git revert HEAD` — CSS/HTML/JS changes are cosmetic; bot state unchanged; `_db_sync_checkin_entry` is idempotent
+
 ## 2026-05-30 — Sprint 15: Bot→Web full data sync
 
 ### Fixed
