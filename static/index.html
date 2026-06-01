@@ -13,6 +13,9 @@
                 <span class="logo-icon">⚡</span>
                 <span class="logo-text">BodyBuilding Coach AI</span>
             </div>
+            <div id="session-pill" style="display:none;font-size:12px;font-weight:700;background:#22c55e;color:#fff;padding:4px 12px;border-radius:50px;cursor:pointer" onclick="showTab('workout');closeDrawer()" title="Session in progress — tap to return">
+                💪 <span id="session-pill-time">0:00</span>
+            </div>
             <button id="hamburger-btn" onclick="toggleDrawer()" aria-label="Open navigation menu">≡</button>
         </div>
     </header>
@@ -54,7 +57,10 @@
                     <h1>Dashboard</h1>
                     <p class="subtitle">Your AI-powered fitness command center</p>
                 </div>
-                <button id="body-neutral-btn" class="btn btn-ghost btn-sm" onclick="toggleBodyNeutral()" style="font-size:12px;white-space:nowrap;margin-top:8px">Body-Neutral Mode</button>
+                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+                    <button id="body-neutral-btn" class="btn btn-ghost btn-sm" onclick="toggleBodyNeutral()" style="font-size:12px;white-space:nowrap">Body-Neutral Mode</button>
+                    <button class="btn btn-ghost btn-sm" onclick="toggleDarkMode()" style="font-size:12px;white-space:nowrap" id="dash-dark-btn">🌙 Dark</button>
+                </div>
             </div>
             <!-- Getting-started guide (hidden once user has data) -->
             <div id="getting-started-card" class="getting-started-card" style="display:none">
@@ -75,7 +81,7 @@
                             <div class="gs-step-sub">Improves AI accuracy — skip if you prefer</div>
                         </div>
                     </button>
-                    <button class="gs-step" onclick="generatePlan()">
+                    <button class="gs-step" onclick="openRegenModal()">
                         <div class="gs-step-num" id="gs-num-3">3</div>
                         <div>
                             <div class="gs-step-text">Generate your personalized plan</div>
@@ -118,7 +124,7 @@
                     <div class="action-title">Analyze Physique</div>
                     <div class="action-desc">Upload a photo for AI body composition analysis</div>
                 </div>
-                <div class="action-card" onclick="generatePlan()">
+                <div class="action-card" onclick="openRegenModal()">
                     <div class="action-icon">🏋️</div>
                     <div class="action-title">Generate Plan</div>
                     <div class="action-desc">Build a science-backed workout + diet + supplement plan</div>
@@ -281,13 +287,13 @@
                 </div>
                 <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
                     <button class="btn btn-ghost btn-sm" onclick="printPlan()" style="font-size:13px">🖨️ Print</button>
-                    <button class="btn btn-primary" onclick="generatePlan()" style="font-size:13px">Generate New Plan</button>
+                    <button class="btn btn-primary" onclick="openRegenModal()" style="font-size:13px">Generate New Plan</button>
                 </div>
             </div>
 
             <div id="no-plan-message" class="card" style="display:none">
                 <p class="empty-state" style="margin-bottom:16px">No plan yet. First upload a physique photo in the Analysis tab, then generate your plan. A photo is required — it helps the AI personalize your program.</p>
-                <button class="btn-primary" onclick="generatePlan()" style="font-size:14px">Generate My Plan</button>
+                <button class="btn-primary" onclick="openRegenModal()" style="font-size:14px">Generate My Plan</button>
             </div>
 
             <div id="plan-tabs" style="display:none">
@@ -709,7 +715,9 @@
     <!-- Rest timer pill -->
     <div id="rest-timer-bar" style="display:none;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#22c55e;color:#fff;padding:10px 20px;border-radius:50px;font-size:14px;font-weight:700;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:8887;align-items:center;gap:12px;white-space:nowrap">
         <span>⏱ Rest</span>
+        <button onclick="adjustRestTimer(-15)" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:20px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:700">−15s</button>
         <span id="rest-timer-countdown">1:30</span>
+        <button onclick="adjustRestTimer(15)" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:20px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:700">+15s</button>
         <button onclick="clearRestTimer()" style="background:rgba(255,255,255,0.25);border:none;color:#fff;border-radius:50px;padding:2px 10px;font-size:12px;cursor:pointer">Skip</button>
     </div>
 
@@ -735,7 +743,24 @@
             <span class="bottom-tab-icon">👤</span>
             <span class="bottom-tab-label">Profile</span>
         </button>
+        <button class="bottom-tab" onclick="toggleDrawer()" aria-label="More options">
+            <span class="bottom-tab-icon">⋯</span>
+            <span class="bottom-tab-label">More</span>
+        </button>
     </nav>
+
+    <!-- Confirm regenerate plan modal -->
+    <div id="regen-plan-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9400;align-items:center;justify-content:center;padding:20px">
+        <div style="background:var(--surface);border-radius:20px;padding:28px;max-width:360px;width:100%;text-align:center">
+            <div style="font-size:36px;margin-bottom:12px">🔄</div>
+            <h3 style="margin-bottom:8px">Regenerate plan?</h3>
+            <p style="font-size:14px;color:var(--text-muted);margin-bottom:20px">This will replace your current plan with a fresh AI-generated one. Your history is preserved.</p>
+            <div style="display:flex;gap:10px">
+                <button class="btn-secondary" onclick="closeRegenModal()" style="flex:1;font-size:14px">Cancel</button>
+                <button class="btn-primary" onclick="confirmGeneratePlan()" style="flex:1;font-size:14px">Generate</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Loading overlay -->
     <div id="loading-overlay" style="display:none">

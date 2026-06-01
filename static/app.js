@@ -83,6 +83,11 @@ function clearRestTimer() {
     if (bar) bar.style.display = 'none';
 }
 
+function adjustRestTimer(deltaSecs) {
+    _restTimerSeconds = Math.max(5, _restTimerSeconds + deltaSecs);
+    _updateRestDisplay();
+}
+
 /* ── Unit preferences ── */
 const UNIT_KEY = 'bb_unit_pref';
 
@@ -122,6 +127,8 @@ function applyDarkMode() {
     document.body.classList.toggle('dark', dark);
     const btn = document.getElementById('dark-mode-btn');
     if (btn) btn.textContent = dark ? '☀️ Light' : '🌙 Dark';
+    const btn2 = document.getElementById('dash-dark-btn');
+    if (btn2) btn2.textContent = dark ? '☀️ Light' : '🌙 Dark';
 }
 
 const BODY_NEUTRAL_KEY = 'bb_body_neutral';
@@ -288,6 +295,19 @@ function _getChipValues(containerId) {
     return Array.from(container.querySelectorAll('.profile-chip.selected')).map(b => b.textContent);
 }
 
+/* ── Browser notifications ── */
+function _requestNotificationPerm() {
+    if ('Notification' in window && Notification.permission === 'default') {
+        Notification.requestPermission();
+    }
+}
+
+function _sendBrowserNotification(title, body) {
+    if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(title, { body, icon: '/static/favicon.ico' });
+    }
+}
+
 /* ── Background task indicator ── */
 let _bgTaskCount = 0;
 
@@ -306,6 +326,7 @@ function hideBgTask(doneMsg) {
     const spinner = document.getElementById('bg-task-spinner');
     if (!bar || !msgEl) return;
     if (doneMsg) {
+        _sendBrowserNotification('BB Coach AI', doneMsg);
         if (spinner) spinner.style.display = 'none';
         msgEl.textContent = doneMsg;
         setTimeout(() => {
@@ -991,6 +1012,18 @@ async function generateWeakPoints() {
         hideLoading();
         showToast(`Weak-point analysis failed: ${err.message}`, 'error');
     }
+}
+
+/* ── Regen plan modal ── */
+function openRegenModal() {
+    document.getElementById('regen-plan-modal').style.display = 'flex';
+}
+function closeRegenModal() {
+    document.getElementById('regen-plan-modal').style.display = 'none';
+}
+function confirmGeneratePlan() {
+    closeRegenModal();
+    generatePlan();
 }
 
 /* ── Plans ── */
@@ -1755,8 +1788,8 @@ async function loadNutrition() {
     const todayList = document.getElementById('meals-today-list');
     if (today.meals.length) {
         todayList.innerHTML = today.meals.map(m => `
-            <div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
-                <div>
+            <div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
+                <div style="flex:1">
                     <div style="font-weight:500;font-size:14px">${esc(m.description || 'Meal')}</div>
                     <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${m.macro_source === 'estimated' ? '~ AI-estimated' : 'manual'}</div>
                 </div>
@@ -1764,6 +1797,7 @@ async function loadNutrition() {
                     ${m.calories ? `<span style="color:var(--text-muted)">${m.calories} kcal</span>` : ''}
                     ${m.protein_g ? `<span style="color:var(--gold);margin-left:8px">${m.protein_g}g P</span>` : ''}
                 </div>
+                <button onclick="deleteMeal(${m.id})" style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;flex-shrink:0;padding:4px" aria-label="Delete meal">🗑</button>
             </div>`).join('');
     } else {
         todayList.innerHTML = '<p class="empty-state">No meals logged today.</p>';
@@ -1817,6 +1851,18 @@ async function logMeal(event) {
     } finally {
         btn.disabled = false;
         btn.textContent = 'Log Meal';
+    }
+}
+
+async function deleteMeal(mealId) {
+    if (!confirm('Delete this meal?')) return;
+    try {
+        await api('DELETE', `/meals/${mealId}`);
+        invalidateCache('/meals/today', '/meals?limit=30', '/dashboard/summary');
+        await loadNutrition();
+        showToast('Meal deleted.');
+    } catch (e) {
+        showToast(e.message || 'Failed to delete meal.', 'error');
     }
 }
 
@@ -1990,6 +2036,15 @@ function clearSelectedExercise() {
     state.selectedExercise = null;
     document.getElementById('log-set-card').style.display = 'none';
     document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+}
+
+function markExerciseDone(name) {
+    document.querySelectorAll('.chip').forEach(c => {
+        if (c.textContent === name) {
+            c.classList.add('done');
+            c.setAttribute('aria-label', name + ' — done');
+        }
+    });
 }
 
 function adjustWeight(direction) {
@@ -2168,10 +2223,25 @@ async function logSet() {
             ${prBadge}
         `;
         ul.prepend(li);
+        const markDoneBtn = document.getElementById('mark-exercise-done-btn');
+        if (!markDoneBtn) {
+            const btn = document.createElement('button');
+            btn.id = 'mark-exercise-done-btn';
+            btn.className = 'btn btn-ghost btn-sm';
+            btn.style.cssText = 'font-size:12px;margin-top:10px;color:var(--green)';
+            btn.textContent = '✓ Mark exercise done';
+            btn.onclick = () => {
+                markExerciseDone(state.selectedExercise);
+                clearSelectedExercise();
+                btn.remove();
+            };
+            document.getElementById('log-set-card').appendChild(btn);
+        }
         document.getElementById('set-notes-input').value = '';
         document.getElementById('rpe-input').value = '';
         document.getElementById('rir-input').value = '';
         if (result.is_pr) {
+            if (navigator.vibrate) navigator.vibrate([100, 50, 200]);
             showToast(`🏆 New PR on ${result.exercise_name}! ${fmtWeight(result.estimated_1rm)} est. 1RM`);
             li.classList.add('pr-celebration');
             setTimeout(() => li.classList.remove('pr-celebration'), 1200);
@@ -2179,6 +2249,7 @@ async function logSet() {
             await loadPRs();
         }
         startRestTimer(DEFAULT_REST_SECONDS);
+        document.getElementById('reps-input')?.focus();
     } catch (err) {
         showToast(`Log failed: ${err.message}`, 'error');
     } finally {
@@ -2268,12 +2339,14 @@ function renderPRs(prs) {
 function showActiveSession() {
     document.getElementById('workout-no-session').style.display = 'none';
     document.getElementById('workout-active-session').style.display = 'block';
+    document.getElementById('session-pill').style.display = 'inline-flex';
     renderExerciseChips(state._workoutExercises);
 }
 
 function showNoSession() {
     document.getElementById('workout-no-session').style.display = 'block';
     document.getElementById('workout-active-session').style.display = 'none';
+    document.getElementById('session-pill').style.display = 'none';
     clearInterval(state.sessionTimerInterval);
 }
 
@@ -2286,6 +2359,12 @@ function startSessionTimer() {
         const s = String(elapsed % 60).padStart(2, '0');
         const el = document.getElementById('session-timer');
         if (el) el.textContent = `${m}:${s}`;
+        const pill = document.getElementById('session-pill-time');
+        if (pill) {
+            const pm = Math.floor(elapsed / 60);
+            const ps = elapsed % 60;
+            pill.textContent = `${pm}:${ps.toString().padStart(2, '0')}`;
+        }
     }, 1000);
 }
 
@@ -2439,5 +2518,18 @@ async function obLogin() {
 document.addEventListener('DOMContentLoaded', async () => {
     applyUnitLabels();
     await initAuth();
-    if (getToken()) loadDashboard();
+    if (getToken()) {
+        _requestNotificationPerm();
+        loadDashboard();
+    }
+
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && state.activeSessionId && state.selectedExercise) {
+            const activeEl = document.activeElement;
+            if (activeEl && (activeEl.id === 'weight-input' || activeEl.id === 'reps-input')) {
+                e.preventDefault();
+                logSet();
+            }
+        }
+    });
 });

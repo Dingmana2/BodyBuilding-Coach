@@ -827,6 +827,13 @@ button:focus-visible { outline-offset: 3px; }
 }
 .chip:hover { border-color: #111111; color: #111111; }
 .chip.active { background: #111111; border-color: #111111; color: #ffffff; }
+.chip.done {
+    opacity: 0.45;
+    text-decoration: line-through;
+    background: var(--surface-2);
+    border-color: var(--border);
+    color: var(--text-muted);
+}
 
 .stepper {
     display: flex;
