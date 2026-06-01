@@ -929,3 +929,22 @@ for those functions (AUDIT §2, ARCHITECTURE §6d).
 constants; replaced the two inline strings with the constants. Effective model values unchanged.
 **Rollback**: Revert the two `model=` lines in `generate_weekly_report` and `analyze_weak_points`
 back to `"claude-sonnet-4-6"`.
+
+## [2026-06-01] Sprint 26 — Backend performance improvements
+
+### Changed
+- `main.py` — Change 1 (Static File Cache Headers): `_StaticCacheMiddleware` and
+  `app.add_middleware(_StaticCacheMiddleware)` were already present; `BaseHTTPMiddleware` import
+  from starlette already in place. No code change required.
+- `main.py` — Change 2 (Fix N+1 in Session History): `/api/sessions/history` already uses a
+  single `.in_()` batch query and `sets_by_session` dict for O(1) lookup. No code change required.
+- `main.py` — Change 3 (Parallel Dashboard Summary Queries): `/api/dashboard/summary` already
+  uses `asyncio.gather` with four `asyncio.to_thread` calls backed by `_q_streaks_badges`,
+  `_q_recent_activity`, `_q_analysis_goal`, and `_q_sessions_profile` helpers. No code change required.
+- `main.py` — Change 4 (SSE Streaming Endpoint): `POST /api/plan/generate/stream` already exists
+  at line 727 with the correct `StreamingResponse`, `event_gen()` generator, `asyncio.to_thread`
+  wrapping of `generate_comprehensive_plan`, and save-to-DB logic mirroring the non-streaming
+  endpoint. No code change required.
+
+### Rollback
+- `git revert HEAD` — no schema changes; all four improvements were pre-existing in the codebase.
