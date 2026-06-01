@@ -118,6 +118,28 @@
                 </div>
             </div>
 
+            <!-- Change 1: Today's Intake macro summary -->
+            <div id="dash-macro-summary" style="display:none;background:var(--surface);border-radius:16px;padding:16px;margin-bottom:16px;border:1px solid var(--border)">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+                <span style="font-weight:600;font-size:14px">Today's Intake</span>
+                <button class="btn btn-ghost btn-sm" onclick="showTab('nutrition');closeDrawer()" style="font-size:11px">Log Meal →</button>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                <div>
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                    <span>Calories</span><span id="dash-cal-text" style="color:var(--text-muted)">—</span>
+                  </div>
+                  <div class="macro-progress"><div class="macro-fill" id="dash-cal-fill" style="width:0%;background:var(--gold)"></div></div>
+                </div>
+                <div>
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
+                    <span>Protein</span><span id="dash-prot-text" style="color:var(--text-muted)">—</span>
+                  </div>
+                  <div class="macro-progress"><div class="macro-fill" id="dash-prot-fill" style="width:0%;background:var(--green)"></div></div>
+                </div>
+              </div>
+            </div>
+
             <div class="action-grid">
                 <div class="action-card" onclick="showTab('analysis')">
                     <div class="action-icon">📸</div>
@@ -436,6 +458,8 @@
                 <p class="subtitle">Latest peer-reviewed findings from PubMed &amp; Semantic Scholar</p>
                 <button class="btn btn-primary" onclick="refreshResearch()">Refresh Research</button>
             </div>
+            <!-- Change 9: Research search input -->
+            <input type="text" id="research-search" placeholder="Search topics…" oninput="filterResearch()" aria-label="Search research topics" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;margin-bottom:12px">
             <div id="research-list"><p class="empty-state">No research loaded. Click "Refresh Research" to fetch the latest papers.</p></div>
         </section>
 
@@ -466,6 +490,15 @@
                     <button type="submit" class="btn-primary" style="font-size:13px;padding:10px 20px">Log Measurements</button>
                 </form>
                 <div id="weight-chart" style="display:none;margin-bottom:16px;padding:8px 0"></div>
+                <!-- Change 5: Waist and arm trend charts -->
+                <div id="waist-chart" style="display:none;margin-bottom:12px">
+                  <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Waist (cm)</p>
+                  <div id="waist-chart-svg"></div>
+                </div>
+                <div id="arm-chart" style="display:none;margin-bottom:12px">
+                  <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Avg Arm (cm)</p>
+                  <div id="arm-chart-svg"></div>
+                </div>
                 <div id="measurements-history"><p class="empty-state">No measurements logged yet.</p></div>
             </div>
         </section>
@@ -588,6 +621,12 @@
                 </div>
             </div>
 
+            <!-- Change 7: Export Data -->
+            <div class="card" style="margin-top:1.5rem">
+                <h3>Export Data</h3>
+                <button class="btn btn-secondary" onclick="exportDataCSV()" style="font-size:13px">&#x2B07; Download My Data (CSV)</button>
+            </div>
+
             <div class="card" style="margin-top:1.5rem">
                 <h3>Badges &amp; Streaks</h3>
                 <div id="badges-earned" style="margin-bottom:16px"><p class="empty-state">No badges yet — complete check-in and workout streaks to earn them.</p></div>
@@ -660,6 +699,11 @@
                         <div class="macro-progress"><div id="nt-fat-fill" class="macro-fill" style="background:#f59e0b;width:0%"></div></div>
                         <div id="nt-fat-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
                     </div>
+                </div>
+                <!-- Change 2: Macro pie chart -->
+                <div id="macro-pie-container" style="display:none;text-align:center;margin:12px 0">
+                  <svg id="macro-pie" width="120" height="120" viewBox="0 0 120 120" style="display:block;margin:0 auto"></svg>
+                  <div id="macro-pie-legend" style="display:flex;justify-content:center;gap:16px;font-size:11px;margin-top:6px"></div>
                 </div>
                 <form id="meal-form" onsubmit="logMeal(event)">
                     <div class="form-group" style="margin-bottom:10px">

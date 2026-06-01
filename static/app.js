@@ -498,11 +498,12 @@ function showToast(msg, type = 'success') {
 
 /* ── Dashboard ── */
 async function loadDashboard() {
-    const [health, plan, summary, checkins] = await Promise.all([
+    const [health, plan, summary, checkins, mealsToday] = await Promise.all([
         cachedApi('GET', '/health').catch(() => ({ api_key_configured: false })),
         cachedApi('GET', '/plan/current').catch(() => null),
         cachedApi('GET', '/dashboard/summary').catch(() => null),
         cachedApi('GET', '/checkins?limit=7').catch(() => []),
+        cachedApi('GET', '/meals/today').catch(() => ({ meals: [], totals: {} })),
     ]);
 
     document.getElementById('setup-banner').style.display =
@@ -550,7 +551,43 @@ async function loadDashboard() {
     renderRecoveryWidget(summary, checkins);
     renderRetentionWidget(summary);
     renderGettingStarted(plan, summary);
+    _renderDashMacroSummary(mealsToday, plan);
     loadMemory();
+}
+
+function _renderDashMacroSummary(mealsToday, plan) {
+    const container = document.getElementById('dash-macro-summary');
+    if (!container) return;
+    const t = mealsToday?.totals || {};
+    const calTarget = plan?.diet_plan?.daily_calories || plan?.diet_macros?.calories;
+    const protTarget = plan?.diet_plan?.macros?.protein_g || plan?.diet_macros?.protein_g;
+
+    const calActual = t.calories || 0;
+    const protActual = t.protein_g || 0;
+
+    const calText = document.getElementById('dash-cal-text');
+    const calFill = document.getElementById('dash-cal-fill');
+    const protText = document.getElementById('dash-prot-text');
+    const protFill = document.getElementById('dash-prot-fill');
+
+    if (calText) calText.textContent = calTarget ? `${Math.round(calActual)} / ${calTarget} kcal` : `${Math.round(calActual)} kcal`;
+    if (calFill) {
+        const pct = calTarget ? Math.min(100, Math.round(calActual / +calTarget * 100)) : 0;
+        calFill.style.width = '0%';
+        setTimeout(() => { calFill.style.width = pct + '%'; }, 50);
+    }
+
+    if (protText) protText.textContent = protTarget ? `${Math.round(protActual)} / ${protTarget}g` : `${Math.round(protActual)}g`;
+    if (protFill) {
+        const pct = protTarget ? Math.min(100, Math.round(protActual / +protTarget * 100)) : 0;
+        protFill.style.width = '0%';
+        // Change 3: protein warning — red if below 80% of target
+        const isLow = protTarget && protActual < +protTarget * 0.8;
+        protFill.style.background = isLow ? '#ef4444' : 'var(--green)';
+        setTimeout(() => { protFill.style.width = pct + '%'; }, 50);
+    }
+
+    container.style.display = 'block';
 }
 
 function renderRetentionWidget(summary) {
@@ -667,6 +704,34 @@ function _sparklineSvg(scores, w = 180, h = 56) {
     return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg">
         <path d="${pathD}" fill="none" stroke="${stroke}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
         ${dots}
+    </svg>`;
+}
+
+/* Change 5: Generic measurement chart SVG */
+function _measurementChartSvg(entries, valueKey, w = 320, h = 80, color = '#f59e0b') {
+    const valid = entries.filter(e => e[valueKey] != null).slice(0, 30).reverse();
+    if (valid.length < 2) return '';
+    const pad = 8;
+    const vals = valid.map(e => +e[valueKey]);
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const range = max - min || 1;
+    const xs = vals.map((_, i) => pad + (i / (vals.length - 1)) * (w - 2 * pad));
+    const ys = vals.map(v => h - pad - ((v - min) / range) * (h - 2 * pad - 14));
+    const pathD = xs.map((x, i) => `${i === 0 ? 'M' : 'L'}${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+    const lastIdx = vals.length - 1;
+    const dots = xs.map((x, i) =>
+        `<circle cx="${x.toFixed(1)}" cy="${ys[i].toFixed(1)}" r="3" fill="${color}" opacity="0.7"/>`
+    ).join('');
+    const labels = [0, lastIdx].map(i =>
+        `<text x="${xs[i].toFixed(1)}" y="${(ys[i] - 6).toFixed(1)}" text-anchor="${i === 0 ? 'start' : 'end'}" font-size="10" fill="var(--text-muted)">${isImperial() ? cmToIn(vals[i]) + ' in' : vals[i].toFixed(1) + ' cm'}</text>`
+    ).join('');
+    const dateLabels = [0, lastIdx].map(i =>
+        `<text x="${xs[i].toFixed(1)}" y="${(h - 1).toFixed(1)}" text-anchor="${i === 0 ? 'start' : 'end'}" font-size="9" fill="var(--text-muted)" opacity="0.6">${esc(valid[i].date?.slice(5) || '')}</text>`
+    ).join('');
+    return `<svg width="100%" height="${h}" viewBox="0 0 ${w} ${h}" xmlns="http://www.w3.org/2000/svg" style="overflow:visible">
+        <path d="${pathD}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+        ${dots}${labels}${dateLabels}
     </svg>`;
 }
 
@@ -960,14 +1025,15 @@ async function loadAnalyses() {
 
     container.innerHTML = `<ul class="analyses-history">${
         analyses.map(a => `
-            <li class="history-item" onclick="showHistoryAnalysis(${a.id})">
-                <img class="history-thumb" src="${esc(a.photo_url)}" alt="Photo" />
-                <div class="history-info">
+            <li class="history-item" id="analysis-card-${a.id}">
+                <img class="history-thumb" src="${esc(a.photo_url)}" alt="Photo" onclick="showHistoryAnalysis(${a.id})" style="cursor:pointer" />
+                <div class="history-info" onclick="showHistoryAnalysis(${a.id})" style="cursor:pointer;flex:1">
                     <div class="history-bf">${esc(a.body_fat_estimate) || '—'}</div>
                     <div style="font-size:13px">Score: ${esc(a.overall_physique_score) || '—'}/10</div>
                     <div class="history-date">${esc(formatDate(a.created_at))}</div>
                 </div>
-                ${a.coach_message ? `<div style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.coach_message)}</div>` : ''}
+                ${a.coach_message ? `<div style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:2">${esc(a.coach_message)}</div>` : ''}
+                <button onclick="printAnalysis(${a.id})" style="background:none;border:none;cursor:pointer;font-size:16px;color:var(--text-muted);padding:4px;flex-shrink:0" aria-label="Print analysis">&#128424;</button>
             </li>
         `).join('')
     }</ul>`;
@@ -1354,12 +1420,13 @@ async function loadResearch() {
         `).join('');
 
         const topicId = topic.id;
+        // Change 9: use relative time and add research-topic-card class for filtering
         return `
-            <div class="research-topic">
+            <div class="research-topic research-topic-card">
                 <div class="research-topic-header" onclick="togglePapers(${topicId})">
                     <div>
                         <div class="research-topic-title">${esc(topic.topic)}</div>
-                        <div style="font-size:12px;color:var(--text-muted)">${esc(topic.papers?.length || 0)} papers • Updated ${esc(formatDate(topic.last_updated))}</div>
+                        <div style="font-size:12px;color:var(--text-muted)">${esc(topic.papers?.length || 0)} papers • Updated ${esc(_relTime(topic.last_updated))}</div>
                     </div>
                     <span class="toggle-papers" id="toggle-${topicId}">Show papers ▼</span>
                 </div>
@@ -1450,6 +1517,39 @@ function renderMeasurements(data) {
             chartEl.style.display = 'block';
         } else {
             chartEl.style.display = 'none';
+        }
+    }
+
+    // Change 5: Waist trend chart
+    const waistEl = document.getElementById('waist-chart');
+    const waistSvgEl = document.getElementById('waist-chart-svg');
+    const waistData = data.filter(e => e.waist_cm != null);
+    if (waistEl && waistSvgEl) {
+        if (waistData.length >= 2) {
+            waistSvgEl.innerHTML = _measurementChartSvg(data, 'waist_cm', 320, 80, '#f59e0b');
+            waistEl.style.display = 'block';
+        } else {
+            waistEl.style.display = 'none';
+        }
+    }
+
+    // Change 5: Avg arm trend chart (average of left_arm_cm and right_arm_cm)
+    const armEl = document.getElementById('arm-chart');
+    const armSvgEl = document.getElementById('arm-chart-svg');
+    if (armEl && armSvgEl) {
+        const armData = data.map(e => {
+            const l = e.left_arm_cm != null ? +e.left_arm_cm : null;
+            const r = e.right_arm_cm != null ? +e.right_arm_cm : null;
+            if (l != null && r != null) return { ...e, avg_arm_cm: (l + r) / 2 };
+            if (l != null) return { ...e, avg_arm_cm: l };
+            if (r != null) return { ...e, avg_arm_cm: r };
+            return { ...e, avg_arm_cm: null };
+        }).filter(e => e.avg_arm_cm != null);
+        if (armData.length >= 2) {
+            armSvgEl.innerHTML = _measurementChartSvg(armData, 'avg_arm_cm', 320, 80, '#8b5cf6');
+            armEl.style.display = 'block';
+        } else {
+            armEl.style.display = 'none';
         }
     }
     const el = document.getElementById('measurements-history');
@@ -1554,10 +1654,11 @@ function renderPlateaus(data) {
 
 /* ── Profile ── */
 async function loadProfile() {
-    const [profile, me, goals] = await Promise.all([
+    const [profile, me, goals, dashSummary] = await Promise.all([
         cachedApi('GET', '/profile').catch(() => ({})),
         api('GET', '/auth/me').catch(() => null),
         api('GET', '/goals').catch(() => []),
+        cachedApi('GET', '/dashboard/summary').catch(() => null),
     ]);
 
     applyUnitLabels(); // ensures dropdowns are populated before we set values
@@ -1616,7 +1717,15 @@ async function loadProfile() {
         applyUnitLabels();
     }
 
-    renderGoals(goals);
+    // Change 6: merge goal_progress fields from dashboard summary into goals
+    const gp = dashSummary?.goal_progress;
+    const mergedGoals = goals.map(g => {
+        if (g.is_active && gp) {
+            return { ...g, ...gp };
+        }
+        return g;
+    });
+    renderGoals(mergedGoals);
     loadBadgesAndStreaks();
 
     // Telegram link status
@@ -1714,13 +1823,44 @@ function renderGoals(goals) {
         const badge = g.is_active
             ? `<span style="background:rgba(34,197,94,0.12);color:#22c55e;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600">ACTIVE</span>`
             : `<span style="background:rgba(100,100,100,0.12);color:var(--text-muted);padding:2px 8px;border-radius:4px;font-size:11px">inactive</span>`;
+
+        // Change 6: Goal progress visualization
+        let progressHtml = '';
+        if (g.is_active && g.current_weight_kg != null && g.target_weight_kg != null && g.start_weight_kg != null) {
+            const start = +g.start_weight_kg;
+            const current = +g.current_weight_kg;
+            const target = +g.target_weight_kg;
+            const totalChange = target - start;
+            const achieved = current - start;
+            const pct = totalChange !== 0 ? Math.min(100, Math.max(0, Math.round(achieved / totalChange * 100))) : 0;
+            const daysRemaining = g.days_remaining != null ? g.days_remaining : null;
+            progressHtml = `
+                <div style="margin-top:8px">
+                    <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--text-muted);margin-bottom:3px">
+                        <span>${fmtWeight(start)} start</span>
+                        <span style="font-weight:600;color:var(--green)">${pct}% complete</span>
+                        <span>${fmtWeight(target)} target</span>
+                    </div>
+                    <div style="height:6px;background:var(--surface-2);border-radius:3px;overflow:hidden">
+                        <div style="height:100%;width:${pct}%;background:var(--green);border-radius:3px;transition:width 0.4s ease"></div>
+                    </div>
+                    <div style="margin-top:4px;font-size:12px;color:var(--text-muted)">
+                        Current: <strong>${fmtWeight(current)}</strong>
+                        ${daysRemaining != null ? `<span style="margin-left:8px;background:rgba(59,130,246,0.1);color:#3b82f6;padding:1px 6px;border-radius:4px;font-size:11px">${esc(String(daysRemaining))} days left</span>` : ''}
+                    </div>
+                </div>`;
+        }
+
         return `
-            <div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px">
-                <div>
-                    <div style="font-weight:600;font-size:14px;text-transform:uppercase;letter-spacing:0.5px">${esc(g.goal_type)}</div>
-                    ${parts.length ? `<div style="font-size:13px;color:var(--text-muted);margin-top:2px">${parts.join(' · ')}</div>` : ''}
+            <div style="padding:10px 0;border-bottom:1px solid var(--border)">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px">
+                    <div>
+                        <div style="font-weight:600;font-size:14px;text-transform:uppercase;letter-spacing:0.5px">${esc(g.goal_type)}</div>
+                        ${parts.length ? `<div style="font-size:13px;color:var(--text-muted);margin-top:2px">${parts.join(' · ')}</div>` : ''}
+                    </div>
+                    ${badge}
                 </div>
-                ${badge}
+                ${progressHtml}
             </div>`;
     }).join('');
 }
@@ -1767,23 +1907,31 @@ async function loadNutrition() {
     const protTarget = plan?.diet_plan?.macros?.protein_g || plan?.diet_macros?.protein_g;
     const carbTarget = plan?.diet_plan?.macros?.carbs_g;
     const fatTarget = plan?.diet_plan?.macros?.fat_g;
-    function _setMacroBar(fillId, targetId, actual, target, unit) {
+    // Change 12: animate bars — set 0 first, then apply after 50ms
+    function _setMacroBar(fillId, targetId, actual, target, unit, overrideColor) {
         const fill = document.getElementById(fillId);
         const lbl = document.getElementById(targetId);
         if (!fill || !lbl) return;
         if (target) {
             const pct = actual ? Math.min(100, Math.round(+actual / +target * 100)) : 0;
-            fill.style.width = pct + '%';
+            fill.style.width = '0%';
+            if (overrideColor) fill.style.background = overrideColor;
             lbl.textContent = actual ? `${actual} / ${target} ${unit}` : `Target: ${target} ${unit}`;
+            setTimeout(() => { fill.style.width = pct + '%'; }, 50);
         } else {
             fill.style.width = '0%';
             lbl.textContent = '';
         }
     }
     _setMacroBar('nt-cal-fill', 'nt-cal-target', t.calories, calTarget, 'kcal');
-    _setMacroBar('nt-prot-fill', 'nt-prot-target', t.protein_g, protTarget, 'g');
+    // Change 3: protein warning — red if below 80% of target
+    const protIsLow = protTarget && t.protein_g != null && +t.protein_g < +protTarget * 0.8;
+    _setMacroBar('nt-prot-fill', 'nt-prot-target', t.protein_g, protTarget, 'g', protIsLow ? '#ef4444' : undefined);
     _setMacroBar('nt-carb-fill', 'nt-carb-target', t.carbs_g, carbTarget, 'g');
     _setMacroBar('nt-fat-fill', 'nt-fat-target', t.fat_g, fatTarget, 'g');
+
+    // Change 2: draw macro pie chart
+    _drawMacroPie(t.protein_g || 0, t.carbs_g || 0, t.fat_g || 0);
 
     const todayList = document.getElementById('meals-today-list');
     if (today.meals.length) {
@@ -1791,7 +1939,10 @@ async function loadNutrition() {
             <div style="padding:10px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
                 <div style="flex:1">
                     <div style="font-weight:500;font-size:14px">${esc(m.description || 'Meal')}</div>
-                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px">${m.macro_source === 'estimated' ? '~ AI-estimated' : 'manual'}</div>
+                    <div style="font-size:11px;color:var(--text-muted);margin-top:2px">
+                        ${m.macro_source === 'estimated' ? '~ AI-estimated' : 'manual'}
+                        ${_mealTime(m.logged_at) ? `<span style="margin-left:6px">${esc(_mealTime(m.logged_at))}</span>` : ''}
+                    </div>
                 </div>
                 <div style="text-align:right;flex-shrink:0;font-size:13px">
                     ${m.calories ? `<span style="color:var(--text-muted)">${m.calories} kcal</span>` : ''}
@@ -2293,14 +2444,39 @@ function renderSessionHistory(history) {
             const targetsHtml = s.next_session_targets
                 ? `<div style="margin-top:6px;font-size:12px;color:var(--gold);white-space:pre-line">${esc(s.next_session_targets)}</div>`
                 : '';
+            // Change 8: expandable sets drill-down
+            const setsCount = s.sets?.length || 0;
+            const setsDetailHtml = (s.sets || []).map(sl => `
+                <div style="font-size:12px;display:flex;gap:8px;padding:3px 0;border-top:1px solid var(--border)">
+                    <span style="flex:2">${esc(sl.exercise_name)}</span>
+                    <span style="flex:1">${esc(sl.weight_kg)}kg</span>
+                    <span style="flex:1">&#215;${esc(sl.reps)}</span>
+                    <span style="flex:1;color:var(--text-muted)">${sl.estimated_1rm ? sl.estimated_1rm.toFixed(0) + 'kg' : ''}</span>
+                    ${sl.rpe ? `<span style="flex:1;color:var(--text-muted)">RPE ${esc(sl.rpe)}</span>` : '<span style="flex:1"></span>'}
+                </div>`).join('');
+            // Change 11: session notes textarea
+            const notesHtml = `
+                <div style="margin-top:8px">
+                    <textarea id="session-notes-${s.id}" placeholder="Session notes…" aria-label="Session notes" style="width:100%;font-size:12px;padding:6px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;color:var(--text);resize:vertical;min-height:50px">${esc(s.notes || '')}</textarea>
+                    <button onclick="saveSessionNotes(${s.id})" style="font-size:11px;margin-top:4px;padding:4px 12px;background:var(--surface-2);border:1px solid var(--border);border-radius:6px;cursor:pointer;color:var(--text)">Save Notes</button>
+                </div>`;
             return `
                 <li class="session-history-item">
-                    <div style="font-weight:600;font-size:14px">${esc(formatDate(s.started_at))}</div>
-                    <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
-                        ${esc(s.set_count)} sets · ${fmtWeight(s.total_volume_kg)} volume${dur ? ` · ${esc(dur)}` : ''}
+                    <div onclick="toggleSessionSets('ses-${s.id}')" style="cursor:pointer;display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+                        <div style="flex:1">
+                            <div style="font-weight:600;font-size:14px">${esc(formatDate(s.started_at))}</div>
+                            <div style="font-size:12px;color:var(--text-muted);margin-top:2px">
+                                ${esc(s.set_count)} sets · ${fmtWeight(s.total_volume_kg)} volume${dur ? ` · ${esc(dur)}` : ''}
+                            </div>
+                            ${exStr ? `<div style="font-size:12px;color:var(--text-muted)">${esc(exStr)}</div>` : ''}
+                            ${targetsHtml}
+                        </div>
+                        <span style="font-size:11px;color:var(--text-muted);flex-shrink:0">${setsCount} sets &#9658;</span>
                     </div>
-                    ${exStr ? `<div style="font-size:12px;color:var(--text-muted)">${esc(exStr)}</div>` : ''}
-                    ${targetsHtml}
+                    <div id="ses-${s.id}" style="display:none;margin-top:10px">
+                        ${setsDetailHtml}
+                        ${notesHtml}
+                    </div>
                 </li>
             `;
         }).join('')
@@ -2461,6 +2637,168 @@ async function loadReports() {
 }
 
 /* ── Utilities ── */
+
+/* Change 4: Meal time helper */
+function _mealTime(iso) {
+    if (!iso) return '';
+    try {
+        return new Date(iso).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    } catch { return ''; }
+}
+
+/* Change 7: Export data as CSV */
+async function exportDataCSV() {
+    try {
+        showToast('Preparing export…');
+        const [measurements, checkins, prs] = await Promise.all([
+            api('GET', '/measurements?limit=500').catch(() => []),
+            api('GET', '/checkins?limit=500').catch(() => []),
+            api('GET', '/prs').catch(() => []),
+        ]);
+
+        const sections = [];
+
+        if (checkins.length) {
+            sections.push('Check-ins');
+            sections.push('Date,Sleep,Energy,Soreness,Stress,Recovery,Sleep Hours');
+            checkins.forEach(c => sections.push(
+                `${c.date},${c.sleep_score},${c.energy_score},${c.soreness_score},${c.stress_score},${c.recovery_score},${c.sleep_duration_hrs ?? ''}`
+            ));
+            sections.push('');
+        }
+
+        if (measurements.length) {
+            sections.push('Measurements');
+            sections.push('Date,Weight(kg),Waist(cm),Chest(cm),L.Arm(cm),R.Arm(cm),Hips(cm),L.Thigh(cm),R.Thigh(cm)');
+            measurements.forEach(m => sections.push(
+                `${m.date},${m.body_weight_kg ?? ''},${m.waist_cm ?? ''},${m.chest_cm ?? ''},${m.left_arm_cm ?? ''},${m.right_arm_cm ?? ''},${m.hips_cm ?? ''},${m.left_thigh_cm ?? ''},${m.right_thigh_cm ?? ''}`
+            ));
+            sections.push('');
+        }
+
+        if (prs.length) {
+            sections.push('Personal Records');
+            sections.push('Exercise,Weight(kg),Reps,Est.1RM,Date');
+            prs.forEach(p => sections.push(
+                `"${(p.exercise_name || '').replace(/"/g, '""')}",${p.weight_kg},${p.reps},${p.estimated_1rm},${p.achieved_at ? p.achieved_at.slice(0, 10) : ''}`
+            ));
+        }
+
+        const blob = new Blob([sections.join('\n')], { type: 'text/csv' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `bb-coach-data-${new Date().toISOString().slice(0, 10)}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Export downloaded.');
+    } catch (err) {
+        showToast('Export failed: ' + (err.message || 'Unknown error'), 'error');
+    }
+}
+
+/* Change 9: Research relative time */
+function _relTime(isoStr) {
+    if (!isoStr) return '';
+    const diff = Math.floor((Date.now() - new Date(isoStr).getTime()) / 86400000);
+    if (diff === 0) return 'today';
+    if (diff === 1) return 'yesterday';
+    if (diff < 30) return `${diff} days ago`;
+    if (diff < 365) return `${Math.floor(diff / 30)} mo ago`;
+    return `${Math.floor(diff / 365)}y ago`;
+}
+
+/* Change 2: Macro pie chart */
+function _drawMacroPie(protein_g, carbs_g, fat_g) {
+    const pCal = protein_g * 4;
+    const cCal = carbs_g * 4;
+    const fCal = fat_g * 9;
+    const total = pCal + cCal + fCal;
+    if (!total) return;
+    const svg = document.getElementById('macro-pie');
+    if (!svg) return;
+    const cx = 60, cy = 60, r = 50, gap = 2;
+    const slices = [
+        { cal: pCal, color: '#22c55e', label: 'Protein' },
+        { cal: cCal, color: '#3b82f6', label: 'Carbs' },
+        { cal: fCal, color: '#f59e0b', label: 'Fat' },
+    ];
+    let html = '';
+    let startAngle = -Math.PI / 2;
+    for (const s of slices) {
+        if (!s.cal) continue;
+        const sweep = (s.cal / total) * 2 * Math.PI;
+        const endAngle = startAngle + sweep;
+        const x1 = cx + r * Math.cos(startAngle);
+        const y1 = cy + r * Math.sin(startAngle);
+        const x2 = cx + r * Math.cos(endAngle);
+        const y2 = cy + r * Math.sin(endAngle);
+        const large = sweep > Math.PI ? 1 : 0;
+        html += `<path d="M${cx},${cy} L${x1.toFixed(1)},${y1.toFixed(1)} A${r},${r} 0 ${large},1 ${x2.toFixed(1)},${y2.toFixed(1)} Z" fill="${s.color}" opacity="0.85"/>`;
+        startAngle = endAngle + (gap / (2 * Math.PI * r)) * 2 * Math.PI;
+    }
+    // Inner white circle for donut effect
+    html += `<circle cx="${cx}" cy="${cy}" r="30" fill="var(--surface)"/>`;
+    svg.innerHTML = html;
+    // Legend (no esc needed — all values are internal constants or Math.round results)
+    const legend = document.getElementById('macro-pie-legend');
+    if (legend) {
+        legend.innerHTML = slices.filter(s => s.cal).map(s =>
+            `<span><span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${s.color};margin-right:3px"></span>${s.label} ${Math.round(s.cal / total * 100)}%</span>`
+        ).join('');
+    }
+    document.getElementById('macro-pie-container').style.display = 'block';
+}
+
+/* Change 8: Toggle session sets */
+function toggleSessionSets(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+/* Change 11: Save session notes */
+async function saveSessionNotes(sessionId) {
+    const notes = document.getElementById(`session-notes-${sessionId}`)?.value || '';
+    try {
+        await api('PATCH', `/sessions/${sessionId}/notes`, { notes });
+        showToast('Notes saved.');
+    } catch (err) {
+        showToast(err.message || 'Failed to save notes.', 'error');
+    }
+}
+
+/* Change 10: Print individual analysis */
+function printAnalysis(analysisId) {
+    const card = document.getElementById(`analysis-card-${analysisId}`);
+    if (!card) return;
+    const win = window.open('', '_blank', 'width=800,height=600');
+    if (!win) { showToast('Allow pop-ups to print the analysis.', 'error'); return; }
+    win.document.write(`<!DOCTYPE html><html><head><title>Analysis</title>
+    <style>
+        body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }
+        h2 { margin-bottom: 4px; }
+        .tag { display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; margin:2px; }
+        .strength { background:#dcfce7; color:#166534; }
+        .improve { background:#fef3c7; color:#92400e; }
+        @media print { button { display:none; } }
+    </style>
+    </head><body>
+    <button onclick="window.print()">Print</button>
+    ${card.innerHTML}
+    </body></html>`);
+    win.document.close();
+}
+
+/* Change 9: Filter research by keyword */
+function filterResearch() {
+    const q = document.getElementById('research-search')?.value.toLowerCase() || '';
+    document.querySelectorAll('.research-topic-card').forEach(card => {
+        const text = card.textContent.toLowerCase();
+        card.style.display = !q || text.includes(q) ? '' : 'none';
+    });
+}
+
 function formatDate(iso) {
     if (!iso) return '';
     const d = new Date(iso);
