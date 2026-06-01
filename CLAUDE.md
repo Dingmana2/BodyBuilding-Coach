@@ -1,5 +1,16 @@
 # BodyBuilding Coach AI — Claude Code Conventions
 
+## gstack Skills
+
+gstack is installed at `~/.claude/skills/gstack`. Use `/browse` from gstack for all web browsing tasks — never use `mcp__claude-in-chrome__*` tools.
+
+Available skills (invoke with `/skill-name`):
+`/office-hours`, `/plan-ceo-review`, `/plan-eng-review`, `/plan-design-review`, `/design-consultation`, `/design-shotgun`, `/design-html`, `/review`, `/ship`, `/land-and-deploy`, `/canary`, `/benchmark`, `/browse`, `/connect-chrome`, `/qa`, `/qa-only`, `/design-review`, `/setup-browser-cookies`, `/setup-deploy`, `/setup-gbrain`, `/retro`, `/investigate`, `/document-release`, `/document-generate`, `/careful`, `/freeze`, `/guard`, `/unfreeze`, `/gstack-upgrade`, `/learn`
+
+Note: `/browse`, `/connect-chrome`, and browser-dependent skills require Playwright Chromium. In this remote environment the browser download is network-restricted — browser skills will not work until Chromium is available.
+
+---
+
 ## Project identity
 
 A Telegram bot + FastAPI web backend that acts as a personalised AI bodybuilding coach.
