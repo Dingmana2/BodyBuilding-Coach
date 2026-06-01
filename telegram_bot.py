@@ -500,6 +500,62 @@ def _db_sync_checkin_entry(chat_id: int, user: dict, entry: dict) -> None:
         print(f"Warning: checkin_entry DB sync failed: {_e}")
 
 
+def _db_sync_session_from_history(chat_id: int, user: dict, session_entry: dict) -> None:
+    """Sync a historical workout session and its sets to SQLite."""
+    uid = _eff_uid(chat_id, user)
+    try:
+        from database import SessionLocal
+        import models as _m
+        from datetime import datetime, timezone
+        _db = SessionLocal()
+        started_str = session_entry.get("started_at") or session_entry.get("start_time")
+        if not started_str:
+            return
+        try:
+            started_at = datetime.fromisoformat(started_str.replace("Z", "+00:00"))
+        except Exception:
+            return
+        try:
+            existing = _db.query(_m.WorkoutSession).filter(
+                _m.WorkoutSession.user_id == uid,
+                _m.WorkoutSession.started_at == started_at,
+            ).first()
+            if not existing:
+                ended_at = None
+                if session_entry.get("ended_at"):
+                    try:
+                        ended_at = datetime.fromisoformat(session_entry["ended_at"].replace("Z", "+00:00"))
+                    except Exception:
+                        pass
+                existing = _m.WorkoutSession(
+                    chat_id=uid, user_id=uid,
+                    started_at=started_at,
+                    ended_at=ended_at,
+                )
+                _db.add(existing)
+                _db.flush()
+            for s in session_entry.get("sets", []):
+                existing_set = _db.query(_m.SetLog).filter(
+                    _m.SetLog.session_id == existing.id,
+                    _m.SetLog.exercise_name == s.get("exercise_name"),
+                    _m.SetLog.weight_kg == s.get("weight_kg"),
+                    _m.SetLog.reps == s.get("reps"),
+                ).first()
+                if not existing_set:
+                    _db.add(_m.SetLog(
+                        session_id=existing.id,
+                        exercise_name=s.get("exercise_name", ""),
+                        weight_kg=s.get("weight_kg"),
+                        reps=s.get("reps"),
+                        estimated_1rm=s.get("estimated_1rm"),
+                    ))
+            _db.commit()
+        finally:
+            _db.close()
+    except Exception as _e:
+        print(f"Warning: session DB sync failed: {_e}")
+
+
 async def _api_get(path: str, chat_id: int | None = None) -> dict:
     """Call the FastAPI backend as the bot. Returns parsed JSON or raises."""
     headers = {}
@@ -1438,6 +1494,35 @@ async def cmd_plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user["active_command"] = None
     user["command_state"] = {}
 
+    day_filter = None
+    for arg in (context.args or []):
+        if arg.lower().startswith("day="):
+            day_filter = arg[4:].strip().lower()
+            break
+
+    if day_filter and user.get("last_plan"):
+        plan_text = ""
+        if isinstance(user["last_plan"], dict):
+            import json as _json
+            plan_text = _json.dumps(user["last_plan"])
+        else:
+            plan_text = str(user["last_plan"])
+        lower_text = plan_text.lower()
+        idx = lower_text.find(day_filter)
+        if idx != -1:
+            section = plan_text[idx:idx + 4000].strip()
+            await update.message.reply_text(
+                f"📅 *Day: {esc(day_filter)}*\n\n{esc(section[:3900])}",
+                parse_mode="Markdown",
+            )
+        else:
+            await update.message.reply_text(
+                f"Could not find '{esc(day_filter)}' in your plan. Showing full plan instead:",
+                parse_mode="Markdown",
+            )
+            await _send_plan(update, user["last_plan"])
+        return
+
     force_new = bool(context.args and context.args[0].lower() in ("new", "reset", "regenerate"))
 
     # If plan exists and not forcing a regeneration, just display it
@@ -1582,6 +1667,11 @@ async def cmd_checkin(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     user = get_user(chat_id)
     user["active_command"] = None
     user["command_state"] = {}
+
+    args = context.args or []
+    if args and args[0].lower() == "skip":
+        await update.message.reply_text("✅ Check-in skipped for today.")
+        return
 
     # Warn if already checked in today (allow update via inline format)
     if not context.args and any(c.get("date") == _today() for c in user.get("checkins", [])):
@@ -2661,6 +2751,26 @@ async def cmd_meal(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text(
             "Log a meal:\n`/meal 2 eggs, 1 cup oatmeal, banana`\n`/meal 200g chicken breast 1 cup rice broccoli`\n\n"
             "Log MFP daily totals:\n`/meal total calories=1750 protein=140 carbs=205 fat=43`",
+            parse_mode="Markdown",
+        )
+        return
+
+    # /meal history — show last 14 entries
+    if context.args[0].lower() == "history":
+        meal_logs = user.get("meal_logs", [])
+        if not meal_logs:
+            await update.message.reply_text("No meals logged yet.")
+            return
+        recent = sorted(meal_logs, key=lambda m: m.get("date", ""), reverse=True)[:14]
+        lines = []
+        for m in recent:
+            kcal = m.get("calories", "?")
+            prot = m.get("protein_g", "?")
+            lines.append(
+                f"• {m.get('date', '?')}: {esc(m.get('description', 'Meal')[:40])} — {kcal} kcal, {prot}g P"
+            )
+        await update.message.reply_text(
+            "🍽 *Recent Meals:*\n" + "\n".join(lines),
             parse_mode="Markdown",
         )
         return
@@ -5583,11 +5693,16 @@ async def cmd_sync(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
                 float(pr.get("estimated_1rm") or 0),
             )
 
+    # Workout sessions and their sets
+    for session_entry in user.get("workout_sessions", []):
+        await loop.run_in_executor(None, _db_sync_session_from_history, chat_id, user, session_entry)
+
     counts = {
         "checkins": len(user.get("checkins", [])),
         "meals": len(user.get("meal_logs", [])),
         "measurements": len(user.get("measurements", [])),
         "PRs": len(user.get("prs", {})),
+        "sessions": len(user.get("workout_sessions", [])),
     }
     summary_parts = [f"{v} {k}" for k, v in counts.items() if v]
     summary_line = " | ".join(summary_parts) if summary_parts else "nothing to sync yet"

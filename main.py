@@ -1069,6 +1069,12 @@ def get_session_history(
     result = []
     for s in sessions:
         sets = db.query(models.SetLog).filter(models.SetLog.session_id == s.id).all()
+        sets_for_session = (
+            db.query(models.SetLog)
+            .filter(models.SetLog.session_id == s.id)
+            .order_by(models.SetLog.logged_at.asc())
+            .all()
+        )
         result.append({
             "id": s.id,
             "started_at": s.started_at.isoformat(),
@@ -1077,6 +1083,17 @@ def get_session_history(
             "exercises": list({x.exercise_name for x in sets}),
             "total_volume_kg": round(sum(x.weight_kg * x.reps for x in sets), 1),
             "next_session_targets": s.next_session_targets,
+            "sets": [
+                {
+                    "exercise_name": sl.exercise_name,
+                    "weight_kg": sl.weight_kg,
+                    "reps": sl.reps,
+                    "estimated_1rm": sl.estimated_1rm,
+                    "rpe": sl.rpe,
+                    "set_notes": sl.set_notes,
+                }
+                for sl in sets_for_session
+            ],
         })
     return result
 
@@ -1382,16 +1399,13 @@ async def create_checkin(request: Request, current_user_id: int = Depends(get_cu
 @app.put("/api/checkins/{checkin_id}")
 async def update_checkin(checkin_id: int, request: Request,
     current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    """Update today's check-in scores and regenerate recovery coaching tip."""
+    """Update any past check-in scores and regenerate recovery coaching tip."""
     checkin = db.query(models.DailyCheckIn).filter(
         models.DailyCheckIn.id == checkin_id,
         models.DailyCheckIn.chat_id == current_user_id,
     ).first()
     if not checkin:
         raise HTTPException(status_code=404, detail="Check-in not found.")
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    if checkin.date != today:
-        raise HTTPException(status_code=403, detail="Only today's check-in can be edited.")
 
     data = await request.json()
     checkin.sleep_score = int(data["sleep_score"])
@@ -1543,6 +1557,24 @@ async def log_meal(request: Request, current_user_id: int = Depends(get_current_
     db.commit()
     db.refresh(meal)
     return _meal_dict(meal)
+
+
+@app.delete("/api/meals/{meal_id}")
+def delete_meal(
+    meal_id: int,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Delete a meal log entry owned by the authenticated user."""
+    meal = db.query(models.MealLog).filter(
+        models.MealLog.id == meal_id,
+        models.MealLog.chat_id == current_user_id,
+    ).first()
+    if not meal:
+        raise HTTPException(status_code=404, detail="Meal not found.")
+    db.delete(meal)
+    db.commit()
+    return {"deleted": meal_id}
 
 
 # ── Weekly Reports ────────────────────────────────────────────────────────────
@@ -1790,6 +1822,27 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
         show_d = user_profile.show_date if isinstance(user_profile.show_date, _date) else _date.fromisoformat(str(user_profile.show_date))
         days_to_show = (show_d - _date.today()).days
 
+    goal_progress = None
+    active_goal = db.query(models.UserGoal).filter(
+        models.UserGoal.chat_id == current_user_id,
+        models.UserGoal.is_active == True,
+    ).order_by(models.UserGoal.created_at.desc()).first()
+    if active_goal and user_profile:
+        if active_goal.target_weight_kg and user_profile.weight_kg:
+            start = user_profile.weight_kg
+            target = active_goal.target_weight_kg
+            if target != start:
+                days_remaining = None
+                if active_goal.target_date:
+                    days_remaining = (active_goal.target_date - datetime.now(timezone.utc).date()).days
+                goal_progress = {
+                    "goal_type": active_goal.goal_type,
+                    "target_weight_kg": target,
+                    "current_weight_kg": user_profile.weight_kg,
+                    "target_date": active_goal.target_date.isoformat() if active_goal.target_date else None,
+                    "days_remaining": days_remaining,
+                }
+
     return {
         "streaks": streaks,
         "prs_count": prs_count,
@@ -1803,6 +1856,7 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
         "last_workout_date": last_session.ended_at.strftime("%Y-%m-%d") if last_session else None,
         "last_checkin_date": last_checkin_row.date if last_checkin_row else None,
         "days_to_show": days_to_show,
+        "goal_progress": goal_progress,
     }
 
 

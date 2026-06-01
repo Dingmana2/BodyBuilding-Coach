@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## 2026-06-01 — Sprint 24: Delete meal, session set detail, goal progress, check-in edit, /sync sets, bot commands
+
+### Added
+- `main.py` — `DELETE /api/meals/{meal_id}`: new endpoint to delete a meal log owned by the authenticated user; placed after `POST /api/meals`
+- `main.py` — `GET /api/sessions/history`: each session dict now includes a `sets` list with per-set detail (`exercise_name`, `weight_kg`, `reps`, `estimated_1rm`, `rpe`, `set_notes`)
+- `main.py` — `GET /api/dashboard/summary`: response now includes `goal_progress` object when the user has an active `UserGoal` with a `target_weight_kg` and a profile with `weight_kg`; includes `goal_type`, `target_weight_kg`, `current_weight_kg`, `target_date`, `days_remaining`
+- `telegram_bot.py` — `_db_sync_session_from_history()`: new sync helper that upserts a `WorkoutSession` and its `SetLog` rows from a historical session entry stored in `user["workout_sessions"]`
+- `telegram_bot.py` — `cmd_sync`: now iterates `user.get("workout_sessions", [])` and calls `_db_sync_session_from_history`; sync summary message now includes session count
+- `telegram_bot.py` — `cmd_checkin`: new `/checkin skip` branch replies with a confirmation and returns early
+- `telegram_bot.py` — `cmd_meal`: new `/meal history` branch shows last 14 meal log entries
+- `telegram_bot.py` — `cmd_plan`: new `day=X` argument extracts and returns the matching day section from `last_plan`
+
+### Fixed
+- `main.py` — `PUT /api/checkins/{checkin_id}`: removed the 403 restriction that blocked editing check-ins from dates other than today; users can now correct any past check-in
+
+### Rollback
+- `git revert <hash>` — no schema changes; `DELETE /api/meals` and the history/session-detail additions are purely additive
+
 ## 2026-06-01 — Sprint 23: Fix report 422, analysis user isolation, contest_prep goal, RPE float, coaching_notes
 
 ### Fixed
