@@ -5946,6 +5946,32 @@ def _format_analysis(a: dict) -> str:
     return f"{body}{_SEP}{footer}"
 
 
+_TG_MAX = 4000  # Telegram hard limit is 4096; keep a margin for safety
+
+
+async def _chunked_send(send_fn, text: str, **kwargs) -> None:
+    """Send text in ≤4000-char chunks, splitting at newline boundaries."""
+    if len(text) <= _TG_MAX:
+        await send_fn(text, **kwargs)
+        return
+    lines = text.split("\n")
+    chunk = ""
+    for line in lines:
+        candidate = chunk + "\n" + line if chunk else line
+        if len(candidate) > _TG_MAX:
+            if chunk:
+                await send_fn(chunk, **kwargs)
+            # If a single line exceeds the limit, hard-split it
+            while len(line) > _TG_MAX:
+                await send_fn(line[:_TG_MAX], **kwargs)
+                line = line[_TG_MAX:]
+            chunk = line
+        else:
+            chunk = candidate
+    if chunk:
+        await send_fn(chunk, **kwargs)
+
+
 async def _send_plan(update: Update, plan: dict) -> None:
     """Send plan messages. Works from both command and callback-query contexts."""
     # Build a send callable that works regardless of context type
@@ -5989,7 +6015,8 @@ async def _send_plan(update: Update, plan: dict) -> None:
     ]
     day_keyboard = InlineKeyboardMarkup(day_buttons) if day_buttons else None
 
-    await send(
+    await _chunked_send(
+        send,
         f"🏋️ *Workout — {esc(workout.get('split', ''))}*\n"
         f"{days_text}\n"
         f"📈 *Progression:* {esc(workout.get('progression', ''))}\n"
@@ -6031,7 +6058,8 @@ async def _send_plan(update: Update, plan: dict) -> None:
     if training_macros and rest_macros:
         macro_variants = f"\n🏋️ _Training days:_ {training_macros}\n😴 _Rest days:_ {rest_macros}"
 
-    await send(
+    await _chunked_send(
+        send,
         f"🥗 *Diet Plan*\n\n"
         f"Calories: *{diet.get('calories', '?')} kcal* (avg)\n"
         f"Protein: *{diet.get('protein_g', '?')}g* | "
@@ -6053,13 +6081,15 @@ async def _send_plan(update: Update, plan: dict) -> None:
         f"  _{s.get('benefit', '')}_"
         for s in supplements
     )
-    await send(
+    await _chunked_send(
+        send,
         f"💊 *Supplement Stack*\n\n{supp_lines}",
         parse_mode="Markdown",
     )
 
     # ── Coaching ──
-    await send(
+    await _chunked_send(
+        send,
         f"💬 *Coaching Notes*\n\n"
         f"🎯 *Top Priority:* {esc(coaching.get('top_priority', ''))}\n\n"
         f"😴 *Sleep:* {esc(coaching.get('sleep', ''))}\n\n"
