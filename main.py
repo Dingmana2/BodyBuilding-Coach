@@ -127,6 +127,7 @@ def _migrate_db():
         ("user_profiles", "equipment_available", "VARCHAR"),
         ("user_profiles", "injuries", "TEXT"),
         ("user_profiles", "show_date", "DATE"),
+        ("body_analyses", "user_id", "INTEGER"),
         ("body_analyses", "body_fat_confidence", "VARCHAR"),
         ("workout_sessions", "user_id", "INTEGER REFERENCES users(id)"),
         ("workout_sessions", "next_session_targets", "TEXT"),
@@ -530,21 +531,23 @@ async def analyze_photo(
         saved_paths.append(str(filepath))
         saved_filenames.append(filename)
 
-    profile = db.query(models.UserProfile).first()
+    profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == current_user_id).first()
     prev = (
         db.query(models.BodyAnalysis)
+        .filter(models.BodyAnalysis.user_id == current_user_id)
         .order_by(models.BodyAnalysis.created_at.desc())
         .first()
     )
 
     try:
-        result = analyze_body_photo(saved_paths, profile, prev)
+        result = await asyncio.to_thread(analyze_body_photo, saved_paths, profile, prev)
     except ValueError as e:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
 
     analysis = models.BodyAnalysis(
+        user_id=current_user_id or None,
         photo_path=saved_filenames[0],
         body_fat_estimate=result.get("body_fat_estimate"),
         overall_physique_score=result.get("overall_physique_score"),
@@ -569,9 +572,14 @@ async def analyze_photo(
 
 
 @app.get("/api/analyses")
-def list_analyses(limit: int = 20, db: Session = Depends(get_db)):
+def list_analyses(
+    limit: int = 20,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     rows = (
         db.query(models.BodyAnalysis)
+        .filter(models.BodyAnalysis.user_id == current_user_id)
         .order_by(models.BodyAnalysis.created_at.desc())
         .limit(limit)
         .all()
@@ -597,6 +605,7 @@ async def get_weak_points(
 ):
     analyses_rows = (
         db.query(models.BodyAnalysis)
+        .filter(models.BodyAnalysis.user_id == current_user_id)
         .order_by(models.BodyAnalysis.created_at.desc())
         .limit(5)
         .all()
@@ -618,7 +627,7 @@ async def get_weak_points(
         ).all()
         set_logs_data = [{"exercise_name": s.exercise_name} for s in sets]
 
-    profile = db.query(models.UserProfile).first()
+    profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == current_user_id).first()
     profile_dict = {"goal": profile.goal, "experience": profile.training_experience} if profile else None
 
     ctx_str = ""
@@ -646,6 +655,7 @@ async def generate_plan(
 ):
     analysis = (
         db.query(models.BodyAnalysis)
+        .filter(models.BodyAnalysis.user_id == current_user_id)
         .order_by(models.BodyAnalysis.created_at.desc())
         .first()
     )
@@ -655,7 +665,7 @@ async def generate_plan(
             detail="No body analysis found. Upload a photo first.",
         )
 
-    profile = db.query(models.UserProfile).first()
+    profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == current_user_id).first()
     research_cache = db.query(models.ResearchCache).all()
 
     ctx_str = ""
@@ -719,13 +729,18 @@ def get_current_plan(
     supps = _latest_plan(models.SupplementPlan)
     analysis = (
         db.query(models.BodyAnalysis)
+        .filter(models.BodyAnalysis.user_id == current_user_id)
         .order_by(models.BodyAnalysis.created_at.desc())
         .first()
     )
 
+    workout_raw = json.loads(workout.raw_plan) if workout else {}
+    coaching_notes = workout_raw.get("coaching_notes") or workout_raw.get("text", "")
+
     return {
-        "workout_plan": json.loads(workout.raw_plan) if workout else None,
+        "workout_plan": workout_raw if workout else None,
         "workout_created_at": workout.created_at.isoformat() if workout else None,
+        "coaching_notes": coaching_notes,
         "diet_plan": json.loads(diet.raw_plan) if diet else None,
         "diet_macros": {
             "calories": diet.calories,
@@ -801,9 +816,13 @@ async def refresh_research(db: Session = Depends(get_db)):
 # ── Progress ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/progress")
-def get_progress(db: Session = Depends(get_db)):
+def get_progress(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
     rows = (
         db.query(models.BodyAnalysis)
+        .filter(models.BodyAnalysis.user_id == current_user_id)
         .order_by(models.BodyAnalysis.created_at.asc())
         .all()
     )
@@ -948,7 +967,7 @@ async def log_set(
     estimated_1rm = epley_1rm(weight_kg, reps)
     rpe = data.get("rpe")
     if rpe is not None:
-        rpe = int(rpe)
+        rpe = float(rpe)
     rir = data.get("rir")
     if rir is not None:
         rir = int(rir)
@@ -1300,7 +1319,7 @@ async def create_checkin(request: Request, current_user_id: int = Depends(get_cu
     soreness_score = int(data["soreness_score"])
     stress_score = int(data["stress_score"])
 
-    profile = db.query(models.UserProfile).first()
+    profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == current_user_id).first()
     profile_dict = None
     if profile:
         profile_dict = {"age": profile.age, "goal": profile.goal, "experience": profile.training_experience}
@@ -1380,7 +1399,7 @@ async def update_checkin(checkin_id: int, request: Request,
     checkin.soreness_score = int(data["soreness_score"])
     checkin.stress_score = int(data["stress_score"])
 
-    profile = db.query(models.UserProfile).first()
+    profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == current_user_id).first()
     profile_dict = None
     if profile:
         profile_dict = {"age": profile.age, "goal": profile.goal, "experience": profile.training_experience}
@@ -1554,7 +1573,10 @@ def list_reports(limit: int = 10, current_user_id: int = Depends(get_current_use
 
 @app.post("/api/reports/generate")
 async def generate_report(request: Request, current_user_id: int = Depends(get_current_user_id), db: Session = Depends(get_db)):
-    data = await request.json()
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
     seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
 
     sessions = db.query(models.WorkoutSession).filter(
@@ -1581,7 +1603,7 @@ async def generate_report(request: Request, current_user_id: int = Depends(get_c
         .all()
     )
 
-    profile = db.query(models.UserProfile).first()
+    profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == current_user_id).first()
     profile_dict = {"goal": profile.goal, "experience": profile.training_experience} if profile else None
 
     sessions_data = [{"id": s.id, "started_at": s.started_at.isoformat()} for s in sessions]
@@ -1736,6 +1758,7 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
 
     latest_analysis = (
         db.query(models.BodyAnalysis)
+        .filter(models.BodyAnalysis.user_id == current_user_id)
         .order_by(models.BodyAnalysis.created_at.desc())
         .first()
     )
@@ -1762,7 +1785,7 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
     ) if current_user_id else None
 
     days_to_show = None
-    if user_profile and user_profile.show_date and user_profile.goal == "prep":
+    if user_profile and user_profile.show_date and user_profile.goal in ("prep", "contest_prep"):
         from datetime import date as _date
         show_d = user_profile.show_date if isinstance(user_profile.show_date, _date) else _date.fromisoformat(str(user_profile.show_date))
         days_to_show = (show_d - _date.today()).days

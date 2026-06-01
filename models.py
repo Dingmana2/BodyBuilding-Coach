@@ -35,6 +35,7 @@ class UserProfile(Base):
 class BodyAnalysis(Base):
     __tablename__ = "body_analyses"
     id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, nullable=True, index=True)
     photo_path = Column(String)
     body_fat_estimate = Column(String)
     overall_physique_score = Column(Float)
@@ -101,7 +102,7 @@ class SetLog(Base):
     weight_kg = Column(Float)
     reps = Column(Integer)
     estimated_1rm = Column(Float)   # Epley: weight * (1 + reps/30)
-    rpe = Column(Integer, nullable=True)          # Rate of Perceived Exertion 1-10
+    rpe = Column(Float, nullable=True)            # Rate of Perceived Exertion 1-10 (supports 8.5, 9.5)
     rir = Column(Integer, nullable=True)          # Reps in Reserve 0-5
     set_notes = Column(String, nullable=True)     # optional coach note for this set
     logged_at = Column(DateTime, server_default=func.now())
