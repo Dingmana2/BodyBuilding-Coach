@@ -1,3 +1,14 @@
+// Telegram Mini App initialization
+if (window.Telegram?.WebApp) {
+    const tg = window.Telegram.WebApp;
+    tg.expand();
+    tg.ready();
+    // Apply Telegram theme colors as CSS variables if available
+    if (tg.colorScheme === 'dark') {
+        document.documentElement.setAttribute('data-theme', 'tg-dark');
+    }
+}
+
 /* ── XSS guard ── */
 function esc(str) {
     if (str == null) return '';
