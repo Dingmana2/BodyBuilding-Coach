@@ -150,7 +150,7 @@ function applyBodyNeutral() {
     if (scoreCard) scoreCard.style.display = neutral ? 'none' : '';
 }
 
-function kgToLbs(kg)    { return Math.round(+kg * 2.20462 * 10) / 10; }
+function kgToLbs(kg)    { return Math.round(+kg * 2.20462); }         // whole lbs — no decimals
 function lbsToKg(lbs)   { return Math.round(+lbs / 2.20462 * 100) / 100; }
 function cmToIn(cm)     { return Math.round(+cm * 0.393701 * 10) / 10; }
 function inToCm(inches) { return Math.round(+inches / 0.393701 * 10) / 10; }

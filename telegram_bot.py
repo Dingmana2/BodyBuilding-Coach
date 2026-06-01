@@ -735,7 +735,7 @@ def _wu(user: dict) -> str:
 def _w(weight_kg: float, user: dict) -> float:
     """Convert a stored kg value to the user's display unit."""
     if _wu(user) == "lbs":
-        return round(weight_kg * _LBS_PER_KG, 1)
+        return round(weight_kg * _LBS_PER_KG)   # whole lbs — no ugly decimals
     return weight_kg
 
 
@@ -876,14 +876,16 @@ def _weight_keyboard(exercise_name: str, user: dict) -> InlineKeyboardMarkup:
     recent = [s["weight_kg"] for s in reversed(user["set_logs"]) if s["exercise_name"] == exercise_name]
     last = recent[0] if recent else None
     if last:
-        # Use plate-friendly increments for each unit system
         if user.get("units") == "lbs":
-            step_s = 5.0 / _LBS_PER_KG    # 5 lbs in kg
-            step_l = 10.0 / _LBS_PER_KG   # 10 lbs in kg
+            # Snap to nearest 5 lbs first so buttons are always clean round numbers
+            last_lbs = round(last * _LBS_PER_KG / 5) * 5
+            opts_lbs = sorted({max(0, last_lbs - 10), max(0, last_lbs - 5),
+                                last_lbs, last_lbs + 5, last_lbs + 10})
+            opts = [round(v / _LBS_PER_KG, 4) for v in opts_lbs if v > 0]
         else:
             step_s, step_l = 2.5, 5.0
-        opts = sorted({max(0.0, last - step_l), max(0.0, last - step_s),
-                       last, last + step_s, last + step_l})
+            opts = sorted({max(0.0, last - step_l), max(0.0, last - step_s),
+                           last, last + step_s, last + step_l})
     else:
         opts = _default_weights_for(exercise_name, user)
     rows: list[list[InlineKeyboardButton]] = []
