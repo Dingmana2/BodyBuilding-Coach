@@ -507,7 +507,7 @@ async function loadDashboard() {
     ]);
 
     document.getElementById('setup-banner').style.display =
-        (!health.api_key_configured && !getToken()) ? 'block' : 'none';
+        !health.api_key_configured ? 'block' : 'none';
 
     state.currentPlan = plan;
 
@@ -1526,7 +1526,7 @@ function renderMeasurements(data) {
     const waistData = data.filter(e => e.waist_cm != null);
     if (waistEl && waistSvgEl) {
         if (waistData.length >= 2) {
-            waistSvgEl.innerHTML = _measurementChartSvg(data, 'waist_cm', 320, 80, '#f59e0b');
+            waistSvgEl.innerHTML = _measurementChartSvg(waistData, 'waist_cm', 320, 80, '#f59e0b');
             waistEl.style.display = 'block';
         } else {
             waistEl.style.display = 'none';
@@ -2451,7 +2451,7 @@ function renderSessionHistory(history) {
                     <span style="flex:2">${esc(sl.exercise_name)}</span>
                     <span style="flex:1">${esc(sl.weight_kg)}kg</span>
                     <span style="flex:1">&#215;${esc(sl.reps)}</span>
-                    <span style="flex:1;color:var(--text-muted)">${sl.estimated_1rm ? sl.estimated_1rm.toFixed(0) + 'kg' : ''}</span>
+                    <span style="flex:1;color:var(--text-muted)">${sl.estimated_1rm != null ? sl.estimated_1rm.toFixed(0) + 'kg' : ''}</span>
                     ${sl.rpe ? `<span style="flex:1;color:var(--text-muted)">RPE ${esc(sl.rpe)}</span>` : '<span style="flex:1"></span>'}
                 </div>`).join('');
             // Change 11: session notes textarea
@@ -2774,6 +2774,10 @@ function printAnalysis(analysisId) {
     if (!card) return;
     const win = window.open('', '_blank', 'width=800,height=600');
     if (!win) { showToast('Allow pop-ups to print the analysis.', 'error'); return; }
+    // Clone and strip script/link tags before injecting into print window
+    const clone = card.cloneNode(true);
+    clone.querySelectorAll('script, link[rel="import"]').forEach(el => el.remove());
+    const safeHtml = clone.innerHTML;
     win.document.write(`<!DOCTYPE html><html><head><title>Analysis</title>
     <style>
         body { font-family: sans-serif; max-width: 700px; margin: 0 auto; padding: 20px; }
@@ -2785,7 +2789,7 @@ function printAnalysis(analysisId) {
     </style>
     </head><body>
     <button onclick="window.print()">Print</button>
-    ${card.innerHTML}
+    ${safeHtml}
     </body></html>`);
     win.document.close();
 }

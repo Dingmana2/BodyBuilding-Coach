@@ -1068,7 +1068,6 @@ def get_session_history(
     )
     result = []
     for s in sessions:
-        sets = db.query(models.SetLog).filter(models.SetLog.session_id == s.id).all()
         sets_for_session = (
             db.query(models.SetLog)
             .filter(models.SetLog.session_id == s.id)
@@ -1079,9 +1078,9 @@ def get_session_history(
             "id": s.id,
             "started_at": s.started_at.isoformat(),
             "ended_at": s.ended_at.isoformat() if s.ended_at else None,
-            "set_count": len(sets),
-            "exercises": list({x.exercise_name for x in sets}),
-            "total_volume_kg": round(sum(x.weight_kg * x.reps for x in sets), 1),
+            "set_count": len(sets_for_session),
+            "exercises": list({x.exercise_name for x in sets_for_session}),
+            "total_volume_kg": round(sum(x.weight_kg * x.reps for x in sets_for_session if x.weight_kg and x.reps), 1),
             "next_session_targets": s.next_session_targets,
             "sets": [
                 {
@@ -1096,6 +1095,30 @@ def get_session_history(
             ],
         })
     return result
+
+
+@app.patch("/api/sessions/{session_id}/notes")
+async def patch_session_notes(
+    session_id: int,
+    request: Request,
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Update the notes field on a workout session."""
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    notes = data.get("notes", "")
+    session = db.query(models.WorkoutSession).filter(
+        models.WorkoutSession.id == session_id,
+        models.WorkoutSession.user_id == current_user_id,
+    ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    session.notes = str(notes)[:2000]
+    db.commit()
+    return {"updated": session_id}
 
 
 @app.get("/api/prs")
@@ -1829,8 +1852,9 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
     ).order_by(models.UserGoal.created_at.desc()).first()
     if active_goal and user_profile:
         if active_goal.target_weight_kg and user_profile.weight_kg:
-            start = user_profile.weight_kg
+            start = active_goal.start_weight_kg or user_profile.weight_kg
             target = active_goal.target_weight_kg
+            current = user_profile.weight_kg
             if target != start:
                 days_remaining = None
                 if active_goal.target_date:
@@ -1838,7 +1862,8 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
                 goal_progress = {
                     "goal_type": active_goal.goal_type,
                     "target_weight_kg": target,
-                    "current_weight_kg": user_profile.weight_kg,
+                    "start_weight_kg": start,
+                    "current_weight_kg": current,
                     "target_date": active_goal.target_date.isoformat() if active_goal.target_date else None,
                     "days_remaining": days_remaining,
                 }
