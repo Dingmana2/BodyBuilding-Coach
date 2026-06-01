@@ -240,7 +240,7 @@
                 >
                     <div class="drop-icon">📸</div>
                     <div class="drop-text">Drop photos here or click to select</div>
-                    <div class="drop-subtext">JPG, PNG, WebP • Max 20MB each • Up to 3 angles (front, back, side)</div>
+                    <div class="drop-subtext">JPG, PNG, WebP • Max 20MB each • Up to 5 photos (front, back, side, etc.)</div>
                     <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" multiple style="display:none" onchange="handleFileSelect(this)" />
                 </div>
                 <div id="upload-preview" style="display:none">
@@ -286,7 +286,7 @@
             </div>
 
             <div id="no-plan-message" class="card" style="display:none">
-                <p class="empty-state" style="margin-bottom:16px">No plan yet. Complete your profile and click "Generate New Plan" — a photo improves accuracy but isn't required.</p>
+                <p class="empty-state" style="margin-bottom:16px">No plan yet. First upload a physique photo in the Analysis tab, then generate your plan. A photo is required — it helps the AI personalize your program.</p>
                 <button class="btn-primary" onclick="generatePlan()" style="font-size:14px">Generate My Plan</button>
             </div>
 

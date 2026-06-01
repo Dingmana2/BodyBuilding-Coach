@@ -1010,7 +1010,13 @@ async function generatePlan() {
         renderPlan(plan);
     }).catch(err => {
         hideBgTask();
-        showToast(`Plan generation failed: ${err.message}`, 'error');
+        const msg = err.message || '';
+        if (msg.toLowerCase().includes('analysis') || msg.toLowerCase().includes('photo')) {
+            showToast('Upload a physique photo first for the best plan. Go to the Analysis tab.', 'error');
+            setTimeout(() => showTab('analysis'), 2000);
+        } else {
+            showToast(msg || 'Failed to generate plan.', 'error');
+        }
     });
 }
 
@@ -1348,7 +1354,7 @@ async function loadProgress() {
     const [data, plateaus, measurements] = await Promise.all([
         cachedApi('GET', '/progress').catch(() => []),
         cachedApi('GET', '/progress/plateaus').catch(() => []),
-        api('GET', '/measurements?limit=30').catch(() => []),
+        cachedApi('GET', '/measurements?limit=30').catch(() => []),
     ]);
 
     const container = document.getElementById('progress-content');
@@ -1969,6 +1975,10 @@ function selectExercise(name) {
     });
     updatePRHint(name);
     updateWarmupSuggestions();
+    const rpeInput = document.getElementById('rpe-input');
+    const rirInput = document.getElementById('rir-input');
+    if (rpeInput) rpeInput.value = '';
+    if (rirInput) rirInput.value = '';
 }
 
 function selectCustomExercise() {
@@ -1997,8 +2007,8 @@ function adjustReps(delta) {
 function openPlateCalc() {
     const modal = document.getElementById('plate-calc-modal');
     if (modal) modal.style.display = 'flex';
-    const w = parseFloat(document.getElementById('weight-input')?.value) || 100;
-    document.getElementById('plate-calc-input').value = w;
+    const w = parseFloat(document.getElementById('weight-input')?.value) || 0;
+    document.getElementById('plate-calc-input').value = w || '';
     calcPlates();
 }
 
@@ -2375,7 +2385,7 @@ async function loadReports() {
 function formatDate(iso) {
     if (!iso) return '';
     const d = new Date(iso);
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 /* ── Auth overlay panels ── */
