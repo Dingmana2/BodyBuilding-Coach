@@ -1277,3 +1277,26 @@ body.dark #onboarding-inner .btn-ghost { color: var(--text); }
     .card { padding: 18px 16px; }
     header { padding: 0 12px; }
 }
+
+/* ── Loading Skeletons ── */
+.skeleton {
+    background: linear-gradient(90deg, #f0f0ee 25%, #e4e4e0 50%, #f0f0ee 75%);
+    background-size: 200% 100%;
+    animation: skeleton-wave 1.4s ease infinite;
+    border-radius: 8px;
+    color: transparent !important;
+    pointer-events: none;
+    user-select: none;
+    display: inline-block;
+    min-width: 50px;
+    min-height: 20px;
+}
+@keyframes skeleton-wave {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+body.dark-mode .skeleton,
+body.dark .skeleton {
+    background: linear-gradient(90deg, #2a2a2a 25%, #333 50%, #2a2a2a 75%);
+    background-size: 200% 100%;
+}

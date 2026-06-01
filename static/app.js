@@ -28,14 +28,35 @@ async function cachedApi(method, path) {
     if (method !== 'GET') return api(method, path);
     const key = `GET:${path}`;
     const hit = _cache[key];
-    if (hit && Date.now() - hit.ts < CACHE_TTL_MS) return hit.data;
-    const data = await api(method, path);
-    _cache[key] = { data, ts: Date.now() };
-    return data;
+    const fresh = hit && (Date.now() - hit.ts < CACHE_TTL_MS);
+    if (fresh) return hit.data;
+    const fetchPromise = api('GET', path).then(data => {
+        _cache[key] = { data, ts: Date.now() };
+        return data;
+    });
+    // Stale-while-revalidate: serve cached data immediately, refresh in background
+    if (hit) {
+        fetchPromise.catch(() => {});
+        return hit.data;
+    }
+    return fetchPromise;
 }
 
 function invalidateCache(...paths) {
     paths.forEach(p => delete _cache[`GET:${p}`]);
+}
+
+function setSkeleton(ids, on) {
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (on) {
+            el.dataset.skPrev = el.textContent;
+            el.classList.add('skeleton');
+        } else {
+            el.classList.remove('skeleton');
+        }
+    });
 }
 
 /* ── State ── */
@@ -509,6 +530,8 @@ function showToast(msg, type = 'success') {
 
 /* ── Dashboard ── */
 async function loadDashboard() {
+    setSkeleton(['stat-bf','stat-score','stat-cal','stat-protein','stat-recovery'], true);
+    try {
     const [health, plan, summary, checkins, mealsToday] = await Promise.all([
         cachedApi('GET', '/health').catch(() => ({ api_key_configured: false })),
         cachedApi('GET', '/plan/current').catch(() => null),
@@ -564,6 +587,9 @@ async function loadDashboard() {
     renderGettingStarted(plan, summary);
     _renderDashMacroSummary(mealsToday, plan);
     loadMemory();
+    } finally {
+        setSkeleton(['stat-bf','stat-score','stat-cal','stat-protein','stat-recovery'], false);
+    }
 }
 
 function _renderDashMacroSummary(mealsToday, plan) {
@@ -1098,9 +1124,76 @@ function openRegenModal() {
 function closeRegenModal() {
     document.getElementById('regen-plan-modal').style.display = 'none';
 }
-function confirmGeneratePlan() {
+async function confirmGeneratePlan() {
     closeRegenModal();
-    generatePlan();
+    const tok = getToken();
+    if (!tok) { showToast('Please sign in first.', 'error'); return; }
+
+    showBgTask('Preparing your plan…');
+    invalidateCache('/plan/current');
+
+    return new Promise((resolve) => {
+        try {
+            // Use fetch-based SSE since EventSource can't send Authorization header
+            _streamPlanWithFetch(tok).then(resolve).catch(() => {
+                // Fallback to regular POST
+                _generatePlanFallback().then(resolve);
+            });
+        } catch(e) {
+            _generatePlanFallback().then(resolve);
+        }
+    });
+}
+
+async function _streamPlanWithFetch(tok) {
+    const resp = await fetch('/api/plan/generate/stream', {
+        method: 'POST',
+        headers: { 'Authorization': 'Bearer ' + tok, 'Content-Type': 'application/json' },
+    });
+    if (!resp.ok) throw new Error('Stream failed');
+    const reader = resp.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            try {
+                const msg = JSON.parse(line.slice(6));
+                if (msg.error) {
+                    hideBgTask();
+                    showToast(msg.error, 'error');
+                    return;
+                }
+                if (msg.status === 'done') {
+                    hideBgTask();
+                    await loadCurrentPlan();
+                    showTab('plans');
+                    showToast('Plan generated!', 'success');
+                    return;
+                }
+                showBgTask(msg.status);
+            } catch(e) { /* skip malformed lines */ }
+        }
+    }
+}
+
+async function _generatePlanFallback() {
+    showLoading('Building your personalized plan… 30-60 seconds');
+    try {
+        await api('POST', '/plan/generate');
+        await loadCurrentPlan();
+        showTab('plans');
+        showToast('Plan generated!', 'success');
+    } catch(err) {
+        showToast(err.message, 'error');
+    } finally {
+        hideLoading();
+    }
 }
 
 /* ── Plans ── */

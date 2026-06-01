@@ -13,10 +13,11 @@ import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from starlette.middleware.base import BaseHTTPMiddleware
 
 load_dotenv()
 
@@ -244,6 +245,22 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="BodyBuilding Coach AI", version="1.0.0", lifespan=_lifespan)
+
+
+class _StaticCacheMiddleware(BaseHTTPMiddleware):
+    """Set Cache-Control on versioned static assets."""
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        path = request.url.path
+        if path.startswith("/static/") and "v=" in str(request.url.query):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=3600"
+        return response
+
+
+app.add_middleware(_StaticCacheMiddleware)
 app.mount("/static", StaticFiles(directory="static"), name="static")
 app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
@@ -707,6 +724,96 @@ async def generate_plan(
     return plan
 
 
+@app.post("/api/plan/generate/stream")
+async def stream_plan_generate(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Stream plan generation progress as Server-Sent Events."""
+    if not current_user_id:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+
+    async def event_gen():
+        try:
+            yield f'data: {json.dumps({"status": "Fetching your profile and history…"})}\n\n'
+
+            profile = db.query(models.UserProfile).filter(
+                models.UserProfile.user_id == current_user_id
+            ).first()
+            latest_analysis = (
+                db.query(models.BodyAnalysis)
+                .filter(models.BodyAnalysis.user_id == current_user_id)
+                .order_by(models.BodyAnalysis.created_at.desc())
+                .first()
+            )
+            research_cache = db.query(models.ResearchCache).all()
+
+            if not profile:
+                yield f'data: {json.dumps({"error": "Complete your profile first before generating a plan."})}\n\n'
+                return
+
+            if not latest_analysis:
+                yield f'data: {json.dumps({"error": "Upload a physique photo first — the AI needs it to personalize your plan."})}\n\n'
+                return
+
+            yield f'data: {json.dumps({"status": "Sending to Claude AI… (30–60 seconds)"})}\n\n'
+
+            ctx_str = ""
+            try:
+                ctx = await build_context(db, current_user_id)
+                ctx_str = context_block(ctx)
+            except CoachBrainError:
+                pass
+
+            try:
+                plan_result = await asyncio.to_thread(
+                    generate_comprehensive_plan,
+                    latest_analysis,
+                    research_cache,
+                    profile,
+                    ctx_str,
+                )
+            except Exception as e:
+                yield f'data: {json.dumps({"error": f"Plan generation failed: {str(e)}"})}\n\n'
+                return
+
+            yield f'data: {json.dumps({"status": "Saving your plan…"})}\n\n'
+
+            workout_data = plan_result.get("workout_plan", {})
+            diet_data = plan_result.get("diet_plan", {})
+            supps_data = plan_result.get("supplement_plan", [])
+
+            workout = models.WorkoutPlan(
+                raw_plan=json.dumps(workout_data),
+                user_id=current_user_id or None,
+            )
+            diet = models.DietPlan(
+                calories=diet_data.get("daily_calories"),
+                protein_g=diet_data.get("macros", {}).get("protein_g"),
+                carbs_g=diet_data.get("macros", {}).get("carbs_g"),
+                fat_g=diet_data.get("macros", {}).get("fat_g"),
+                raw_plan=json.dumps(diet_data),
+                user_id=current_user_id or None,
+            )
+            supps = models.SupplementPlan(
+                raw_plan=json.dumps(supps_data),
+                user_id=current_user_id or None,
+            )
+            db.add_all([workout, diet, supps])
+            db.commit()
+
+            yield f'data: {json.dumps({"status": "done"})}\n\n'
+
+        except Exception as e:
+            yield f'data: {json.dumps({"error": str(e)})}\n\n'
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/api/plan/current")
 def get_current_plan(
     current_user_id: int = Depends(get_current_user_id),
@@ -1066,14 +1173,22 @@ def get_session_history(
         .limit(10)
         .all()
     )
+    session_ids = [s.id for s in sessions]
+    all_sets = (
+        db.query(models.SetLog)
+        .filter(models.SetLog.session_id.in_(session_ids))
+        .order_by(models.SetLog.logged_at.asc())
+        .all()
+    ) if session_ids else []
+
+    # Build a dict for O(1) lookup
+    sets_by_session: dict[int, list] = {}
+    for sl in all_sets:
+        sets_by_session.setdefault(sl.session_id, []).append(sl)
+
     result = []
     for s in sessions:
-        sets_for_session = (
-            db.query(models.SetLog)
-            .filter(models.SetLog.session_id == s.id)
-            .order_by(models.SetLog.logged_at.asc())
-            .all()
-        )
+        sets_for_session = sets_by_session.get(s.id, [])
         result.append({
             "id": s.id,
             "started_at": s.started_at.isoformat(),
@@ -1783,61 +1898,109 @@ async def create_goal(request: Request, current_user_id: int = Depends(get_curre
 
 # ── Dashboard Summary ─────────────────────────────────────────────────────────
 
-@app.get("/api/dashboard/summary")
-def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
-    db: Session = Depends(get_db)):
-    streaks = {
-        s.streak_type: s.current_streak
-        for s in db.query(models.UserStreak).filter(models.UserStreak.chat_id == current_user_id).all()
-    }
-    prs_count = db.query(models.PersonalRecord).filter(models.PersonalRecord.chat_id == current_user_id).count()
+def _q_streaks_badges(db: Session, uid: int):
+    """Query streaks, badge count, and PR count in a single thread."""
+    streaks = db.query(models.UserStreak).filter(models.UserStreak.chat_id == uid).all()
+    badges_count = db.query(models.Badge).filter(models.Badge.chat_id == uid).count()
+    prs_count = db.query(models.PersonalRecord).filter(models.PersonalRecord.chat_id == uid).count()
+    return streaks, badges_count, prs_count
 
-    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
-    sessions_week = db.query(models.WorkoutSession).filter(
-        models.WorkoutSession.chat_id == current_user_id,
-        models.WorkoutSession.started_at >= datetime.fromisoformat(seven_days_ago),
-        models.WorkoutSession.ended_at != None,
-    ).count()
 
-    checkins = db.query(models.DailyCheckIn).filter(
-        models.DailyCheckIn.chat_id == current_user_id,
-        models.DailyCheckIn.date >= seven_days_ago,
-    ).all()
-    avg_recovery = round(sum(c.recovery_score or 0 for c in checkins) / len(checkins)) if checkins else None
+def _q_recent_activity(db: Session, uid: int, today_str: str, seven_days_ago: str):
+    """Query check-ins for the last 7 days and meals logged today."""
+    checkins = (
+        db.query(models.DailyCheckIn)
+        .filter(
+            models.DailyCheckIn.chat_id == uid,
+            models.DailyCheckIn.date >= seven_days_ago,
+        )
+        .order_by(models.DailyCheckIn.date.desc())
+        .all()
+    )
+    meals_today = (
+        db.query(models.MealLog)
+        .filter(
+            models.MealLog.chat_id == uid,
+            models.MealLog.date == today_str,
+        )
+        .all()
+    )
+    return checkins, meals_today
 
-    today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    today_meals = db.query(models.MealLog).filter(
-        models.MealLog.chat_id == current_user_id,
-        models.MealLog.date == today_str,
-    ).all()
 
+def _q_analysis_goal(db: Session, uid: int):
+    """Query the latest body analysis and the current active goal."""
     latest_analysis = (
         db.query(models.BodyAnalysis)
-        .filter(models.BodyAnalysis.user_id == current_user_id)
+        .filter(models.BodyAnalysis.user_id == uid)
         .order_by(models.BodyAnalysis.created_at.desc())
         .first()
     )
+    active_goal = (
+        db.query(models.UserGoal)
+        .filter(
+            models.UserGoal.chat_id == uid,
+            models.UserGoal.is_active == True,
+        )
+        .first()
+    )
+    return latest_analysis, active_goal
 
-    badges = db.query(models.Badge).filter(models.Badge.chat_id == current_user_id).count()
 
+def _q_sessions_profile(db: Session, uid: int, seven_days_ago: str):
+    """Query session stats, last session, last check-in, and user profile."""
+    sessions_week = (
+        db.query(models.WorkoutSession)
+        .filter(
+            models.WorkoutSession.chat_id == uid,
+            models.WorkoutSession.started_at >= seven_days_ago,
+            models.WorkoutSession.ended_at != None,
+        )
+        .count()
+    )
     last_session = (
         db.query(models.WorkoutSession)
-        .filter(models.WorkoutSession.chat_id == current_user_id, models.WorkoutSession.ended_at != None)
+        .filter(
+            models.WorkoutSession.chat_id == uid,
+            models.WorkoutSession.ended_at != None,
+        )
         .order_by(models.WorkoutSession.ended_at.desc())
         .first()
     )
-    last_checkin_row = (
+    last_checkin = (
         db.query(models.DailyCheckIn)
-        .filter(models.DailyCheckIn.chat_id == current_user_id)
+        .filter(models.DailyCheckIn.chat_id == uid)
         .order_by(models.DailyCheckIn.date.desc())
         .first()
     )
+    profile = db.query(models.UserProfile).filter(models.UserProfile.user_id == uid).first()
+    return sessions_week, last_session, last_checkin, profile
 
-    user_profile = (
-        db.query(models.UserProfile)
-        .filter(models.UserProfile.user_id == current_user_id)
-        .first()
-    ) if current_user_id else None
+
+@app.get("/api/dashboard/summary")
+async def dashboard_summary(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Return aggregated dashboard metrics, running independent DB batches in parallel."""
+    uid = current_user_id
+    today_str = datetime.now(timezone.utc).date().isoformat()
+    seven_days_ago = (datetime.now(timezone.utc) - timedelta(days=7)).date().isoformat()
+
+    (
+        (streaks_rows, badges_count, prs_count),
+        (checkins, meals_today),
+        (latest_analysis, active_goal),
+        (sessions_week, last_session, last_checkin_row, user_profile),
+    ) = await asyncio.gather(
+        asyncio.to_thread(_q_streaks_badges, db, uid),
+        asyncio.to_thread(_q_recent_activity, db, uid, today_str, seven_days_ago),
+        asyncio.to_thread(_q_analysis_goal, db, uid),
+        asyncio.to_thread(_q_sessions_profile, db, uid, seven_days_ago),
+    )
+
+    streaks = {s.streak_type: s.current_streak for s in streaks_rows}
+    avg_recovery = round(sum(c.recovery_score or 0 for c in checkins) / len(checkins)) if checkins else None
 
     days_to_show = None
     if user_profile and user_profile.show_date and user_profile.goal in ("prep", "contest_prep"):
@@ -1846,15 +2009,11 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
         days_to_show = (show_d - _date.today()).days
 
     goal_progress = None
-    active_goal = db.query(models.UserGoal).filter(
-        models.UserGoal.chat_id == current_user_id,
-        models.UserGoal.is_active == True,
-    ).order_by(models.UserGoal.created_at.desc()).first()
     if active_goal and user_profile:
         if active_goal.target_weight_kg and user_profile.weight_kg:
             start = active_goal.start_weight_kg or user_profile.weight_kg
             target = active_goal.target_weight_kg
-            current = user_profile.weight_kg
+            current_weight = user_profile.weight_kg
             if target != start:
                 days_remaining = None
                 if active_goal.target_date:
@@ -1863,7 +2022,7 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
                     "goal_type": active_goal.goal_type,
                     "target_weight_kg": target,
                     "start_weight_kg": start,
-                    "current_weight_kg": current,
+                    "current_weight_kg": current_weight,
                     "target_date": active_goal.target_date.isoformat() if active_goal.target_date else None,
                     "days_remaining": days_remaining,
                 }
@@ -1871,11 +2030,11 @@ def dashboard_summary(current_user_id: int = Depends(get_current_user_id),
     return {
         "streaks": streaks,
         "prs_count": prs_count,
-        "badges_count": badges,
+        "badges_count": badges_count,
         "sessions_this_week": sessions_week,
         "avg_recovery_7d": avg_recovery,
-        "today_protein_g": round(sum(m.protein_g or 0 for m in today_meals), 1),
-        "today_calories": round(sum(m.calories or 0 for m in today_meals)),
+        "today_protein_g": round(sum(m.protein_g or 0 for m in meals_today), 1),
+        "today_calories": round(sum(m.calories or 0 for m in meals_today)),
         "latest_bf": latest_analysis.body_fat_estimate if latest_analysis else None,
         "latest_score": latest_analysis.overall_physique_score if latest_analysis else None,
         "last_workout_date": last_session.ended_at.strftime("%Y-%m-%d") if last_session else None,
