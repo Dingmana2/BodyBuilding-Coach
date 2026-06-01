@@ -9,6 +9,8 @@ Available skills (invoke with `/skill-name`):
 
 Note: `/browse`, `/connect-chrome`, and browser-dependent skills require Playwright Chromium. In this remote environment the browser download is network-restricted — browser skills will not work until Chromium is available.
 
+Run `./setup.sh` once after cloning — it installs gstack and Python dependencies together.
+
 ---
 
 ## Project identity
