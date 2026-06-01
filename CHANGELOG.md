@@ -1,5 +1,23 @@
 # CHANGELOG
 
+## 2026-06-01 — Sprint 23: Fix report 422, analysis user isolation, contest_prep goal, RPE float, coaching_notes
+
+### Fixed
+- `main.py` — `POST /api/reports/generate`: wrapped `await request.json()` in try/except so empty-body requests no longer raise JSONDecodeError / 422
+- `main.py` — `POST /api/analyze`: `analyze_body_photo()` now runs via `asyncio.to_thread()` instead of blocking the event loop directly for 20-40 seconds
+- `main.py` — Multiple `UserProfile` queries in authenticated endpoints (`analyze_photo`, `get_weak_points`, `generate_plan`, `create_checkin`, `update_checkin`, `generate_report`) now filter by `current_user_id`; previously returned the first row in the table for all users
+- `models.py` — `BodyAnalysis`: added `user_id` column (Integer, nullable, indexed) so analyses are scoped per user
+- `main.py` — `_migrate_db()`: added `("body_analyses", "user_id", "INTEGER")` migration entry for existing databases
+- `main.py` — `POST /api/analyze`: new `BodyAnalysis` rows are stamped with `user_id=current_user_id`
+- `main.py` — `GET /api/analyses`, `POST /api/analysis/weak-points`, `POST /api/plan/generate`, `GET /api/plan/current`, `GET /api/dashboard/summary`, `GET /api/progress`: all `BodyAnalysis` queries now filter by `current_user_id`; `GET /api/analyses` and `GET /api/progress` also gain `current_user_id` dependency they previously lacked
+- `main.py` — `dashboard_summary`: contest-prep countdown now fires for `goal == "contest_prep"` in addition to `goal == "prep"` (web app saves `"contest_prep"`, bot saves `"prep"`)
+- `main.py` — `GET /api/plan/current`: response now includes `"coaching_notes"` key extracted from `workout.raw_plan` JSON so the coaching-notes tab is populated after page reload
+- `models.py` — `SetLog.rpe`: changed column type from `Integer` to `Float` to preserve half-RPE values (8.5, 9.5)
+- `main.py` — `POST /api/sessions/{session_id}/sets`: `rpe` cast changed from `int(rpe)` to `float(rpe)`
+
+### Rollback
+- `git revert <hash>` — no destructive schema changes; `body_analyses.user_id` is additive (nullable); `set_logs.rpe` Float is backward-compatible with existing INTEGER rows in SQLite
+
 ## 2026-05-30 — Sprint 22: Add RPE, RIR, set_notes to SetLog model and API
 
 ### Added
