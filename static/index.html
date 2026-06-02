@@ -6,418 +6,306 @@
     <title>BodyBuilding Coach AI</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="manifest" href="/static/manifest.json" />
-    <link rel="stylesheet" href="/static/style.css?v=28" />
+    <link rel="stylesheet" href="/static/style.css?v=29" />
 </head>
 <body>
-    <header>
-        <div class="header-inner">
-            <div class="logo">
-                <span class="logo-icon">⚡</span>
-                <span class="logo-text">BodyBuilding Coach AI</span>
-            </div>
-            <div id="session-pill" style="display:none;font-size:12px;font-weight:700;background:#22c55e;color:#fff;padding:4px 12px;border-radius:50px;cursor:pointer" onclick="showTab('workout');closeDrawer()" title="Session in progress — tap to return">
-                💪 <span id="session-pill-time">0:00</span>
-            </div>
-            <button id="hamburger-btn" onclick="toggleDrawer()" aria-label="Open navigation menu">≡</button>
-        </div>
-    </header>
 
-    <!-- Nav drawer backdrop -->
-    <div id="nav-drawer-backdrop" onclick="closeDrawer()"></div>
-
-    <!-- Nav drawer -->
-    <div id="nav-drawer">
-        <div class="drawer-header">
-            <span class="drawer-title">⚡ BB Coach AI</span>
-            <button id="drawer-close-btn" onclick="closeDrawer()" aria-label="Close menu">✕</button>
+<!-- ── Header ── -->
+<header>
+    <div class="header-inner">
+        <div class="logo">
+            <span class="logo-icon">⚡</span>
+            <span class="logo-text">BB Coach AI</span>
         </div>
-        <div id="drawer-user" class="drawer-user">
-            <span id="drawer-email" class="drawer-email"></span>
-            <div style="display:flex;gap:6px;margin-top:6px;flex-wrap:wrap">
-                <button id="unit-toggle-btn" class="btn btn-ghost btn-sm" onclick="toggleUnitPref()" style="font-size:11px;padding:4px 10px">→ Imperial</button>
-                <button id="dark-mode-btn" class="btn btn-ghost btn-sm" onclick="toggleDarkMode()" style="font-size:11px;padding:4px 10px">🌙 Dark</button>
-                <button class="btn btn-ghost btn-sm" onclick="signOut();closeDrawer()">Sign Out</button>
-            </div>
+        <div id="session-pill" style="display:none" onclick="showTab('workout')" title="Session in progress — tap to return">
+            💪 <span id="session-pill-time">0:00</span>
         </div>
-        <div class="drawer-divider"></div>
-        <button class="drawer-nav-item active" data-tab="dashboard" onclick="showTab('dashboard');closeDrawer()"><span class="drawer-nav-icon">🏠</span>Dashboard</button>
-        <button class="drawer-nav-item" data-tab="analysis" onclick="showTab('analysis');closeDrawer()"><span class="drawer-nav-icon">📸</span>Analysis</button>
-        <button class="drawer-nav-item" data-tab="plans" onclick="showTab('plans');closeDrawer()"><span class="drawer-nav-icon">🏋️</span>Plans</button>
-        <button class="drawer-nav-item" data-tab="workout" onclick="showTab('workout');closeDrawer()"><span class="drawer-nav-icon">💪</span>Workout</button>
-        <button class="drawer-nav-item" data-tab="nutrition" onclick="showTab('nutrition');closeDrawer()"><span class="drawer-nav-icon">🥗</span>Nutrition</button>
-        <button class="drawer-nav-item" data-tab="progress" onclick="showTab('progress');closeDrawer()"><span class="drawer-nav-icon">📈</span>Progress</button>
-        <button class="drawer-nav-item" data-tab="research" onclick="showTab('research');closeDrawer()"><span class="drawer-nav-icon">🔬</span>Research</button>
-        <button class="drawer-nav-item" data-tab="reports" onclick="showTab('reports');closeDrawer()"><span class="drawer-nav-icon">📋</span>Reports</button>
-        <button class="drawer-nav-item" data-tab="profile" onclick="showTab('profile');closeDrawer()"><span class="drawer-nav-icon">👤</span>Profile</button>
+        <button id="settings-btn" onclick="openSettings()" aria-label="Open menu">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
     </div>
+</header>
 
-    <main>
-        <!-- DASHBOARD -->
-        <section id="tab-dashboard" class="tab-content active">
-            <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
-                <div>
-                    <h1>Dashboard</h1>
-                    <p class="subtitle">Your AI-powered fitness command center</p>
-                </div>
-                <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-                    <button id="body-neutral-btn" class="btn btn-ghost btn-sm" onclick="toggleBodyNeutral()" style="font-size:12px;white-space:nowrap">Body-Neutral Mode</button>
-                    <button class="btn btn-ghost btn-sm" onclick="toggleDarkMode()" style="font-size:12px;white-space:nowrap" id="dash-dark-btn">🌙 Dark</button>
-                </div>
+<!-- ── Settings panel (replaces hamburger drawer) ── -->
+<div id="settings-overlay">
+    <div id="settings-backdrop" onclick="closeSettings()"></div>
+    <div id="settings-panel">
+        <div class="settings-panel-header">
+            <span class="settings-panel-title">Menu</span>
+            <button class="settings-close-btn" onclick="closeSettings()" aria-label="Close menu">✕</button>
+        </div>
+
+        <div id="settings-user-row" class="settings-user-row" style="display:none">
+            <span id="settings-email" class="settings-email"></span>
+        </div>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-section-label">Manage</div>
+        <button class="settings-nav-item" onclick="navTo('profile')">
+            <span class="settings-nav-icon">👤</span>My Profile
+        </button>
+        <button class="settings-nav-item" onclick="navTo('plans')">
+            <span class="settings-nav-icon">🏋️</span>My Plan
+        </button>
+        <button class="settings-nav-item" onclick="navTo('analysis')">
+            <span class="settings-nav-icon">📸</span>Body Analysis
+        </button>
+
+        <div class="settings-divider"></div>
+
+        <div class="settings-section-label">Preferences</div>
+        <button class="settings-nav-item" onclick="toggleUnitPref();closeSettings()">
+            <span class="settings-nav-icon">📏</span>Units: <span id="settings-unit-label" style="color:var(--text-muted);margin-left:4px">Metric</span>
+        </button>
+        <button class="settings-nav-item" id="settings-body-neutral-btn" onclick="toggleBodyNeutral()">
+            <span class="settings-nav-icon">🧘</span>Body-Neutral Mode
+        </button>
+
+        <div class="settings-divider"></div>
+
+        <button class="settings-nav-item settings-nav-danger" onclick="signOut();closeSettings()">
+            <span class="settings-nav-icon">↩</span>Sign Out
+        </button>
+    </div>
+</div>
+
+<!-- ── Main content ── -->
+<main>
+
+    <!-- ══════════ HOME ══════════ -->
+    <section id="tab-dashboard" class="tab-content active">
+
+        <div id="setup-banner" class="banner banner-warn" style="display:none">
+            <strong>Setup required:</strong> Add your <code>ANTHROPIC_API_KEY</code> to <code>.env</code>, then restart.
+        </div>
+
+        <!-- AI Morning Briefing -->
+        <div id="briefing-card"></div>
+
+        <!-- Today cards -->
+        <div class="today-grid">
+            <div class="today-card" id="today-workout-card" onclick="showTab('workout')">
+                <div class="today-card-label">Today's Workout</div>
+                <div id="today-workout-summary" class="today-card-status">Tap to train</div>
+                <span class="today-card-arrow">→</span>
             </div>
-            <!-- Getting-started guide (hidden once user has data) -->
-            <div id="getting-started-card" class="getting-started-card" style="display:none">
-                <h2 style="font-size:1.3rem;margin-bottom:4px">Welcome to BB Coach AI</h2>
-                <p style="color:var(--text-muted);font-size:14px">Three steps to unlock your personalized AI coaching program:</p>
-                <div class="getting-started-steps">
-                    <button class="gs-step" onclick="showTab('profile');closeDrawer()">
-                        <div class="gs-step-num" id="gs-num-1">1</div>
-                        <div>
-                            <div class="gs-step-text">Complete your profile</div>
-                            <div class="gs-step-sub">Age, height, weight, goal, experience level</div>
-                        </div>
-                    </button>
-                    <button class="gs-step" onclick="showTab('analysis');closeDrawer()">
-                        <div class="gs-step-num" id="gs-num-2">2</div>
-                        <div>
-                            <div class="gs-step-text">Upload a physique photo (optional)</div>
-                            <div class="gs-step-sub">Improves AI accuracy — skip if you prefer</div>
-                        </div>
-                    </button>
-                    <button class="gs-step" onclick="openRegenModal()">
-                        <div class="gs-step-num" id="gs-num-3">3</div>
-                        <div>
-                            <div class="gs-step-text">Generate your personalized plan</div>
-                            <div class="gs-step-sub">Workout + diet + supplements, built for your goal</div>
-                        </div>
-                    </button>
-                </div>
-            </div>
-
-            <div id="setup-banner" class="banner banner-warn" style="display:none">
-                <strong>Setup required:</strong> Add your <code>ANTHROPIC_API_KEY</code> to the <code>.env</code> file, then restart the server.
-                Get your key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
-            </div>
-
-            <!-- Morning briefing card -->
-            <div id="briefing-card"></div>
-
-            <div class="stats-grid" id="dashboard-stats">
-                <div class="stat-card">
-                    <div class="stat-label">Body Fat</div>
-                    <div class="stat-value" id="stat-bf">—</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Physique Score</div>
-                    <div class="stat-value" id="stat-score">—</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Daily Calories</div>
-                    <div class="stat-value" id="stat-cal">—</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Daily Protein</div>
-                    <div class="stat-value" id="stat-protein">—</div>
-                </div>
-                <div class="stat-card">
-                    <div class="stat-label">Recovery Score</div>
-                    <div class="stat-value" id="stat-recovery">—</div>
-                </div>
-            </div>
-
-            <!-- Change 1: Today's Intake macro summary -->
-            <div id="dash-macro-summary" style="display:none;background:var(--surface);border-radius:16px;padding:16px;margin-bottom:16px;border:1px solid var(--border)">
-              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
-                <span style="font-weight:600;font-size:14px">Today's Intake</span>
-                <button class="btn btn-ghost btn-sm" onclick="showTab('nutrition');closeDrawer()" style="font-size:11px">Log Meal →</button>
-              </div>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
-                <div>
-                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-                    <span>Calories</span><span id="dash-cal-text" style="color:var(--text-muted)">—</span>
-                  </div>
-                  <div class="macro-progress"><div class="macro-fill" id="dash-cal-fill" style="width:0%;background:var(--gold)"></div></div>
-                </div>
-                <div>
-                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px">
-                    <span>Protein</span><span id="dash-prot-text" style="color:var(--text-muted)">—</span>
-                  </div>
-                  <div class="macro-progress"><div class="macro-fill" id="dash-prot-fill" style="width:0%;background:var(--green)"></div></div>
-                </div>
-              </div>
-            </div>
-
-            <div class="action-grid">
-                <div class="action-card" onclick="showTab('analysis')">
-                    <div class="action-icon">📸</div>
-                    <div class="action-title">Analyze Physique</div>
-                    <div class="action-desc">Upload a photo for AI body composition analysis</div>
-                </div>
-                <div class="action-card" onclick="openRegenModal()">
-                    <div class="action-icon">🏋️</div>
-                    <div class="action-title">Generate Plan</div>
-                    <div class="action-desc">Build a science-backed workout + diet + supplement plan</div>
-                </div>
-                <div class="action-card" onclick="refreshResearch()">
-                    <div class="action-icon">🔬</div>
-                    <div class="action-title">Refresh Research</div>
-                    <div class="action-desc">Fetch latest papers from PubMed &amp; Semantic Scholar</div>
-                </div>
-                <div class="action-card" onclick="showTab('progress')">
-                    <div class="action-icon">📈</div>
-                    <div class="action-title">View Progress</div>
-                    <div class="action-desc">Compare body photos and track your improvements</div>
-                </div>
-            </div>
-
-            <div id="retention-card" class="card" style="display:none;margin-bottom:16px">
-                <div id="lapse-nudge" style="display:none;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:14px;font-weight:500"></div>
-                <div style="display:flex;gap:20px;flex-wrap:wrap">
-                    <div id="workout-streak-block" style="display:none">
-                        <div class="stat-label">Workout Streak</div>
-                        <div id="workout-streak-val" style="font-size:22px;font-weight:800">0</div>
-                        <div id="workout-streak-sub" style="font-size:11px;color:var(--text-muted)"></div>
+            <div class="today-card" id="today-nutrition-card" onclick="showTab('nutrition')">
+                <div class="today-card-label">Nutrition</div>
+                <div id="today-macro-mini">
+                    <div class="mini-macro-row">
+                        <span>Calories</span>
+                        <span id="dash-cal-text" class="mini-macro-val">—</span>
                     </div>
-                    <div id="checkin-streak-block" style="display:none">
-                        <div class="stat-label">Check-in Streak</div>
-                        <div id="checkin-streak-val" style="font-size:22px;font-weight:800;color:var(--green)">0</div>
-                        <div id="checkin-streak-sub" style="font-size:11px;color:var(--text-muted)"></div>
+                    <div class="macro-progress" style="margin:4px 0 8px">
+                        <div class="macro-fill" id="dash-cal-fill" style="width:0%;background:var(--accent)"></div>
                     </div>
-                    <div id="badges-block" style="display:none">
-                        <div class="stat-label">Badges</div>
-                        <div id="badges-val" style="font-size:22px;font-weight:800">0</div>
-                        <div style="font-size:11px;color:var(--text-muted)">earned</div>
+                    <div class="mini-macro-row">
+                        <span>Protein</span>
+                        <span id="dash-prot-text" class="mini-macro-val">—</span>
                     </div>
-                    <div id="sessions-week-block" style="display:none">
-                        <div class="stat-label">Sessions This Week</div>
-                        <div id="sessions-week-val" style="font-size:22px;font-weight:800">0</div>
+                    <div class="macro-progress">
+                        <div class="macro-fill" id="dash-prot-fill" style="width:0%;background:var(--green)"></div>
                     </div>
                 </div>
+                <span class="today-card-arrow">→</span>
             </div>
+        </div>
 
-            <div id="recovery-card" class="card" style="display:none">
-                <div style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:16px">
+        <!-- Key stats -->
+        <div class="stats-grid" id="dashboard-stats">
+            <div class="stat-card">
+                <div class="stat-label">Body Fat</div>
+                <div class="stat-value" id="stat-bf">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Physique Score</div>
+                <div class="stat-value" id="stat-score">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Daily Cal.</div>
+                <div class="stat-value" id="stat-cal">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Daily Protein</div>
+                <div class="stat-value" id="stat-protein">—</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Recovery</div>
+                <div class="stat-value" id="stat-recovery">—</div>
+            </div>
+        </div>
+
+        <!-- Getting-started guide -->
+        <div id="getting-started-card" class="getting-started-card" style="display:none">
+            <h2 style="font-size:1.2rem;margin-bottom:4px">Welcome — let's get you set up</h2>
+            <p style="color:var(--text-muted);font-size:14px;margin-bottom:16px">Three steps to unlock your personalized coaching program:</p>
+            <div class="getting-started-steps">
+                <button class="gs-step" onclick="navTo('profile')">
+                    <div class="gs-step-num" id="gs-num-1">1</div>
                     <div>
-                        <h3 style="margin-bottom:4px">Recovery Trend</h3>
-                        <div class="stat-label">7-Day Average</div>
-                        <div id="recovery-avg" style="font-size:28px;font-weight:800;margin-top:4px">—</div>
-                        <div style="font-size:12px;color:var(--text-muted);margin-top:2px">out of 100</div>
+                        <div class="gs-step-text">Complete your profile</div>
+                        <div class="gs-step-sub">Age, height, weight, goal, experience level</div>
                     </div>
-                    <div id="recovery-sparkline" style="align-self:center"></div>
-                </div>
-                <div id="recovery-tip" style="display:none;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:10px;font-size:13px;color:var(--text-muted)"></div>
-                <div style="margin-top:14px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-                    <button id="checkin-btn" class="btn-primary" onclick="openCheckinForm()" style="font-size:13px;padding:10px 20px">Log Check-In</button>
-                    <span id="checkin-done-badge" style="display:none;font-size:12px;color:var(--green);font-weight:700">✓ Logged today</span>
-                </div>
-                <div id="checkin-form-panel" style="display:none;margin-top:16px">
-                    <div style="display:grid;gap:14px">
-                        <div>
-                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">😴 Sleep Quality &nbsp;<span style="font-weight:800" id="ci-sleep-val">5</span>/10</label>
-                            <input type="range" id="ci-sleep" min="1" max="10" value="5" aria-label="Sleep quality 1 to 10" style="width:100%" oninput="document.getElementById('ci-sleep-val').textContent=this.value">
-                        </div>
-                        <div>
-                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">⚡ Energy Level &nbsp;<span style="font-weight:800" id="ci-energy-val">5</span>/10</label>
-                            <input type="range" id="ci-energy" min="1" max="10" value="5" aria-label="Energy level 1 to 10" style="width:100%" oninput="document.getElementById('ci-energy-val').textContent=this.value">
-                        </div>
-                        <div>
-                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🤕 Muscle Soreness &nbsp;<span style="font-weight:800" id="ci-soreness-val">5</span>/10</label>
-                            <input type="range" id="ci-soreness" min="1" max="10" value="5" aria-label="Muscle soreness 1 to 10" style="width:100%" oninput="document.getElementById('ci-soreness-val').textContent=this.value">
-                        </div>
-                        <div>
-                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🧠 Stress Level &nbsp;<span style="font-weight:800" id="ci-stress-val">5</span>/10</label>
-                            <input type="range" id="ci-stress" min="1" max="10" value="5" aria-label="Stress level 1 to 10" style="width:100%" oninput="document.getElementById('ci-stress-val').textContent=this.value">
-                        </div>
-                        <div>
-                            <label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🌙 Sleep Duration &nbsp;<span style="font-weight:800" id="ci-sleep-hrs-val">7.5</span> hrs</label>
-                            <input type="range" id="ci-sleep-hrs" min="0" max="12" value="7.5" step="0.5" aria-label="Sleep duration in hours" style="width:100%" oninput="document.getElementById('ci-sleep-hrs-val').textContent=+this.value">
-                        </div>
-                    </div>
-                    <div style="display:flex;gap:10px;margin-top:16px">
-                        <button id="ci-submit-btn" class="btn-primary" onclick="submitCheckin()" style="font-size:13px;padding:10px 20px">Submit</button>
-                        <button class="btn-secondary" onclick="closeCheckinForm()" style="font-size:13px;padding:10px 18px">Cancel</button>
-                    </div>
-                </div>
-            </div>
-
-            <div id="latest-analysis-card" style="display:none" class="card">
-                <h3>Latest Analysis</h3>
-                <div id="latest-analysis-content"></div>
-            </div>
-            <div class="card" id="memory-card" style="margin-top:16px;display:none">
-                <h3>Coach Memory</h3>
-                <div id="memory-list" style="margin-bottom:14px"></div>
-                <form id="memory-form" onsubmit="addMemory(event)" style="display:flex;gap:8px">
-                    <input type="text" id="memory-input" placeholder="Add a coaching note…" style="flex:1" maxlength="500" />
-                    <button type="submit" class="btn btn-primary" style="font-size:13px;padding:10px 16px">Add</button>
-                </form>
-            </div>
-        </section>
-
-        <!-- ANALYSIS -->
-        <section id="tab-analysis" class="tab-content">
-            <div class="page-header">
-                <h1>Body Analysis</h1>
-                <p class="subtitle">Upload a photo and get an AI-powered physique assessment</p>
-            </div>
-
-            <div class="card">
-                <div
-                    id="drop-zone"
-                    class="drop-zone"
-                    role="button"
-                    tabindex="0"
-                    aria-label="Upload physique photos — click or press Enter to select files"
-                    ondragover="event.preventDefault()"
-                    ondrop="handleDrop(event)"
-                    onclick="document.getElementById('photo-input').click()"
-                    onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('photo-input').click()}"
-                >
-                    <div class="drop-icon">📸</div>
-                    <div class="drop-text">Drop photos here or click to select</div>
-                    <div class="drop-subtext">JPG, PNG, WebP • Max 20MB each • Up to 5 photos (front, back, side, etc.)</div>
-                    <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" multiple style="display:none" onchange="handleFileSelect(this)" />
-                </div>
-                <div id="upload-preview" style="display:none">
-                    <div id="preview-strip" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
-                    <button class="btn btn-primary" id="analyze-btn" onclick="submitAnalysis()">Analyze Photo</button>
-                    <button class="btn btn-ghost" onclick="clearUpload()">Cancel</button>
-                </div>
-            </div>
-
-            <div id="analysis-result" style="display:none" class="card">
-                <h3>Analysis Result <span id="analysis-date" class="date-badge"></span></h3>
-                <div id="analysis-content"></div>
-            </div>
-
-            <div class="card">
-                <h3>Analysis History</h3>
-                <div id="analyses-list"><p class="empty-state">No analyses yet. Upload your first photo above.</p></div>
-            </div>
-
-            <div class="card" style="margin-top:20px">
-                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+                </button>
+                <button class="gs-step" onclick="navTo('analysis')">
+                    <div class="gs-step-num" id="gs-num-2">2</div>
                     <div>
-                        <h3 style="margin:0">Weak-Point Analysis</h3>
-                        <p style="font-size:13px;color:var(--text-muted);margin-top:4px">Cross-references photo muscle scores with your training volume to find imbalances</p>
+                        <div class="gs-step-text">Upload a physique photo</div>
+                        <div class="gs-step-sub">Improves AI accuracy — optional but recommended</div>
                     </div>
-                    <button class="btn btn-ghost" onclick="generateWeakPoints()">Analyze Weak Points</button>
-                </div>
-                <div id="weak-points-result" style="display:none"></div>
+                </button>
+                <button class="gs-step" onclick="openRegenModal()">
+                    <div class="gs-step-num" id="gs-num-3">3</div>
+                    <div>
+                        <div class="gs-step-text">Generate your personalized plan</div>
+                        <div class="gs-step-sub">Workout + diet + supplements, built for your goal</div>
+                    </div>
+                </button>
             </div>
-        </section>
+        </div>
 
-        <!-- PLANS -->
-        <section id="tab-plans" class="tab-content">
-            <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <!-- Recovery check-in -->
+        <div id="recovery-card" class="card" style="display:none">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
                 <div>
-                    <h1>My Training Plan</h1>
-                    <p class="subtitle">Your AI-generated roadmap — personalized to your profile and goals</p>
+                    <div style="font-weight:600;font-size:15px">Recovery</div>
+                    <div style="display:flex;align-items:baseline;gap:8px;margin-top:4px">
+                        <span id="recovery-avg" style="font-size:28px;font-weight:700">—</span>
+                        <span style="font-size:12px;color:var(--text-muted)">/100 · 7-day avg</span>
+                    </div>
                 </div>
-                <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
-                    <button class="btn btn-ghost btn-sm" onclick="printPlan()" style="font-size:13px">🖨️ Print</button>
-                    <button class="btn btn-primary" onclick="openRegenModal()" style="font-size:13px">Generate New Plan</button>
+                <div id="recovery-sparkline"></div>
+                <div>
+                    <button id="checkin-btn" class="btn-primary" onclick="openCheckinForm()" style="font-size:13px;padding:9px 18px">Log Check-In</button>
+                    <span id="checkin-done-badge" style="display:none;font-size:12px;color:var(--green);font-weight:500;margin-left:8px">✓ Logged today</span>
+                </div>
+            </div>
+            <div id="recovery-tip" style="display:none;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:10px;font-size:13px;color:var(--text-muted)"></div>
+            <div id="checkin-form-panel" style="display:none;margin-top:16px">
+                <div style="display:grid;gap:14px">
+                    <div><label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">😴 Sleep Quality &nbsp;<span style="font-weight:700" id="ci-sleep-val">5</span>/10</label><input type="range" id="ci-sleep" min="1" max="10" value="5" aria-label="Sleep quality" style="width:100%" oninput="document.getElementById('ci-sleep-val').textContent=this.value"></div>
+                    <div><label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">⚡ Energy Level &nbsp;<span style="font-weight:700" id="ci-energy-val">5</span>/10</label><input type="range" id="ci-energy" min="1" max="10" value="5" aria-label="Energy level" style="width:100%" oninput="document.getElementById('ci-energy-val').textContent=this.value"></div>
+                    <div><label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🤕 Muscle Soreness &nbsp;<span style="font-weight:700" id="ci-soreness-val">5</span>/10</label><input type="range" id="ci-soreness" min="1" max="10" value="5" aria-label="Muscle soreness" style="width:100%" oninput="document.getElementById('ci-soreness-val').textContent=this.value"></div>
+                    <div><label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🧠 Stress Level &nbsp;<span style="font-weight:700" id="ci-stress-val">5</span>/10</label><input type="range" id="ci-stress" min="1" max="10" value="5" aria-label="Stress level" style="width:100%" oninput="document.getElementById('ci-stress-val').textContent=this.value"></div>
+                    <div><label style="font-size:13px;color:var(--text-muted);display:block;margin-bottom:6px">🌙 Sleep Duration &nbsp;<span style="font-weight:700" id="ci-sleep-hrs-val">7.5</span> hrs</label><input type="range" id="ci-sleep-hrs" min="0" max="12" value="7.5" step="0.5" aria-label="Sleep hours" style="width:100%" oninput="document.getElementById('ci-sleep-hrs-val').textContent=+this.value"></div>
+                </div>
+                <div style="display:flex;gap:10px;margin-top:16px">
+                    <button id="ci-submit-btn" class="btn-primary" onclick="submitCheckin()" style="font-size:13px;padding:10px 20px">Submit</button>
+                    <button class="btn-secondary" onclick="closeCheckinForm()" style="font-size:13px;padding:10px 18px">Cancel</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Streaks / retention -->
+        <div id="retention-card" class="card" style="display:none;margin-top:16px">
+            <div id="lapse-nudge" style="display:none;padding:10px 14px;border-radius:8px;margin-bottom:14px;font-size:14px;font-weight:500"></div>
+            <div style="display:flex;gap:20px;flex-wrap:wrap">
+                <div id="workout-streak-block" style="display:none"><div class="stat-label">Workout Streak</div><div id="workout-streak-val" style="font-size:22px;font-weight:700">0</div><div id="workout-streak-sub" style="font-size:11px;color:var(--text-muted)"></div></div>
+                <div id="checkin-streak-block" style="display:none"><div class="stat-label">Check-in Streak</div><div id="checkin-streak-val" style="font-size:22px;font-weight:700;color:var(--green)">0</div><div id="checkin-streak-sub" style="font-size:11px;color:var(--text-muted)"></div></div>
+                <div id="sessions-week-block" style="display:none"><div class="stat-label">This Week</div><div id="sessions-week-val" style="font-size:22px;font-weight:700">0</div><div style="font-size:11px;color:var(--text-muted)">sessions</div></div>
+            </div>
+        </div>
+
+        <!-- Latest analysis result -->
+        <div id="latest-analysis-card" style="display:none" class="card">
+            <h3>Latest Analysis</h3>
+            <div id="latest-analysis-content"></div>
+        </div>
+
+        <!-- Coach memory -->
+        <div class="card" id="memory-card" style="display:none;margin-top:16px">
+            <h3>Coach Memory</h3>
+            <div id="memory-list" style="margin-bottom:14px"></div>
+            <form id="memory-form" onsubmit="addMemory(event)" style="display:flex;gap:8px">
+                <input type="text" id="memory-input" placeholder="Add a coaching note…" style="flex:1" maxlength="500" />
+                <button type="submit" class="btn btn-primary btn-sm">Add</button>
+            </form>
+        </div>
+
+    </section>
+
+
+    <!-- ══════════ TRAIN ══════════ -->
+    <section id="tab-workout" class="tab-content">
+
+        <div id="next-session-targets-card" class="card" style="display:none;margin-bottom:16px;border-left:2px solid var(--accent)">
+            <div style="font-size:12px;font-weight:600;color:var(--accent);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px">Next Session Targets</div>
+            <div id="next-session-targets-text" style="font-size:14px;white-space:pre-line;color:var(--text)"></div>
+        </div>
+
+        <!-- No active session -->
+        <div id="workout-no-session" class="card" style="text-align:center;padding:40px 24px">
+            <div style="font-size:40px;margin-bottom:16px">💪</div>
+            <div style="font-size:20px;font-weight:700;margin-bottom:8px">Ready to train?</div>
+            <div style="font-size:14px;color:var(--text-muted);margin-bottom:24px">Exercises pulled from your current plan</div>
+            <button class="btn-primary" onclick="startSession()" style="font-size:16px;padding:14px 36px">Start Session</button>
+        </div>
+
+        <!-- Active session -->
+        <div id="workout-active-session" style="display:none">
+            <div class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+                <div>
+                    <div style="font-size:16px;font-weight:700">Session in progress</div>
+                    <div id="session-timer" style="font-size:13px;color:var(--text-muted);margin-top:2px;font-variant-numeric:tabular-nums">00:00</div>
+                </div>
+                <button class="btn-secondary" onclick="endSession()" style="font-size:14px">✓ End Session</button>
+            </div>
+
+            <div class="card" style="margin-bottom:16px">
+                <div class="section-label" style="margin-top:0">Today's Exercises</div>
+                <div id="exercise-chips" class="chip-list"></div>
+                <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
+                    <input type="text" id="custom-exercise-input" placeholder="Other exercise…" style="flex:1;max-width:260px" />
+                    <button class="btn btn-ghost btn-sm" onclick="selectCustomExercise()">Select</button>
                 </div>
             </div>
 
-            <div id="no-plan-message" class="card" style="display:none">
-                <p class="empty-state" style="margin-bottom:16px">No plan yet. First upload a physique photo in the Analysis tab, then generate your plan. A photo is required — it helps the AI personalize your program.</p>
-                <button class="btn-primary" onclick="openRegenModal()" style="font-size:14px">Generate My Plan</button>
-            </div>
-
-            <div id="plan-tabs" style="display:none">
-                <div class="plan-nav">
-                    <button class="plan-tab active" onclick="showPlanTab('workout', this)">🏋️ Workout</button>
-                    <button class="plan-tab" onclick="showPlanTab('diet', this)">🥗 Diet</button>
-                    <button class="plan-tab" onclick="showPlanTab('supplements', this)">💊 Supplements</button>
-                    <button class="plan-tab" onclick="showPlanTab('coaching', this)">💬 Coaching Notes</button>
+            <div id="log-set-card" class="card" style="display:none;margin-bottom:16px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                    <h3 id="selected-exercise-name" style="margin:0"></h3>
+                    <button class="btn btn-ghost btn-sm" onclick="clearSelectedExercise()">✕</button>
                 </div>
-
-                <div id="plan-workout" class="plan-section active card"></div>
-                <div id="plan-diet" class="plan-section card" style="display:none"></div>
-                <div id="plan-supplements" class="plan-section card" style="display:none"></div>
-                <div id="plan-coaching" class="plan-section card" style="display:none"></div>
-            </div>
-        </section>
-
-        <!-- WORKOUT LOGGER -->
-        <section id="tab-workout" class="tab-content">
-            <div class="page-header">
-                <h1>Workout Logger</h1>
-                <p class="subtitle">Tap an exercise, dial weight and reps, log the set</p>
-            </div>
-
-            <div id="next-session-targets-card" class="card" style="display:none;margin-bottom:16px;border-left:3px solid #111">
-                <div style="font-size:13px;font-weight:700;margin-bottom:8px">Next Session Targets</div>
-                <div id="next-session-targets-text" style="font-size:14px;white-space:pre-line;color:var(--text)"></div>
-            </div>
-
-            <div id="workout-no-session" class="card">
-                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px">
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
                     <div>
-                        <div style="font-size:16px;font-weight:700">Start a session to log sets</div>
-                        <div style="font-size:13px;color:var(--text-muted);margin-top:4px">Exercises will be pulled from your current plan</div>
+                        <div class="section-label" style="margin-top:0">Weight <span class="unit-lbl-weight">(kg)</span></div>
+                        <div class="stepper">
+                            <button class="stepper-btn" onclick="adjustWeight(-1)" aria-label="Decrease weight">−</button>
+                            <input type="number" id="weight-input" class="stepper-input" value="60" step="2.5" min="0" oninput="updateWarmupSuggestions()" />
+                            <button class="stepper-btn" onclick="adjustWeight(1)" aria-label="Increase weight">+</button>
+                        </div>
                     </div>
-                    <button class="btn-primary" onclick="startSession()" style="font-size:14px;padding:12px 24px">🏋️ Start Session</button>
-                </div>
-            </div>
-
-            <div id="workout-active-session" style="display:none">
-                <div class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
                     <div>
-                        <div style="font-size:16px;font-weight:700">Session in progress</div>
-                        <div id="session-timer" style="font-size:13px;color:#555;margin-top:2px">00:00</div>
-                    </div>
-                    <button class="btn-ghost btn" onclick="endSession()">✓ End Session</button>
-                </div>
-
-                <div class="card" style="margin-bottom:16px">
-                    <div class="section-label" style="margin-top:0">Today's Exercises</div>
-                    <div id="exercise-chips" class="chip-list"></div>
-                    <div style="margin-top:12px;display:flex;gap:8px;align-items:center">
-                        <input type="text" id="custom-exercise-input" placeholder="Other exercise…" style="flex:1;max-width:260px" />
-                        <button class="btn btn-ghost btn-sm" onclick="selectCustomExercise()">Select</button>
+                        <div class="section-label" style="margin-top:0">Reps</div>
+                        <div class="stepper">
+                            <button class="stepper-btn" onclick="adjustReps(-1)" aria-label="Decrease reps">−</button>
+                            <input type="number" id="reps-input" class="stepper-input" value="8" step="1" min="1" />
+                            <button class="stepper-btn" onclick="adjustReps(1)" aria-label="Increase reps">+</button>
+                        </div>
                     </div>
                 </div>
 
-                <div id="log-set-card" class="card" style="display:none;margin-bottom:16px">
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-                        <h3 id="selected-exercise-name" style="margin:0"></h3>
-                        <button class="btn btn-ghost btn-sm" onclick="clearSelectedExercise()">✕</button>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
+                <!-- Advanced options (collapsed) -->
+                <details style="margin-bottom:14px">
+                    <summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none;list-style:none;display:flex;align-items:center;gap:6px">
+                        <span>Advanced (RPE / RIR / notes)</span>
+                    </summary>
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px;margin-bottom:10px">
                         <div>
-                            <div class="section-label" style="margin-top:0">Weight <span class="unit-lbl-weight">(kg)</span></div>
-                            <div class="stepper">
-                                <button class="stepper-btn" onclick="adjustWeight(-1)" aria-label="Decrease weight">−</button>
-                                <input type="number" id="weight-input" class="stepper-input" value="60" step="2.5" min="0" oninput="updateWarmupSuggestions()" />
-                                <button class="stepper-btn" onclick="adjustWeight(1)" aria-label="Increase weight">+</button>
-                            </div>
-                        </div>
-                        <div>
-                            <div class="section-label" style="margin-top:0">Reps</div>
-                            <div class="stepper">
-                                <button class="stepper-btn" onclick="adjustReps(-1)" aria-label="Decrease reps">−</button>
-                                <input type="number" id="reps-input" class="stepper-input" value="8" step="1" min="1" />
-                                <button class="stepper-btn" onclick="adjustReps(1)" aria-label="Increase reps">+</button>
-                            </div>
-                        </div>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px">
-                        <div>
-                            <div class="section-label" style="margin-top:0">RPE <span style="font-size:11px;color:var(--text-muted)">(perceived effort 1-10)</span></div>
+                            <div class="section-label" style="margin-top:0">RPE</div>
                             <select id="rpe-input" style="width:100%">
                                 <option value="">Skip</option>
                                 <option value="6">6 — Easy</option>
                                 <option value="7">7 — Moderate</option>
                                 <option value="8">8 — Hard</option>
                                 <option value="8.5">8.5 — Very Hard</option>
-                                <option value="9">9 — Near Maximal</option>
+                                <option value="9">9 — Near Max</option>
                                 <option value="9.5">9.5 — Maximal-ish</option>
                                 <option value="10">10 — True Max</option>
                             </select>
                         </div>
                         <div>
-                            <div class="section-label" style="margin-top:0">RIR <span style="font-size:11px;color:var(--text-muted)">(reps left in tank)</span></div>
+                            <div class="section-label" style="margin-top:0">RIR</div>
                             <select id="rir-input" style="width:100%">
                                 <option value="">Skip</option>
                                 <option value="0">0 — Failure</option>
@@ -429,447 +317,515 @@
                             </select>
                         </div>
                     </div>
-                    <div style="margin-bottom:14px">
-                        <input type="text" id="set-notes-input" placeholder="Set notes (optional — form cue, pain, etc.)" maxlength="200" style="width:100%" />
-                    </div>
-                    <div id="overload-hint" style="display:none;font-size:12px;font-weight:600;color:var(--accent);margin-bottom:8px;padding:6px 10px;background:var(--surface-2);border-radius:8px"></div>
-                    <div style="display:flex;align-items:center;gap:12px">
-                        <button class="btn-primary" onclick="logSet()" style="flex:1;justify-content:center;font-size:14px;padding:12px 20px">Log Set</button>
-                        <div id="last-1rm-hint" style="font-size:12px;color:var(--text-muted)"></div>
-                        <button class="btn btn-ghost btn-sm" onclick="openPlateCalc()" style="font-size:12px;padding:8px 14px;white-space:nowrap">🏋️ Plates</button>
-                    </div>
-                    <div id="warmup-suggestions" style="display:none;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:10px"></div>
+                    <input type="text" id="set-notes-input" placeholder="Notes (form cue, pain, etc.)" maxlength="200" style="width:100%" />
+                </details>
+
+                <div id="overload-hint" style="display:none;font-size:12px;font-weight:600;color:var(--accent);margin-bottom:8px;padding:6px 10px;background:var(--surface-2);border-radius:8px"></div>
+                <div style="display:flex;align-items:center;gap:12px">
+                    <button class="btn-primary" onclick="logSet()" style="flex:1;justify-content:center;font-size:15px;padding:13px 20px">Log Set</button>
+                    <div id="last-1rm-hint" style="font-size:12px;color:var(--text-muted)"></div>
+                    <button class="btn btn-ghost btn-sm" onclick="openPlateCalc()" style="font-size:12px;padding:8px 14px;white-space:nowrap">Plates</button>
                 </div>
+                <div id="warmup-suggestions" style="display:none;margin-top:12px;padding:12px;background:var(--surface-2);border-radius:10px"></div>
+            </div>
 
-                <div class="card">
-                    <h3>Sets This Session</h3>
-                    <div id="session-sets-list"><p class="empty-state" style="padding:16px 0">No sets yet. Select an exercise above.</p></div>
+            <div class="card">
+                <h3>Sets This Session</h3>
+                <div id="session-sets-list"><p class="empty-state" style="padding:16px 0">No sets yet. Select an exercise above.</p></div>
+            </div>
+        </div>
+
+        <div class="card" style="margin-top:20px">
+            <h3>Personal Records</h3>
+            <div id="prs-list"><p class="empty-state">No personal records yet.</p></div>
+        </div>
+
+        <div class="card" style="margin-top:20px">
+            <h3>Session History</h3>
+            <div id="session-history-list"><p class="empty-state">No sessions yet.</p></div>
+        </div>
+
+    </section>
+
+
+    <!-- ══════════ EAT ══════════ -->
+    <section id="tab-nutrition" class="tab-content">
+
+        <!-- Macro totals -->
+        <div class="card">
+            <div class="macro-row" style="margin-bottom:20px">
+                <div class="macro-card">
+                    <div class="macro-value" id="nt-calories">—</div>
+                    <div class="macro-label">Calories</div>
+                    <div class="macro-progress" style="margin-top:8px"><div id="nt-cal-fill" class="macro-fill" style="background:var(--accent);width:0%"></div></div>
+                    <div id="nt-cal-target" style="font-size:11px;color:var(--text-muted);margin-top:3px"></div>
+                </div>
+                <div class="macro-card">
+                    <div class="macro-value" id="nt-protein">—</div>
+                    <div class="macro-label">Protein g</div>
+                    <div class="macro-progress" style="margin-top:8px"><div id="nt-prot-fill" class="macro-fill" style="background:var(--green);width:0%"></div></div>
+                    <div id="nt-prot-target" style="font-size:11px;color:var(--text-muted);margin-top:3px"></div>
+                </div>
+                <div class="macro-card">
+                    <div class="macro-value" id="nt-carbs">—</div>
+                    <div class="macro-label">Carbs g</div>
+                    <div class="macro-progress" style="margin-top:8px"><div id="nt-carb-fill" class="macro-fill" style="background:#6366f1;width:0%"></div></div>
+                    <div id="nt-carb-target" style="font-size:11px;color:var(--text-muted);margin-top:3px"></div>
+                </div>
+                <div class="macro-card">
+                    <div class="macro-value" id="nt-fat">—</div>
+                    <div class="macro-label">Fat g</div>
+                    <div class="macro-progress" style="margin-top:8px"><div id="nt-fat-fill" class="macro-fill" style="background:#f59e0b;width:0%"></div></div>
+                    <div id="nt-fat-target" style="font-size:11px;color:var(--text-muted);margin-top:3px"></div>
                 </div>
             </div>
 
-            <div class="card" style="margin-top:20px">
-                <h3>Personal Records</h3>
-                <div id="prs-list"><p class="empty-state">No personal records yet.</p></div>
-            </div>
+            <!-- Meal log form -->
+            <form id="meal-form" onsubmit="logMeal(event)">
+                <div class="form-group" style="margin-bottom:12px">
+                    <label>What did you eat?</label>
+                    <input type="text" id="meal-desc" placeholder="e.g. 200g chicken breast + rice — macros auto-estimated" />
+                </div>
+                <!-- Optional manual macros -->
+                <details style="margin-bottom:16px">
+                    <summary style="font-size:12px;color:var(--text-muted);cursor:pointer;user-select:none;list-style:none">Enter macros manually (optional)</summary>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px">
+                        <div style="flex:1;min-width:70px"><label style="font-size:12px;color:var(--text-muted)">kcal</label><input type="number" id="meal-kcal" min="0" step="1" placeholder="auto" style="width:100%" /></div>
+                        <div style="flex:1;min-width:70px"><label style="font-size:12px;color:var(--text-muted)">Protein g</label><input type="number" id="meal-protein" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
+                        <div style="flex:1;min-width:70px"><label style="font-size:12px;color:var(--text-muted)">Carbs g</label><input type="number" id="meal-carbs" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
+                        <div style="flex:1;min-width:70px"><label style="font-size:12px;color:var(--text-muted)">Fat g</label><input type="number" id="meal-fat" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
+                    </div>
+                </details>
+                <button type="submit" id="meal-log-btn" class="btn-primary" style="width:100%;justify-content:center;font-size:15px;padding:13px">Log Meal</button>
+                <p class="banner-info" style="margin-top:10px;margin-bottom:0;font-size:12px">AI macro estimates may vary ±20%. Verify with a food database for clinical accuracy.</p>
+            </form>
+        </div>
 
-            <div class="card" style="margin-top:20px">
-                <h3>Session History</h3>
-                <div id="session-history-list"><p class="empty-state">No sessions yet.</p></div>
-            </div>
-        </section>
+        <!-- Today's meals -->
+        <div class="card" style="margin-top:16px">
+            <h3>Today's Meals</h3>
+            <div id="meals-today-list"><p class="empty-state">No meals logged today.</p></div>
+        </div>
 
-        <!-- RESEARCH -->
-        <section id="tab-research" class="tab-content">
-            <div class="page-header">
-                <h1>Research Library</h1>
-                <p class="subtitle">Latest peer-reviewed findings from PubMed &amp; Semantic Scholar</p>
-                <button class="btn btn-primary" onclick="refreshResearch()">Refresh Research</button>
-            </div>
-            <!-- Change 9: Research search input -->
-            <input type="text" id="research-search" placeholder="Search topics…" oninput="filterResearch()" aria-label="Search research topics" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--text);font-size:13px;margin-bottom:12px">
-            <div id="research-list"><p class="empty-state">No research loaded. Click "Refresh Research" to fetch the latest papers.</p></div>
-        </section>
+        <!-- Recent meals history (collapsed by default) -->
+        <details class="card" style="margin-top:16px;cursor:pointer">
+            <summary style="font-size:15px;font-weight:600;list-style:none;cursor:pointer">Recent Meals (last 30)</summary>
+            <div id="meals-history-list" style="margin-top:12px"><p class="empty-state">No meals logged yet.</p></div>
+        </details>
 
-        <!-- PROGRESS -->
-        <section id="tab-progress" class="tab-content">
-            <div class="page-header">
-                <h1>Progress Tracker</h1>
-                <p class="subtitle">Visual progress over time</p>
-            </div>
+        <!-- Macro pie (hidden, populated by JS) -->
+        <div id="macro-pie-container" style="display:none">
+            <svg id="macro-pie" width="120" height="120" viewBox="0 0 120 120"></svg>
+            <div id="macro-pie-legend"></div>
+        </div>
+
+    </section>
+
+
+    <!-- ══════════ PROGRESS ══════════ -->
+    <section id="tab-progress" class="tab-content">
+
+        <!-- Inner sub-navigation -->
+        <div class="inner-nav">
+            <button class="inner-tab active" onclick="showProgressTab('body', this)">Body</button>
+            <button class="inner-tab" onclick="showProgressTab('strength', this)">Strength</button>
+            <button class="inner-tab" onclick="showProgressTab('reports', this)">Reports</button>
+        </div>
+
+        <!-- Body: photos + measurements -->
+        <div id="prog-body" class="inner-section active">
             <div id="comparison-card" class="card" style="display:none;margin-bottom:16px">
                 <h3 style="margin-bottom:14px">Before vs Now</h3>
                 <div id="comparison-content" style="display:flex;gap:16px;flex-wrap:wrap"></div>
             </div>
             <div id="progress-content"><p class="empty-state">No progress data yet. Upload at least two body photos to see your progress.</p></div>
-            <div class="card" style="margin-top:24px">
-                <h3>Strength Trends (4 weeks)</h3>
-                <div id="plateaus-content"><p class="empty-state">No strength data yet. Log workouts to see trends.</p></div>
-            </div>
-            <div class="card" style="margin-top:24px">
+            <div class="card" style="margin-top:20px">
                 <h3>Body Measurements</h3>
                 <form id="measurement-form" onsubmit="logMeasurement(event)" style="margin-bottom:16px">
                     <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-                        <div style="flex:1;min-width:90px"><label style="font-size:12px;color:var(--text-muted)">Weight <span class="unit-lbl-weight">(kg)</span></label><input type="number" id="m-weight" step="0.1" placeholder="85.0" style="width:100%" /></div>
-                        <div style="flex:1;min-width:90px"><label style="font-size:12px;color:var(--text-muted)">Waist <span class="unit-lbl-length">(cm)</span></label><input type="number" id="m-waist" step="0.5" placeholder="82" style="width:100%" /></div>
-                        <div style="flex:1;min-width:90px"><label style="font-size:12px;color:var(--text-muted)">Chest <span class="unit-lbl-length">(cm)</span></label><input type="number" id="m-chest" step="0.5" placeholder="100" style="width:100%" /></div>
-                        <div style="flex:1;min-width:90px"><label style="font-size:12px;color:var(--text-muted)">Arm <span class="unit-lbl-length">(cm)</span></label><input type="number" id="m-arm" step="0.5" placeholder="38" style="width:100%" /></div>
+                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Weight <span class="unit-lbl-weight">(kg)</span></label><input type="number" id="m-weight" step="0.1" placeholder="85.0" style="width:100%" /></div>
+                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Waist <span class="unit-lbl-length">(cm)</span></label><input type="number" id="m-waist" step="0.5" placeholder="82" style="width:100%" /></div>
+                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Chest <span class="unit-lbl-length">(cm)</span></label><input type="number" id="m-chest" step="0.5" placeholder="100" style="width:100%" /></div>
+                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Arm <span class="unit-lbl-length">(cm)</span></label><input type="number" id="m-arm" step="0.5" placeholder="38" style="width:100%" /></div>
                     </div>
                     <button type="submit" class="btn-primary" style="font-size:13px;padding:10px 20px">Log Measurements</button>
                 </form>
                 <div id="weight-chart" style="display:none;margin-bottom:16px;padding:8px 0"></div>
-                <!-- Change 5: Waist and arm trend charts -->
                 <div id="waist-chart" style="display:none;margin-bottom:12px">
-                  <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Waist (cm)</p>
-                  <div id="waist-chart-svg"></div>
+                    <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Waist (cm)</p>
+                    <div id="waist-chart-svg"></div>
                 </div>
                 <div id="arm-chart" style="display:none;margin-bottom:12px">
-                  <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Avg Arm (cm)</p>
-                  <div id="arm-chart-svg"></div>
+                    <p style="font-size:12px;color:var(--text-muted);margin-bottom:4px">Avg Arm (cm)</p>
+                    <div id="arm-chart-svg"></div>
                 </div>
                 <div id="measurements-history"><p class="empty-state">No measurements logged yet.</p></div>
             </div>
-        </section>
+        </div>
 
-        <!-- PROFILE -->
-        <section id="tab-profile" class="tab-content">
-            <div class="page-header" style="display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px">
+        <!-- Strength: PRs + trends -->
+        <div id="prog-strength" class="inner-section">
+            <div class="card">
+                <h3>Strength Trends (4 weeks)</h3>
+                <div id="plateaus-content"><p class="empty-state">No strength data yet. Log workouts to see trends.</p></div>
+            </div>
+        </div>
+
+        <!-- Reports + Research -->
+        <div id="prog-reports" class="inner-section">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
                 <div>
-                    <h1>Profile</h1>
-                    <p class="subtitle">Your details power every recommendation</p>
+                    <h2 style="font-size:1.2rem;font-weight:700;margin-bottom:2px">Weekly Reports</h2>
+                    <p style="font-size:13px;color:var(--text-muted)">AI coaching summaries, auto-generated each week</p>
                 </div>
-                <button class="btn btn-ghost btn-sm" onclick="toggleUnitPref()" style="font-size:12px;white-space:nowrap;margin-top:8px">Units: <span id="profile-unit-label">Metric</span></button>
+                <button class="btn-primary" onclick="generateReport()" style="font-size:13px;padding:10px 18px">Generate Report</button>
             </div>
-            <div class="card">
-                <form id="profile-form" onsubmit="saveProfile(event)">
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label>Age</label>
-                            <select name="age" id="profile-age">
-                                <option value="">Select age…</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Gender</label>
-                            <select name="gender">
-                                <option value="">Select…</option>
-                                <option value="male">Male</option>
-                                <option value="female">Female</option>
-                                <option value="non-binary">Non-binary</option>
-                                <option value="other">Other / Prefer not to say</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Height <span class="unit-lbl-height">(cm)</span></label>
-                            <select name="height_cm" id="profile-height">
-                                <option value="">Select height…</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Weight <span class="unit-lbl-weight">(kg)</span></label>
-                            <select name="weight_kg" id="profile-weight">
-                                <option value="">Select weight…</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Primary Goal</label>
-                            <select name="goal">
-                                <option value="">Select…</option>
-                                <option value="bulk">Bulk (muscle gain)</option>
-                                <option value="cut">Cut (fat loss)</option>
-                                <option value="recomp">Recomp (muscle gain + fat loss)</option>
-                                <option value="strength">Strength</option>
-                                <option value="health">General health &amp; fitness</option>
-                                <option value="contest_prep">Contest prep</option>
-                                <option value="maintain">Maintain</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Training Experience</label>
-                            <select name="training_experience">
-                                <option value="">Select…</option>
-                                <option value="beginner">Beginner (0-1 year)</option>
-                                <option value="intermediate">Intermediate (1-3 years)</option>
-                                <option value="advanced">Advanced (3+ years)</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Training Days / Week</label>
-                            <select name="training_days_per_week">
-                                <option value="">Select…</option>
-                                <option value="2">2 days</option>
-                                <option value="3">3 days</option>
-                                <option value="4">4 days</option>
-                                <option value="5">5 days</option>
-                                <option value="6">6 days</option>
-                                <option value="7">7 days</option>
-                            </select>
-                        </div>
-                        <div class="form-group full-width">
-                            <label>Dietary Restrictions</label>
-                            <div id="diet-chips" class="profile-chips" style="margin-bottom:8px"></div>
-                            <input type="text" name="dietary_restrictions" id="diet-other" placeholder="Other (e.g. specific allergies)…" />
-                        </div>
-                        <div class="form-group full-width">
-                            <label>Injuries or Physical Limitations</label>
-                            <div id="injury-chips" class="profile-chips" style="margin-bottom:8px"></div>
-                            <input type="text" name="injuries" id="injury-other" placeholder="Other (describe)…" />
-                        </div>
-                        <div class="form-group">
-                            <label>Competition Show Date</label>
-                            <input type="date" name="show_date" />
-                        </div>
-                    </div>
-                    <button type="submit" class="btn-primary">Save Profile</button>
-                </form>
-            </div>
+            <div id="reports-list"><p class="empty-state">No reports yet. Click "Generate Report" to create your first coaching summary.</p></div>
 
-            <div class="card" id="telegram-link-card" style="margin-top:1.5rem">
-                <h3 style="margin-bottom:1rem">Telegram Account</h3>
-                <div id="telegram-linked-status" style="display:none">
-                    <div class="telegram-linked-badge">
-                        <span>✅ Linked</span>
-                        <span id="telegram-linked-email" style="color:var(--text-muted);font-size:13px"></span>
-                    </div>
+            <div class="card" style="margin-top:20px">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+                    <h3 style="margin:0">Research Highlights</h3>
+                    <button class="btn btn-ghost btn-sm" onclick="refreshResearch()">Refresh</button>
                 </div>
-                <div id="telegram-unlinked-status">
-                    <p style="color:var(--text-muted);font-size:14px;margin-bottom:1rem">
-                        Link your Telegram account to sync data between the bot and the web app.
-                        Run <code>/link</code> in your Telegram bot to get a code.
-                    </p>
-                    <div style="display:flex;gap:8px;align-items:flex-end">
-                        <div style="flex:1">
-                            <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Link code from /link command</label>
-                            <input id="telegram-link-code" type="text" maxlength="8" placeholder="e.g. A3F7B2"
-                                style="font-size:18px;letter-spacing:4px;text-transform:uppercase;font-family:monospace;width:100%" />
-                        </div>
-                        <button class="btn-primary" onclick="linkTelegram()" style="padding:12px 20px;font-size:14px">Link</button>
-                    </div>
-                    <p id="telegram-link-error" class="form-error" style="display:none;margin-top:8px"></p>
-                </div>
-            </div>
-
-            <!-- Change 7: Export Data -->
-            <div class="card" style="margin-top:1.5rem">
-                <h3>Export Data</h3>
-                <button class="btn btn-secondary" onclick="exportDataCSV()" style="font-size:13px">&#x2B07; Download My Data (CSV)</button>
-            </div>
-
-            <div class="card" style="margin-top:1.5rem">
-                <h3>Badges &amp; Streaks</h3>
-                <div id="badges-earned" style="margin-bottom:16px"><p class="empty-state">No badges yet — complete check-in and workout streaks to earn them.</p></div>
-                <div id="streaks-detail"></div>
-            </div>
-
-            <div class="card" style="margin-top:1.5rem">
-                <h3>Goals</h3>
-                <div id="goals-list" style="margin-bottom:16px"><p class="empty-state">No goals set yet.</p></div>
-                <form id="goals-form" onsubmit="saveGoal(event)">
-                    <div class="form-grid">
-                        <div class="form-group">
-                            <label>Goal Type</label>
-                            <select name="goal_type">
-                                <option value="bulk">Bulk (mass gain)</option>
-                                <option value="cut">Cut (fat loss)</option>
-                                <option value="recomp">Recomp</option>
-                                <option value="strength">Strength</option>
-                                <option value="maintain">Maintain</option>
-                            </select>
-                        </div>
-                        <div class="form-group">
-                            <label>Target Weight <span class="unit-lbl-weight">(kg)</span></label>
-                            <input type="number" name="target_weight_kg" step="0.1" placeholder="e.g. 80" />
-                        </div>
-                        <div class="form-group">
-                            <label>Target Body Fat %</label>
-                            <input type="number" name="target_bf_pct" step="0.1" placeholder="e.g. 12" />
-                        </div>
-                        <div class="form-group">
-                            <label>Target Date</label>
-                            <input type="date" name="target_date" />
-                        </div>
-                    </div>
-                    <button type="submit" class="btn-primary" style="margin-top:8px">Set Goal</button>
-                </form>
-            </div>
-        </section>
-
-        <!-- NUTRITION -->
-        <section id="tab-nutrition" class="tab-content">
-            <div class="page-header">
-                <h1>Nutrition</h1>
-                <p class="subtitle">Track meals and hit your macro targets</p>
-            </div>
-            <div class="card">
-                <h3>Today's Macros</h3>
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:12px 0 20px">
-                    <div>
-                        <div class="stat-label">Calories</div>
-                        <div id="nt-calories" style="font-size:22px;font-weight:800">—</div>
-                        <div class="macro-progress"><div id="nt-cal-fill" class="macro-fill" style="background:#111;width:0%"></div></div>
-                        <div id="nt-cal-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
-                    </div>
-                    <div>
-                        <div class="stat-label">Protein</div>
-                        <div id="nt-protein" style="font-size:22px;font-weight:800;color:var(--green)">—</div>
-                        <div class="macro-progress"><div id="nt-prot-fill" class="macro-fill" style="background:var(--green);width:0%"></div></div>
-                        <div id="nt-prot-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
-                    </div>
-                    <div>
-                        <div class="stat-label">Carbs</div>
-                        <div id="nt-carbs" style="font-size:22px;font-weight:800">—</div>
-                        <div class="macro-progress"><div id="nt-carb-fill" class="macro-fill" style="background:#6366f1;width:0%"></div></div>
-                        <div id="nt-carb-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
-                    </div>
-                    <div>
-                        <div class="stat-label">Fat</div>
-                        <div id="nt-fat" style="font-size:22px;font-weight:800">—</div>
-                        <div class="macro-progress"><div id="nt-fat-fill" class="macro-fill" style="background:#f59e0b;width:0%"></div></div>
-                        <div id="nt-fat-target" style="font-size:11px;color:var(--text-muted);margin-top:2px"></div>
-                    </div>
-                </div>
-                <!-- Change 2: Macro pie chart -->
-                <div id="macro-pie-container" style="display:none;text-align:center;margin:12px 0">
-                  <svg id="macro-pie" width="120" height="120" viewBox="0 0 120 120" style="display:block;margin:0 auto"></svg>
-                  <div id="macro-pie-legend" style="display:flex;justify-content:center;gap:16px;font-size:11px;margin-top:6px"></div>
-                </div>
-                <form id="meal-form" onsubmit="logMeal(event)">
-                    <div class="form-group" style="margin-bottom:10px">
-                        <label>Meal description</label>
-                        <input type="text" id="meal-desc" placeholder="e.g. 200g chicken breast + rice · macros auto-estimated if not filled below" />
-                    </div>
-                    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
-                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">kcal</label><input type="number" id="meal-kcal" min="0" step="1" placeholder="auto" style="width:100%" /></div>
-                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Protein (g)</label><input type="number" id="meal-protein" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
-                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Carbs (g)</label><input type="number" id="meal-carbs" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
-                        <div style="flex:1;min-width:80px"><label style="font-size:12px;color:var(--text-muted)">Fat (g)</label><input type="number" id="meal-fat" min="0" step="0.1" placeholder="auto" style="width:100%" /></div>
-                    </div>
-                    <button type="submit" id="meal-log-btn" class="btn-primary" style="font-size:13px;padding:10px 20px">Log Meal</button>
-                    <p class="banner-info" style="margin-top:10px;margin-bottom:0">AI macro estimates may vary ±20%. For medical or clinical accuracy, verify with a food database or registered dietitian.</p>
-                </form>
-            </div>
-            <div class="card" style="margin-top:16px">
-                <h3>Today's Meals</h3>
-                <div id="meals-today-list"><p class="empty-state">No meals logged today.</p></div>
-            </div>
-            <div class="card" style="margin-top:16px">
-                <h3>Recent Meals (last 30)</h3>
-                <div id="meals-history-list"><p class="empty-state">No meals logged yet.</p></div>
-            </div>
-        </section>
-
-        <!-- REPORTS -->
-        <section id="tab-reports" class="tab-content">
-            <div class="page-header">
-                <h1>Weekly Reports</h1>
-                <p class="subtitle">AI-generated coaching summaries — auto-delivered every Sunday</p>
-                <button class="btn btn-primary" onclick="generateReport()">Generate Report Now</button>
-            </div>
-            <div id="reports-list"><p class="empty-state">No reports yet. Click "Generate Report Now" above to create your first weekly coaching summary.</p></div>
-        </section>
-    </main>
-
-    <!-- Plate calculator modal -->
-    <div id="plate-calc-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9500;align-items:center;justify-content:center;padding:16px">
-        <div style="background:var(--surface);border-radius:20px;padding:24px;max-width:340px;width:100%">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
-                <h3 style="margin:0">Plate Calculator</h3>
-                <button onclick="closePlateCalc()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">✕</button>
-            </div>
-            <div style="margin-bottom:12px">
-                <label style="font-size:13px;color:var(--text-muted)">Target weight (<span class="unit-lbl-weight">kg</span>)</label>
-                <input type="number" id="plate-calc-input" min="0" step="2.5" style="width:100%;margin-top:6px" oninput="calcPlates()" />
-            </div>
-            <div id="plate-calc-result" style="padding:14px;background:var(--surface-2);border-radius:10px;font-size:14px;line-height:1.6"></div>
-        </div>
-    </div>
-
-    <!-- Rest timer pill -->
-    <div id="rest-timer-bar" style="display:none;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#22c55e;color:#fff;padding:10px 20px;border-radius:50px;font-size:14px;font-weight:700;box-shadow:0 4px 20px rgba(0,0,0,0.2);z-index:8887;align-items:center;gap:12px;white-space:nowrap">
-        <span>⏱ Rest</span>
-        <button onclick="adjustRestTimer(-15)" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:20px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:700">−15s</button>
-        <span id="rest-timer-countdown">1:30</span>
-        <button onclick="adjustRestTimer(15)" style="background:rgba(255,255,255,0.2);border:none;color:#fff;border-radius:20px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:700">+15s</button>
-        <button onclick="clearRestTimer()" style="background:rgba(255,255,255,0.25);border:none;color:#fff;border-radius:50px;padding:2px 10px;font-size:12px;cursor:pointer">Skip</button>
-    </div>
-
-    <!-- Bottom mobile tab bar -->
-    <nav id="bottom-tab-bar" role="navigation" aria-label="Primary navigation">
-        <button class="bottom-tab active" data-tab="dashboard" onclick="showTab('dashboard')" aria-label="Dashboard">
-            <span class="bottom-tab-icon">🏠</span>
-            <span class="bottom-tab-label">Home</span>
-        </button>
-        <button class="bottom-tab" data-tab="workout" onclick="showTab('workout')" aria-label="Workout">
-            <span class="bottom-tab-icon">💪</span>
-            <span class="bottom-tab-label">Workout</span>
-        </button>
-        <button class="bottom-tab" data-tab="nutrition" onclick="showTab('nutrition')" aria-label="Nutrition">
-            <span class="bottom-tab-icon">🥗</span>
-            <span class="bottom-tab-label">Nutrition</span>
-        </button>
-        <button class="bottom-tab" data-tab="progress" onclick="showTab('progress')" aria-label="Progress">
-            <span class="bottom-tab-icon">📈</span>
-            <span class="bottom-tab-label">Progress</span>
-        </button>
-        <button class="bottom-tab" data-tab="profile" onclick="showTab('profile')" aria-label="Profile">
-            <span class="bottom-tab-icon">👤</span>
-            <span class="bottom-tab-label">Profile</span>
-        </button>
-        <button class="bottom-tab" onclick="toggleDrawer()" aria-label="More options">
-            <span class="bottom-tab-icon">⋯</span>
-            <span class="bottom-tab-label">More</span>
-        </button>
-    </nav>
-
-    <!-- Confirm regenerate plan modal -->
-    <div id="regen-plan-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:9400;align-items:center;justify-content:center;padding:20px">
-        <div style="background:var(--surface);border-radius:20px;padding:28px;max-width:360px;width:100%;text-align:center">
-            <div style="font-size:36px;margin-bottom:12px">🔄</div>
-            <h3 style="margin-bottom:8px">Regenerate plan?</h3>
-            <p style="font-size:14px;color:var(--text-muted);margin-bottom:20px">This will replace your current plan with a fresh AI-generated one. Your history is preserved.</p>
-            <div style="display:flex;gap:10px">
-                <button class="btn-secondary" onclick="closeRegenModal()" style="flex:1;font-size:14px">Cancel</button>
-                <button class="btn-primary" onclick="confirmGeneratePlan()" style="flex:1;font-size:14px">Generate</button>
+                <input type="text" id="research-search" placeholder="Search topics…" oninput="filterResearch()" aria-label="Search research topics" style="width:100%;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--surface-2);color:var(--text);font-size:13px;margin-bottom:12px">
+                <div id="research-list"><p class="empty-state">No research loaded. Click Refresh to fetch the latest papers.</p></div>
             </div>
         </div>
-    </div>
 
-    <!-- Loading overlay -->
-    <div id="loading-overlay" style="display:none">
-        <div class="loading-box">
-            <div class="spinner"></div>
-            <div id="loading-message">Working…</div>
+    </section>
+
+
+    <!-- ══════════ SECONDARY SECTIONS (via gear menu) ══════════ -->
+
+    <!-- Profile -->
+    <section id="tab-profile" class="tab-content">
+        <div class="secondary-header">
+            <button class="secondary-back" onclick="showTab('dashboard')">← Back</button>
+            <h2 class="secondary-title">My Profile</h2>
         </div>
-    </div>
 
-    <!-- Toast -->
-    <div id="toast" class="toast" role="alert" aria-live="assertive" style="display:none"></div>
-
-    <!-- Background task pill (non-blocking AI status) -->
-    <div id="bg-task-bar" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#111;color:#fff;padding:10px 20px;border-radius:50px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,0.25);z-index:8888;align-items:center;gap:10px;white-space:nowrap">
-        <span id="bg-task-spinner" style="display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,0.3);border-top-color:#fff;border-radius:50%;animation:spin 0.7s linear infinite"></span>
-        <span id="bg-task-msg">Working…</span>
-    </div>
-
-    <!-- ── Auth overlay ── -->
-    <div id="onboarding-overlay" style="display:none">
-        <div id="onboarding-inner">
-            <!-- Panel A: Register -->
-            <div id="ob-panel-register" class="ob-step active">
-                <div class="ob-badge">🏋️ AI Coaching</div>
-                <h1>Finally, coaching that<br><strong>actually works</strong></h1>
-                <p class="ob-sub">Create your free account to get started.</p>
-                <input id="ob-email" placeholder="Email" type="email" />
-                <input id="ob-password" placeholder="Password (8+ chars)" type="password" />
-                <p id="ob-auth-error" class="form-error"></p>
-                <button class="btn-primary" onclick="obCreateAccount()">Create Account →</button>
-                <button class="btn-ghost" onclick="obShowLogin()">I already have an account</button>
-                <ul class="ob-checklist">
-                    <li>✓ Personalized workout &amp; diet plans</li>
-                    <li>✓ Syncs with your Telegram bot</li>
-                    <li>✓ See results in 4 weeks</li>
-                </ul>
+        <div class="card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+                <h3 style="margin:0">Details</h3>
+                <button class="btn btn-ghost btn-sm" onclick="toggleUnitPref()" style="font-size:12px">Units: <span id="profile-unit-label">Metric</span></button>
             </div>
-            <!-- Panel B: Login -->
-            <div id="ob-panel-login" class="ob-step">
-                <h2>Welcome back</h2>
-                <p class="ob-sub">Sign in to continue.</p>
-                <input id="ob-login-email" placeholder="Email" type="email" />
-                <input id="ob-login-password" placeholder="Password" type="password" />
-                <p id="ob-login-error" class="form-error"></p>
-                <button class="btn-primary" onclick="obLogin()">Sign In →</button>
-                <button class="btn-ghost" onclick="obShowRegister()">← Create a new account</button>
+            <form id="profile-form" onsubmit="saveProfile(event)">
+                <div class="form-grid">
+                    <div class="form-group"><label>Age</label><select name="age" id="profile-age"><option value="">Select age…</option></select></div>
+                    <div class="form-group"><label>Gender</label><select name="gender"><option value="">Select…</option><option value="male">Male</option><option value="female">Female</option><option value="non-binary">Non-binary</option><option value="other">Other / Prefer not to say</option></select></div>
+                    <div class="form-group"><label>Height <span class="unit-lbl-height">(cm)</span></label><select name="height_cm" id="profile-height"><option value="">Select height…</option></select></div>
+                    <div class="form-group"><label>Weight <span class="unit-lbl-weight">(kg)</span></label><select name="weight_kg" id="profile-weight"><option value="">Select weight…</option></select></div>
+                    <div class="form-group"><label>Primary Goal</label><select name="goal"><option value="">Select…</option><option value="bulk">Bulk (muscle gain)</option><option value="cut">Cut (fat loss)</option><option value="recomp">Recomp</option><option value="strength">Strength</option><option value="health">General health</option><option value="contest_prep">Contest prep</option><option value="maintain">Maintain</option></select></div>
+                    <div class="form-group"><label>Experience</label><select name="training_experience"><option value="">Select…</option><option value="beginner">Beginner (0-1 yr)</option><option value="intermediate">Intermediate (1-3 yrs)</option><option value="advanced">Advanced (3+ yrs)</option></select></div>
+                    <div class="form-group"><label>Training Days / Week</label><select name="training_days_per_week"><option value="">Select…</option><option value="2">2 days</option><option value="3">3 days</option><option value="4">4 days</option><option value="5">5 days</option><option value="6">6 days</option><option value="7">7 days</option></select></div>
+                    <div class="form-group full-width"><label>Dietary Restrictions</label><div id="diet-chips" class="profile-chips" style="margin-bottom:8px"></div><input type="text" name="dietary_restrictions" id="diet-other" placeholder="Other (e.g. specific allergies)…" /></div>
+                    <div class="form-group full-width"><label>Injuries / Limitations</label><div id="injury-chips" class="profile-chips" style="margin-bottom:8px"></div><input type="text" name="injuries" id="injury-other" placeholder="Other (describe)…" /></div>
+                    <div class="form-group"><label>Competition Show Date</label><input type="date" name="show_date" /></div>
+                </div>
+                <button type="submit" class="btn-primary">Save Profile</button>
+            </form>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h3 style="margin-bottom:16px">Telegram Account</h3>
+            <div id="telegram-linked-status" style="display:none"><div class="telegram-linked-badge"><span>✅ Linked</span><span id="telegram-linked-email" style="color:var(--text-muted);font-size:13px"></span></div></div>
+            <div id="telegram-unlinked-status">
+                <p style="color:var(--text-muted);font-size:14px;margin-bottom:16px">Link your Telegram account to sync data between the bot and this app. Run <code>/link</code> in the bot to get a code.</p>
+                <div style="display:flex;gap:8px;align-items:flex-end">
+                    <div style="flex:1"><label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">Link code from /link command</label><input id="telegram-link-code" type="text" maxlength="8" placeholder="e.g. A3F7B2" style="font-size:18px;letter-spacing:4px;text-transform:uppercase;font-family:monospace;width:100%" /></div>
+                    <button class="btn-primary" onclick="linkTelegram()" style="padding:12px 20px;font-size:14px">Link</button>
+                </div>
+                <p id="telegram-link-error" class="form-error" style="display:none;margin-top:8px"></p>
             </div>
         </div>
-    </div>
 
-    <script>
-    // Register service worker for PWA + push notifications
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/static/sw.js').catch(() => {
-        // Service worker registration failed; app still works
-      });
+        <div class="card" style="margin-top:16px">
+            <h3>Badges &amp; Streaks</h3>
+            <div id="badges-earned" style="margin-bottom:16px"><p class="empty-state">No badges yet — complete check-in and workout streaks to earn them.</p></div>
+            <div id="streaks-detail"></div>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h3>Goals</h3>
+            <div id="goals-list" style="margin-bottom:16px"><p class="empty-state">No goals set yet.</p></div>
+            <form id="goals-form" onsubmit="saveGoal(event)">
+                <div class="form-grid">
+                    <div class="form-group"><label>Goal Type</label><select name="goal_type"><option value="bulk">Bulk</option><option value="cut">Cut</option><option value="recomp">Recomp</option><option value="strength">Strength</option><option value="maintain">Maintain</option></select></div>
+                    <div class="form-group"><label>Target Weight <span class="unit-lbl-weight">(kg)</span></label><input type="number" name="target_weight_kg" step="0.1" placeholder="e.g. 80" /></div>
+                    <div class="form-group"><label>Target Body Fat %</label><input type="number" name="target_bf_pct" step="0.1" placeholder="e.g. 12" /></div>
+                    <div class="form-group"><label>Target Date</label><input type="date" name="target_date" /></div>
+                </div>
+                <button type="submit" class="btn-primary" style="margin-top:8px">Set Goal</button>
+            </form>
+        </div>
+
+        <div class="card" style="margin-top:16px">
+            <h3>Export Data</h3>
+            <button class="btn btn-secondary" onclick="exportDataCSV()" style="font-size:13px">↓ Download My Data (CSV)</button>
+        </div>
+    </section>
+
+    <!-- Plans -->
+    <section id="tab-plans" class="tab-content">
+        <div class="secondary-header">
+            <button class="secondary-back" onclick="showTab('dashboard')">← Back</button>
+            <h2 class="secondary-title">My Plan</h2>
+            <div style="display:flex;gap:8px">
+                <button class="btn btn-ghost btn-sm" onclick="printPlan()" style="font-size:13px">Print</button>
+                <button class="btn-primary" onclick="openRegenModal()" style="font-size:13px">New Plan</button>
+            </div>
+        </div>
+
+        <div id="no-plan-message" class="card" style="display:none">
+            <p class="empty-state" style="margin-bottom:16px">No plan yet. Upload a physique photo in Body Analysis, then generate your plan.</p>
+            <button class="btn-primary" onclick="openRegenModal()">Generate My Plan</button>
+        </div>
+
+        <div id="plan-tabs" style="display:none">
+            <div class="plan-nav">
+                <button class="plan-tab active" onclick="showPlanTab('workout', this)">Workout</button>
+                <button class="plan-tab" onclick="showPlanTab('diet', this)">Diet</button>
+                <button class="plan-tab" onclick="showPlanTab('supplements', this)">Supplements</button>
+                <button class="plan-tab" onclick="showPlanTab('coaching', this)">Coaching Notes</button>
+            </div>
+            <div id="plan-workout" class="plan-section active card"></div>
+            <div id="plan-diet" class="plan-section card" style="display:none"></div>
+            <div id="plan-supplements" class="plan-section card" style="display:none"></div>
+            <div id="plan-coaching" class="plan-section card" style="display:none"></div>
+        </div>
+    </section>
+
+    <!-- Body Analysis -->
+    <section id="tab-analysis" class="tab-content">
+        <div class="secondary-header">
+            <button class="secondary-back" onclick="showTab('dashboard')">← Back</button>
+            <h2 class="secondary-title">Body Analysis</h2>
+        </div>
+
+        <div class="card">
+            <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Upload physique photos" ondragover="event.preventDefault()" ondrop="handleDrop(event)" onclick="document.getElementById('photo-input').click()" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();document.getElementById('photo-input').click()}">
+                <div class="drop-icon">📸</div>
+                <div class="drop-text">Drop photos here or tap to select</div>
+                <div class="drop-subtext">JPG, PNG, WebP · Max 20MB · Up to 5 photos</div>
+                <input type="file" id="photo-input" accept=".jpg,.jpeg,.png,.webp" multiple style="display:none" onchange="handleFileSelect(this)" />
+            </div>
+            <div id="upload-preview" style="display:none">
+                <div id="preview-strip" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px"></div>
+                <button class="btn btn-primary" id="analyze-btn" onclick="submitAnalysis()">Analyze Photo</button>
+                <button class="btn btn-ghost" onclick="clearUpload()">Cancel</button>
+            </div>
+        </div>
+
+        <div id="analysis-result" style="display:none" class="card">
+            <h3>Analysis Result <span id="analysis-date" class="date-badge"></span></h3>
+            <div id="analysis-content"></div>
+        </div>
+
+        <div class="card">
+            <h3>Analysis History</h3>
+            <div id="analyses-list"><p class="empty-state">No analyses yet. Upload your first photo above.</p></div>
+        </div>
+
+        <div class="card" style="margin-top:20px">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
+                <div>
+                    <h3 style="margin:0">Weak-Point Analysis</h3>
+                    <p style="font-size:13px;color:var(--text-muted);margin-top:4px">Cross-references photo scores with training volume to find imbalances</p>
+                </div>
+                <button class="btn btn-ghost btn-sm" onclick="generateWeakPoints()">Analyze</button>
+            </div>
+            <div id="weak-points-result" style="display:none"></div>
+        </div>
+    </section>
+
+    <!-- Research (stub — content lives in Progress > Reports) -->
+    <section id="tab-research" class="tab-content">
+        <div class="secondary-header">
+            <button class="secondary-back" onclick="showTab('progress');showProgressTab('reports', document.querySelector(\'.inner-tab:nth-child(3)\'))">← Back</button>
+            <h2 class="secondary-title">Research</h2>
+        </div>
+    </section>
+
+    <!-- Reports (stub — content lives in Progress > Reports) -->
+    <section id="tab-reports" class="tab-content">
+        <div class="secondary-header">
+            <button class="secondary-back" onclick="showTab('progress');showProgressTab('reports', document.querySelector(\'.inner-tab:nth-child(3)\'))">← Back</button>
+            <h2 class="secondary-title">Reports</h2>
+        </div>
+    </section>
+
+</main>
+
+
+<!-- ── Bottom tab bar ── -->
+<nav id="bottom-tab-bar" role="navigation" aria-label="Primary navigation">
+    <button class="bottom-tab active" data-tab="dashboard" onclick="showTab('dashboard')" aria-label="Home">
+        <span class="bottom-tab-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
+        </span>
+        <span class="bottom-tab-label">Home</span>
+    </button>
+    <button class="bottom-tab" data-tab="workout" onclick="showTab('workout')" aria-label="Train">
+        <span class="bottom-tab-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/><line x1="6" y1="1" x2="6" y2="4"/><line x1="10" y1="1" x2="10" y2="4"/><line x1="14" y1="1" x2="14" y2="4"/></svg>
+        </span>
+        <span class="bottom-tab-label">Train</span>
+    </button>
+    <button class="bottom-tab" data-tab="nutrition" onclick="showTab('nutrition')" aria-label="Eat">
+        <span class="bottom-tab-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8h1a4 4 0 0 1 0 8h-1"/><path d="M2 8h16v9a4 4 0 0 1-4 4H6a4 4 0 0 1-4-4V8z"/></svg>
+        </span>
+        <span class="bottom-tab-label">Eat</span>
+    </button>
+    <button class="bottom-tab" data-tab="progress" onclick="showTab('progress')" aria-label="Progress">
+        <span class="bottom-tab-icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        </span>
+        <span class="bottom-tab-label">Progress</span>
+    </button>
+</nav>
+
+
+<!-- ── Plate calculator modal ── -->
+<div id="plate-calc-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9500;align-items:center;justify-content:center;padding:16px">
+    <div style="background:var(--surface);border-radius:20px;padding:24px;max-width:340px;width:100%;border:1px solid var(--border)">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+            <h3 style="margin:0">Plate Calculator</h3>
+            <button onclick="closePlateCalc()" style="background:none;border:none;font-size:20px;cursor:pointer;color:var(--text-muted)">✕</button>
+        </div>
+        <div style="margin-bottom:12px">
+            <label style="font-size:13px;color:var(--text-muted)">Target weight (<span class="unit-lbl-weight">kg</span>)</label>
+            <input type="number" id="plate-calc-input" min="0" step="2.5" style="width:100%;margin-top:6px" oninput="calcPlates()" />
+        </div>
+        <div id="plate-calc-result" style="padding:14px;background:var(--surface-2);border-radius:10px;font-size:14px;line-height:1.6"></div>
+    </div>
+</div>
+
+<!-- ── Rest timer ── -->
+<div id="rest-timer-bar" style="display:none;position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:var(--green);color:#000;padding:10px 20px;border-radius:50px;font-size:14px;font-weight:700;box-shadow:0 4px 20px rgba(0,0,0,0.3);z-index:8887;align-items:center;gap:12px;white-space:nowrap">
+    <span>⏱ Rest</span>
+    <button onclick="adjustRestTimer(-15)" style="background:rgba(0,0,0,0.15);border:none;color:#000;border-radius:20px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:700">−15s</button>
+    <span id="rest-timer-countdown">1:30</span>
+    <button onclick="adjustRestTimer(15)" style="background:rgba(0,0,0,0.15);border:none;color:#000;border-radius:20px;padding:2px 8px;font-size:12px;cursor:pointer;font-weight:700">+15s</button>
+    <button onclick="clearRestTimer()" style="background:rgba(0,0,0,0.2);border:none;color:#000;border-radius:50px;padding:2px 10px;font-size:12px;cursor:pointer">Skip</button>
+</div>
+
+<!-- ── Confirm regenerate plan modal ── -->
+<div id="regen-plan-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9400;align-items:center;justify-content:center;padding:20px">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:28px;max-width:360px;width:100%;text-align:center">
+        <div style="font-size:32px;margin-bottom:12px">🔄</div>
+        <h3 style="margin-bottom:8px">Regenerate plan?</h3>
+        <p style="font-size:14px;color:var(--text-muted);margin-bottom:20px">This will replace your current plan. Your history is preserved.</p>
+        <div style="display:flex;gap:10px">
+            <button class="btn-secondary" onclick="closeRegenModal()" style="flex:1;font-size:14px">Cancel</button>
+            <button class="btn-primary" onclick="confirmGeneratePlan()" style="flex:1;font-size:14px">Generate</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Loading overlay ── -->
+<div id="loading-overlay" style="display:none">
+    <div class="loading-box">
+        <div class="spinner"></div>
+        <div id="loading-message">Working…</div>
+    </div>
+</div>
+
+<!-- ── Toast ── -->
+<div id="toast" class="toast" role="alert" aria-live="assertive" style="display:none"></div>
+
+<!-- ── Background task pill ── -->
+<div id="bg-task-bar" style="display:none;position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface);border:1px solid var(--border);color:var(--text);padding:10px 20px;border-radius:50px;font-size:13px;font-weight:500;box-shadow:0 4px 20px rgba(0,0,0,0.4);z-index:8888;align-items:center;gap:10px;white-space:nowrap">
+    <span id="bg-task-spinner" style="display:inline-block;width:14px;height:14px;border:2px solid var(--border-strong);border-top-color:var(--accent);border-radius:50%;animation:spin 0.7s linear infinite"></span>
+    <span id="bg-task-msg">Working…</span>
+</div>
+
+<!-- ── Auth / Onboarding overlay ── -->
+<div id="onboarding-overlay" style="display:none">
+    <div id="onboarding-inner">
+        <!-- Register -->
+        <div id="ob-panel-register" class="ob-step active">
+            <div class="ob-badge">⚡ AI Coaching</div>
+            <h1>Finally, coaching that<br><strong>actually works</strong></h1>
+            <p class="ob-sub">Create your free account to get started.</p>
+            <input id="ob-email" placeholder="Email" type="email" />
+            <input id="ob-password" placeholder="Password (8+ chars)" type="password" />
+            <p id="ob-auth-error" class="form-error"></p>
+            <button class="btn-primary" onclick="obCreateAccount()">Create Account →</button>
+            <button class="btn-ghost" onclick="obShowLogin()">I already have an account</button>
+            <ul class="ob-checklist">
+                <li>✓ Personalized workout &amp; diet plans</li>
+                <li>✓ Syncs with your Telegram bot</li>
+                <li>✓ See results in 4 weeks</li>
+            </ul>
+        </div>
+        <!-- Login -->
+        <div id="ob-panel-login" class="ob-step">
+            <h2>Welcome back</h2>
+            <p class="ob-sub">Sign in to continue.</p>
+            <input id="ob-login-email" placeholder="Email" type="email" />
+            <input id="ob-login-password" placeholder="Password" type="password" />
+            <p id="ob-login-error" class="form-error"></p>
+            <button class="btn-primary" onclick="obLogin()">Sign In →</button>
+            <button class="btn-ghost" onclick="obShowRegister()">← Create a new account</button>
+        </div>
+    </div>
+</div>
+
+<script>
+// ── Settings overlay ──
+function openSettings() {
+    document.getElementById('settings-overlay').classList.add('open');
+}
+function closeSettings() {
+    document.getElementById('settings-overlay').classList.remove('open');
+}
+function navTo(tab) {
+    closeSettings();
+    showTab(tab);
+}
+
+// ── Progress inner sub-navigation ──
+function showProgressTab(tab, el) {
+    document.querySelectorAll('.inner-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.inner-section').forEach(s => s.classList.remove('active'));
+    if (el) el.classList.add('active');
+    const section = document.getElementById('prog-' + tab);
+    if (section) section.classList.add('active');
+    // Load data when switching to reports
+    if (tab === 'reports') {
+        if (window.loadReports) loadReports();
+        if (window.loadResearch) loadResearch();
     }
-    </script>
-    <script src="/static/app.js?v=26"></script>
+}
+
+// Patch loadProgress to also load reports/research when progress tab opens
+document.addEventListener('DOMContentLoaded', function() {
+    const origLoadProgress = window.loadProgress;
+    if (origLoadProgress) {
+        window.loadProgress = function() {
+            origLoadProgress();
+        };
+    }
+});
+
+// Sync settings panel labels with app state
+function syncSettingsLabels() {
+    const unitLabel = document.getElementById('settings-unit-label');
+    const profileLabel = document.getElementById('profile-unit-label');
+    if (unitLabel && window.state) {
+        unitLabel.textContent = state.unitPref === 'imperial' ? 'Imperial' : 'Metric';
+    }
+    if (profileLabel && window.state) {
+        profileLabel.textContent = state.unitPref === 'imperial' ? 'Imperial' : 'Metric';
+    }
+}
+
+// Service worker registration
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+}
+</script>
+<script src="/static/app.js?v=26"></script>
 </body>
 </html>
