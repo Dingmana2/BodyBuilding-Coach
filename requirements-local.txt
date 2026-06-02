@@ -1,0 +1,12 @@
+# Local dev requirements — excludes garminconnect and myfitnesspal
+# Both integrations are disabled in the active UI; lxml fails on Python 3.14
+anthropic>=0.40.0,<2.0.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+sqlalchemy>=2.0.0
+python-multipart>=0.0.12
+httpx>=0.28.0
+python-dotenv>=1.0.0
+python-telegram-bot>=21.0
+apscheduler>=3.10.0
+cryptography>=42.0.0
