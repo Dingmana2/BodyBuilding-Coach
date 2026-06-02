@@ -1,33 +1,30 @@
 # CHANGELOG
 
-## 2026-06-02 — Sprint 29: Morning briefing feature + Web Push + PWA setup
+## 2026-06-02 — Sprint 29: Morning briefing — hero feature, daily synthesis decision
 
 ### Added
-- `models.py` — `DailyBriefing` table: stores AI-generated daily briefings per user per day; unique constraint on `(user_id, date)` prevents duplicates on scheduler restart
-- `models.py` — `PushSubscription` table: stores Web Push subscriptions per user; unique constraint on `endpoint` allows upsert on re-subscription
-- `claude_service.py` — `generate_morning_briefing()`: generates 3–5 sentence daily coaching decision using Haiku model; takes checkin, sessions, Garmin, MFP meals, profile; gracefully degrades when data is missing
-- `main.py` — `_generate_morning_briefings()`: async function runs daily at 06:00 UTC; generates briefing for all active users; sends Web Push notification to subscribed users via pywebpush; per-user error handling prevents one user's failure from blocking others
-- `main.py` — Scheduler job: morning briefings job registered in `_lifespan` to run at 6 AM daily
-- `main.py` — `GET /api/push/public-key`: returns VAPID public key for Web Push subscription flow
-- `main.py` — `POST /api/push/subscribe`: stores or updates user's Web Push subscription; upserts on endpoint
-- `main.py` — `GET /api/briefing/today`: fetches today's briefing for authenticated user; returns briefing text and data sources used
-- `static/manifest.json`: PWA manifest file; enables "Add to Home Screen" on mobile; includes theme color, icons, standalone display mode
-- `static/sw.js`: service worker for PWA; handles push notifications, caches static assets (cache-first), fetches from network for API calls (network-first)
-- `static/index.html` — manifest link and service worker registration script
-- `static/index.html` — `#briefing-card` div on dashboard for briefing display
-- `static/app.js` — `_requestNotificationPerm()`: updated to async; now handles Web Push subscription flow after user grants permission
-- `static/app.js` — `_subscribeToPush()`: requests VAPID public key from server; calls `PushManager.subscribe()` with correct keys format; handles subscription upsert
-- `static/app.js` — `loadMorningBriefing()`: fetches briefing from API; renders briefing card on dashboard with data sources; handles missing briefing gracefully
-- `requirements.txt` — `pywebpush>=1.14.0` for Web Push support
+- `models.py` — `DailyBriefing` table: stores AI-generated briefing per user per day; one briefing per `(user_id, date)` pair
+- `models.py` — `PushSubscription` table: optional; stores Web Push subscriptions for users who want notifications
+- `claude_service.py` — `generate_morning_briefing()`: generates 3–5 sentence answer to "what should I do today?" using Haiku model; synthesizes Garmin (HRV, sleep), MFP (calories, protein), last checkin (recovery), recent sessions, and user profile; degrades gracefully when data sources are missing
+- `main.py` — `_generate_morning_briefings()`: async job runs daily at 06:00 UTC; generates briefing for all active users; optionally sends Web Push notification if user subscribed and VAPID keys are set
+- `main.py` — Scheduler: briefing job registered in `_lifespan` alongside weekly reports
+- `main.py` — `GET /api/briefing/today`: fetch today's briefing (primary API); returns text + data sources used
+- `main.py` — `GET /api/push/public-key` + `POST /api/push/subscribe`: optional Web Push endpoints for users who want notifications
+- `static/index.html` — `#briefing-card` div on dashboard: briefing is the first card users see on app open
+- `static/app.js` — `loadMorningBriefing()`: fetches briefing on dashboard load; renders prominently with data sources and coaching advice
+- `static/app.js` — `_requestNotificationPerm()` + `_subscribeToPush()`: optional Web Push subscription flow (triggered only if user grants permission)
+- `static/manifest.json` + `static/sw.js`: PWA setup (optional); enables home screen install and caches app shell for offline
+- `requirements.txt` — `pywebpush>=1.14.0` (optional, only needed if VAPID keys are set)
 
-### Architecture notes
-- Briefing generation is synchronous (Claude Haiku call via run_in_executor) but non-blocking for users; runs on scheduler overnight
-- Briefing quality degrades gracefully: if user has no Garmin/MFP/checkin data, briefing still generated from available sources
-- Web Push is optional: if VAPID keys are not set in .env, briefing still generated but not pushed; users can still fetch via `/api/briefing/today`
-- PWA works offline: service worker caches app shell; briefings cached by network-first strategy; full experience on re-connect
+### Architecture
+- **Briefing is the hero**: when user opens app, they immediately see "Should you train today? Here's why..." — answers the core question without friction
+- **Synthesis on demand**: briefing is generated nightly at 6 AM UTC so it's ready when user wakes; no latency on app open
+- **Data sources graceful**: if user has only check-in data, briefing still generated; if user has Garmin + MFP + checkin + sessions, briefing is richer
+- **Web Push is optional**: if VAPID keys are not set in .env, briefing still generated and displayed in app; notification is a convenience, not required for core value
+- **PWA is optional**: users can use as web app or add to home screen; service worker caches app shell + API responses for offline access
 
 ### Rollback
-- `git revert <hash>` — clean revert; no schema dependencies; Web Push is purely optional feature layer
+- `git revert <hash>` — clean revert; no schema breaking changes; all new features are additive layers
 
 ## 2026-06-01 — Sprint 24: Delete meal, session set detail, goal progress, check-in edit, /sync sets, bot commands
 

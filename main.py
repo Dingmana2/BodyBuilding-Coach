@@ -194,7 +194,9 @@ def _send_web_push(subscription_dict: dict, title: str, body: str) -> None:
 async def _generate_morning_briefings() -> None:
     """Daily 06:00 UTC: generate morning briefing for every active user.
 
-    Uses Haiku (SUMMARY_MODEL) — cheap, fast, good enough for a 3-sentence daily card.
+    Hero feature: answers "What should I do today?" by synthesizing Garmin (recovery),
+    MFP (nutrition), checkins, sessions, and profile. Generated nightly so briefing
+    is ready on app open with zero latency. Uses Haiku — cheap, fast, sufficient.
     Upserts on (user_id, date) so scheduler restarts don't create duplicate rows.
     Per-user try/except: one user failing never blocks the rest.
     """
