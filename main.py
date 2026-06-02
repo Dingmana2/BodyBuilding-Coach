@@ -22,6 +22,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 load_dotenv()
 
+# ── VAPID config for Web Push ─────────────────────────────────────────────────
+_VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "")
+_VAPID_PUBLIC_KEY  = os.getenv("VAPID_PUBLIC_KEY", "")
+_VAPID_EMAIL       = os.getenv("VAPID_EMAIL", "")
+
 # ── Auth helpers (stdlib only — no cryptography dependency) ───────────────────
 
 _SECRET_KEY = os.getenv("SECRET_KEY", "change-me-use-a-long-random-string-in-production").encode()
@@ -172,6 +177,134 @@ UPLOAD_DIR = Path("uploads")
 UPLOAD_DIR.mkdir(exist_ok=True)
 
 
+def _send_web_push(subscription_dict: dict, title: str, body: str) -> None:
+    """Send a Web Push notification. Blocking call for executor."""
+    try:
+        from pywebpush import webpush
+        webpush(
+            subscription_info=subscription_dict,
+            data=json.dumps({"title": title, "body": body}),
+            vapid_private_key=_VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": _VAPID_EMAIL or "mailto:admin@example.com"},
+        )
+    except Exception as e:
+        print(f"Web Push send failed: {e}")
+
+
+async def _generate_morning_briefings() -> None:
+    """Daily 06:00 UTC: generate morning briefing for every active user.
+
+    Uses Haiku (SUMMARY_MODEL) — cheap, fast, good enough for a 3-sentence daily card.
+    Upserts on (user_id, date) so scheduler restarts don't create duplicate rows.
+    Per-user try/except: one user failing never blocks the rest.
+    """
+    from database import SessionLocal
+    from claude_service import generate_morning_briefing
+    import garmin_service
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    three_days_ago = (datetime.now(timezone.utc) - timedelta(days=3)).date().isoformat()
+
+    db = SessionLocal()
+    try:
+        active_users = db.query(models.User).filter(models.User.is_active == True).all()
+        for user in active_users:
+            try:
+                # Skip if already generated today
+                existing = db.query(models.DailyBriefing).filter(
+                    models.DailyBriefing.user_id == user.id,
+                    models.DailyBriefing.date == today,
+                ).first()
+                if existing:
+                    continue
+
+                # Gather data sources
+                checkin = db.query(models.DailyCheckIn).filter(
+                    models.DailyCheckIn.chat_id == user.id,
+                ).order_by(models.DailyCheckIn.created_at.desc()).first()
+
+                sessions = db.query(models.WorkoutSession).filter(
+                    models.WorkoutSession.chat_id == user.id,
+                    models.WorkoutSession.ended_at != None,
+                    models.WorkoutSession.started_at >= datetime.fromisoformat(three_days_ago),
+                ).order_by(models.WorkoutSession.started_at.desc()).limit(3).all()
+
+                profile = db.query(models.UserProfile).filter(
+                    models.UserProfile.user_id == user.id
+                ).first()
+
+                garmin_data = garmin_service.get_cached(user.id)
+
+                checkin_dict = None
+                if checkin:
+                    checkin_dict = {
+                        "sleep_score": checkin.sleep_score,
+                        "energy_score": checkin.energy_score,
+                        "soreness_score": checkin.soreness_score,
+                        "recovery_score": checkin.recovery_score,
+                    }
+
+                session_list = []
+                for s in sessions:
+                    days_ago = (datetime.now(timezone.utc).date() - s.started_at.date()).days
+                    set_count = db.query(models.SetLog).filter(
+                        models.SetLog.session_id == s.id
+                    ).count()
+                    session_list.append({"days_ago": days_ago, "set_count": set_count})
+
+                profile_dict = None
+                if profile:
+                    profile_dict = {"goal": profile.goal, "experience": profile.training_experience}
+
+                data_sources = {
+                    "garmin": garmin_data is not None,
+                    "checkin": checkin_dict is not None,
+                    "sessions": len(session_list),
+                }
+
+                loop = asyncio.get_running_loop()
+                text = await loop.run_in_executor(
+                    None,
+                    generate_morning_briefing,
+                    checkin_dict, session_list, garmin_data, [], profile_dict,
+                )
+
+                briefing = models.DailyBriefing(
+                    user_id=user.id,
+                    date=today,
+                    briefing_text=text,
+                    data_sources=json.dumps(data_sources),
+                )
+                db.add(briefing)
+                db.commit()
+
+                # Send Web Push notification if user has a subscription
+                sub = db.query(models.PushSubscription).filter(
+                    models.PushSubscription.user_id == user.id
+                ).first()
+                if sub and _VAPID_PRIVATE_KEY and _VAPID_PUBLIC_KEY:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        None,
+                        _send_web_push,
+                        {
+                            "endpoint": sub.endpoint,
+                            "keys": {"p256dh": sub.p256dh, "auth": sub.auth},
+                        },
+                        "Morning Briefing",
+                        text[:120],
+                    )
+
+            except Exception as e:
+                print(f"Warning: Morning briefing failed for user {user.id}: {e}")
+                try:
+                    db.rollback()
+                except Exception:
+                    pass
+    finally:
+        db.close()
+
+
 async def _auto_weekly_reports() -> None:
     """Sunday 8:00 UTC: generate weekly reports for all Pro/Elite users who don't have one yet."""
     from database import SessionLocal
@@ -239,6 +372,7 @@ async def _auto_weekly_reports() -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
+    scheduler.add_job(_generate_morning_briefings, "cron", hour=6, minute=0)
     scheduler.add_job(_auto_weekly_reports, "cron", day_of_week="sun", hour=8, minute=0)
     scheduler.start()
     yield
@@ -2162,4 +2296,78 @@ def health():
         "status": "ok",
         "api_key_configured": api_key_set,
         "timestamp": datetime.utcnow().isoformat(),
+    }
+
+
+@app.get("/api/push/public-key")
+def get_push_public_key():
+    """Get the VAPID public key for Web Push subscription."""
+    if not _VAPID_PUBLIC_KEY:
+        raise HTTPException(status_code=503, detail="Push notifications not configured")
+    return {"public_key": _VAPID_PUBLIC_KEY}
+
+
+@app.post("/api/push/subscribe")
+def push_subscribe(request: Request, db: Session = Depends(get_db)):
+    """Store or update a Web Push subscription for the authenticated user."""
+    user_id = get_current_user_id(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    body = request.json()
+    endpoint = body.get("endpoint")
+    p256dh = body.get("keys", {}).get("p256dh")
+    auth = body.get("keys", {}).get("auth")
+
+    if not all([endpoint, p256dh, auth]):
+        raise HTTPException(status_code=400, detail="Missing subscription fields")
+
+    # Upsert: find by endpoint, update if exists
+    sub = db.query(models.PushSubscription).filter(
+        models.PushSubscription.endpoint == endpoint
+    ).first()
+    if sub:
+        sub.user_id = user_id
+        sub.p256dh = p256dh
+        sub.auth = auth
+        sub.updated_at = datetime.now(timezone.utc)
+    else:
+        sub = models.PushSubscription(
+            user_id=user_id,
+            endpoint=endpoint,
+            p256dh=p256dh,
+            auth=auth,
+        )
+        db.add(sub)
+    db.commit()
+    return {"status": "subscribed"}
+
+
+@app.get("/api/briefing/today")
+def get_today_briefing(request: Request, db: Session = Depends(get_db)):
+    """Fetch today's morning briefing for the authenticated user."""
+    user_id = get_current_user_id(request)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+
+    today = datetime.now(timezone.utc).date().isoformat()
+    briefing = db.query(models.DailyBriefing).filter(
+        models.DailyBriefing.user_id == user_id,
+        models.DailyBriefing.date == today,
+    ).first()
+
+    if not briefing:
+        return {"briefing_text": None, "data_sources": None}
+
+    data_sources = {}
+    if briefing.data_sources:
+        try:
+            data_sources = json.loads(briefing.data_sources)
+        except Exception:
+            pass
+
+    return {
+        "briefing_text": briefing.briefing_text,
+        "data_sources": data_sources,
+        "generated_at": briefing.created_at.isoformat(),
     }

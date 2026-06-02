@@ -8,6 +8,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Jost:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <link rel="manifest" href="/static/manifest.json" />
     <link rel="stylesheet" href="/static/style.css?v=26" />
 </head>
 <body>
@@ -99,6 +100,10 @@
                 <strong>Setup required:</strong> Add your <code>ANTHROPIC_API_KEY</code> to the <code>.env</code> file, then restart the server.
                 Get your key at <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a>
             </div>
+
+            <!-- Morning briefing card -->
+            <div id="briefing-card"></div>
+
             <div class="stats-grid" id="dashboard-stats">
                 <div class="stat-card">
                     <div class="stat-label">Body Fat</div>
@@ -860,6 +865,14 @@
         </div>
     </div>
 
+    <script>
+    // Register service worker for PWA + push notifications
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/static/sw.js').catch(() => {
+        // Service worker registration failed; app still works
+      });
+    }
+    </script>
     <script src="/static/app.js?v=26"></script>
 </body>
 </html>

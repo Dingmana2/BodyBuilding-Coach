@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, Date, ForeignKey, Integer, String, Float, Text, DateTime
+from sqlalchemy import Boolean, Column, Date, ForeignKey, Integer, String, Float, Text, DateTime, UniqueConstraint
 from sqlalchemy.sql import func
 from database import Base
 
@@ -237,3 +237,39 @@ class CoachMemory(Base):
     content = Column(Text, nullable=False)
     memory_type = Column(String, default="observation")  # pr|recovery|note|observation
     created_at = Column(DateTime, server_default=func.now())
+
+
+class DailyBriefing(Base):
+    """AI-generated morning briefing stored per user per day.
+
+    Generated nightly at 6 AM by _generate_morning_briefings().
+    Unique on (user_id, date) — upsert on conflict so scheduler restarts
+    don't create duplicate rows.
+    """
+    __tablename__ = "daily_briefings"
+    __table_args__ = (UniqueConstraint("user_id", "date", name="uq_briefing_user_date"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    date = Column(String, nullable=False, index=True)   # "2026-06-02"
+    briefing_text = Column(Text, nullable=False)
+    data_sources = Column(Text, nullable=True)          # JSON: {"garmin": true, "mfp": false, "checkin": true}
+    created_at = Column(DateTime, server_default=func.now())
+
+
+class PushSubscription(Base):
+    """Web Push subscription stored per user.
+
+    endpoint is globally unique (per browser/device).
+    Upsert on endpoint so re-subscribing the same device updates keys.
+    """
+    __tablename__ = "push_subscriptions"
+    __table_args__ = (UniqueConstraint("endpoint", name="uq_push_endpoint"),)
+
+    id = Column(Integer, primary_key=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    endpoint = Column(Text, nullable=False)
+    p256dh = Column(Text, nullable=False)   # browser public key
+    auth = Column(Text, nullable=False)     # auth secret
+    created_at = Column(DateTime, server_default=func.now())
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())

@@ -350,10 +350,65 @@ function _getChipValues(containerId) {
 }
 
 /* ── Browser notifications ── */
-function _requestNotificationPerm() {
+async function _requestNotificationPerm() {
     if ('Notification' in window && Notification.permission === 'default') {
-        Notification.requestPermission();
+        const perm = await Notification.requestPermission();
+        if (perm === 'granted' && 'serviceWorker' in navigator) {
+            _subscribeToPush();
+        }
     }
+}
+
+async function _subscribeToPush() {
+    try {
+        const registration = await navigator.serviceWorker.ready;
+        const subscription = await registration.pushManager.getSubscription();
+
+        // Already subscribed
+        if (subscription) {
+            await _sendSubscriptionToServer(subscription);
+            return;
+        }
+
+        // Need VAPID public key from server
+        const response = await fetch('/api/push/public-key', { headers: _authHeaders() });
+        if (!response.ok) return; // Server doesn't support push yet
+
+        const { public_key } = await response.json();
+        const newSubscription = await registration.pushManager.subscribe({
+            userVisibleOnly: true,
+            applicationServerKey: _b64urlToUint8Array(public_key),
+        });
+
+        await _sendSubscriptionToServer(newSubscription);
+    } catch (e) {
+        console.log('Push subscription failed:', e);
+    }
+}
+
+async function _sendSubscriptionToServer(subscription) {
+    try {
+        await fetch('/api/push/subscribe', {
+            method: 'POST',
+            headers: { ...contentTypeJson(), ..._authHeaders() },
+            body: JSON.stringify(subscription),
+        });
+    } catch (e) {
+        console.log('Failed to send subscription to server:', e);
+    }
+}
+
+function _b64urlToUint8Array(base64string) {
+    const padding = '='.repeat((4 - base64string.length % 4) % 4);
+    const base64 = (base64string + padding)
+        .replace(/\-/g, '+')
+        .replace(/_/g, '/');
+    const rawData = window.atob(base64);
+    const outputArray = new Uint8Array(rawData.length);
+    for (let i = 0; i < rawData.length; ++i) {
+        outputArray[i] = rawData.charCodeAt(i);
+    }
+    return outputArray;
 }
 
 function _sendBrowserNotification(title, body) {
@@ -506,6 +561,40 @@ function closeDrawer() {
     document.getElementById('nav-drawer-backdrop').classList.remove('open');
 }
 
+/* ── Morning briefing ── */
+async function loadMorningBriefing() {
+    try {
+        const response = await cachedApi('GET', '/briefing/today');
+        if (!response.briefing_text) {
+            return; // No briefing available yet
+        }
+
+        const container = document.getElementById('briefing-card');
+        if (!container) {
+            return; // Briefing card not in DOM (okay on mobile)
+        }
+
+        container.innerHTML = `
+            <div style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:#fff;padding:20px;border-radius:12px;margin-bottom:16px">
+                <h3 style="margin:0 0 8px 0;font-size:14px;font-weight:700;opacity:0.9">💡 Morning Briefing</h3>
+                <p style="margin:0;font-size:15px;line-height:1.6">${esc(response.briefing_text)}</p>
+                <div style="margin-top:8px;font-size:12px;opacity:0.8">
+                    Sources: ${
+                        response.data_sources
+                            ? Object.entries(response.data_sources)
+                                  .filter(([_, v]) => v)
+                                  .map(([k]) => k)
+                                  .join(', ')
+                            : 'Check-in only'
+                    }
+                </div>
+            </div>
+        `;
+    } catch (e) {
+        console.log('Failed to load briefing:', e);
+    }
+}
+
 /* ── Tab navigation ── */
 function showTab(tab) {
     state.activeTab = tab;
@@ -617,6 +706,7 @@ async function loadDashboard() {
     renderGettingStarted(plan, summary);
     _renderDashMacroSummary(mealsToday, plan);
     loadMemory();
+    loadMorningBriefing();
     } finally {
         setSkeleton(['stat-bf','stat-score','stat-cal','stat-protein','stat-recovery'], false);
     }

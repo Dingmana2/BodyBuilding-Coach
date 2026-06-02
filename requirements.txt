@@ -10,3 +10,4 @@ apscheduler>=3.10.0
 garminconnect>=0.2.0
 cryptography>=42.0.0
 myfitnesspal>=2.0
+pywebpush>=1.14.0

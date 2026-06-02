@@ -688,3 +688,79 @@ Actionable summary:""",
     )
 
     return message.content[0].text.strip()
+
+
+def generate_morning_briefing(
+    checkin: dict | None,
+    sessions: list,
+    garmin: dict | None,
+    mfp_meals: list,
+    profile: dict | None,
+) -> str:
+    """Generate a 3-5 sentence daily coaching decision using Haiku.
+
+    Answers the question: 'Given everything I know about you today,
+    here is what you should do and why.' Gracefully degrades when
+    data sources are missing.
+    """
+    client = _client()
+
+    parts = []
+    if profile:
+        goal = profile.get("goal", "general fitness")
+        parts.append(f"Goal: {goal}. Experience: {profile.get('experience', 'intermediate')}.")
+
+    if garmin:
+        hrv = garmin.get("hrv_ms")
+        sleep_h = garmin.get("sleep_duration_hrs")
+        sleep_score = garmin.get("sleep_score")
+        bits = []
+        if hrv:
+            bits.append(f"HRV {hrv:.0f} ms")
+        if sleep_h:
+            bits.append(f"sleep {sleep_h:.1f} h")
+        if sleep_score:
+            bits.append(f"sleep score {sleep_score}/100")
+        if bits:
+            parts.append("Garmin overnight: " + ", ".join(bits) + ".")
+
+    if checkin:
+        parts.append(
+            f"Last check-in: sleep {checkin.get('sleep_score','-')}/10, "
+            f"energy {checkin.get('energy_score','-')}/10, "
+            f"soreness {checkin.get('soreness_score','-')}/10, "
+            f"recovery score {checkin.get('recovery_score','-')}/100."
+        )
+
+    if sessions:
+        last = sessions[0]
+        days_ago = last.get("days_ago", "?")
+        parts.append(f"Last session was {days_ago} day(s) ago ({last.get('set_count', 0)} sets).")
+
+    if mfp_meals:
+        total_kcal = sum(m.get("calories", 0) for m in mfp_meals)
+        total_protein = sum(m.get("protein_g", 0) for m in mfp_meals)
+        parts.append(f"Yesterday's nutrition: {total_kcal:.0f} kcal, {total_protein:.0f}g protein.")
+
+    if not parts:
+        parts.append("No data available yet from your connected sources.")
+
+    context = "\n".join(parts)
+
+    message = client.messages.create(
+        model=SUMMARY_MODEL,
+        max_tokens=250,
+        messages=[
+            {
+                "role": "user",
+                "content": (
+                    "You are a personal bodybuilding coach giving a morning briefing. "
+                    "Based on the data below, answer in 3-5 sentences: "
+                    "Should they train today? At what intensity? Any nutrition focus? "
+                    "Be direct and specific. No greetings, no disclaimers.\n\n"
+                    f"{context}\n\nMorning briefing:"
+                ),
+            }
+        ],
+    )
+    return message.content[0].text.strip()
