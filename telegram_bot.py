@@ -18,7 +18,7 @@ from pathlib import Path
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import BotCommand, InlineKeyboardButton, InlineKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -963,33 +963,23 @@ _HELP_TEXT = (
     "/plan — Generate or view your workout + diet plan\n"
     "📸 Send a photo — physique analysis\n\n"
     "*🏋️ Logging*\n"
-    "/checkin — Daily check-in: sleep, energy, soreness, joints, motivation\n"
+    "/checkin — Daily check-in: sleep, energy, soreness\n"
     "/workout — Start / end a session\n"
     "/log — Tap-based workout logger\n"
     "/logset bench 100kg 8 — Quick set log\n"
     "/meal 2 eggs oatmeal — Log food + estimate macros\n"
     "/weight 84.5 — Log body weight\n"
     "/measurements — Log body measurements\n\n"
-    "*📈 Progress & Analysis*\n"
+    "*📈 Progress & Reports*\n"
     "/stats — Personal records ranked by estimated 1RM\n"
     "/progress — 30-day weight, PRs, recovery trend\n"
     "/macros — Today's targets vs. logged\n"
-    "/weakpoints — AI imbalance analysis from training data\n"
     "/report — Weekly AI coaching report\n"
     "/streak — Check-in streak + badges\n"
-    "/goals — Set target weight / body fat / date\n"
-    "/research — Latest PubMed + community fitness insights\n\n"
-    "*⚙️ Settings & Integrations*\n"
-    "/connect — Link Garmin / MyFitnessPal\n"
-    "/mfp sync — Sync today's MFP diary\n"
+    "/goals — Set target weight / body fat / date\n\n"
+    "*⚙️ Settings*\n"
     "/reminders — Set daily reminders\n"
-    "/units — Switch kg ↔ lbs\n"
-    "/freeze — Protect today's streak (1 per 30 days)\n"
-    "/fridge — Scan fridge photo → macro-matched recipes\n"
-    "/peakweek — Contest peak week protocol (prep/cut only)\n"
-    "/link — Link Telegram to the web app\n"
-    "/link\\_status — Check web-app link status\n"
-    "/billing — Billing & partnership info\n\n"
+    "/units — Switch kg ↔ lbs\n\n"
     "*🔒 Privacy*\n"
     "/privacy — View data policy\n"
     "/export — Download all your data (JSON)\n"
@@ -1007,14 +997,16 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         goal = user["profile"].get("goal", "?")
         sessions = user.get("session_counter", 0)
         checkins = len(user.get("checkins", []))
+        mini_app_url = API_BASE_URL if API_BASE_URL else None
+        buttons = [[InlineKeyboardButton("✏️ Update profile", callback_data="prof:menu")]]
+        if mini_app_url:
+            buttons.insert(0, [InlineKeyboardButton("📊 Open Dashboard", web_app=WebAppInfo(url=mini_app_url))])
         await update.message.reply_text(
             f"👋 Welcome back!\n\n"
             f"Goal: *{goal}* · Sessions logged: *{sessions}* · Check-ins: *{checkins}*\n\n"
-            f"Type /plan to see your plan, /checkin to log today, or /help for all commands.",
+            f"Use the dashboard button to open the full app, or /help for all commands.",
             parse_mode="Markdown",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("✏️ Update profile", callback_data="prof:menu"),
-            ]]),
+            reply_markup=InlineKeyboardMarkup(buttons),
         )
         return
 
@@ -1159,7 +1151,13 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(_HELP_TEXT, parse_mode="Markdown")
+    mini_app_url = API_BASE_URL if API_BASE_URL else None
+    markup = None
+    if mini_app_url:
+        markup = InlineKeyboardMarkup([[
+            InlineKeyboardButton("📊 Open Dashboard", web_app=WebAppInfo(url=mini_app_url)),
+        ]])
+    await update.message.reply_text(_HELP_TEXT, parse_mode="Markdown", reply_markup=markup)
 
 
 # ── Profile / Goals / Measurements inline-keyboard helpers ───────────────────
@@ -6234,6 +6232,7 @@ def main() -> None:
         )
 
     app = Application.builder().token(TELEGRAM_TOKEN).build()
+    # ── Active commands ───────────────────────────────────────────────────────
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("profile", cmd_profile))
@@ -6245,28 +6244,20 @@ def main() -> None:
     app.add_handler(CommandHandler("progress", cmd_progress))
     app.add_handler(CommandHandler("measurements", cmd_measurements))
     app.add_handler(CommandHandler("meal", cmd_meal))
-    app.add_handler(CommandHandler("fridge", cmd_fridge))
     app.add_handler(CommandHandler("macros", cmd_macros))
     app.add_handler(CommandHandler("stats", cmd_stats))
     app.add_handler(CommandHandler("reminders", cmd_reminders))
-    app.add_handler(CommandHandler("connect", cmd_connect))
-    app.add_handler(CommandHandler("mfp", cmd_mfp))
-    app.add_handler(CommandHandler("research", cmd_research))
     app.add_handler(CommandHandler("streak", cmd_streak))
     app.add_handler(CommandHandler("weight", cmd_weight))
     app.add_handler(CommandHandler("goals", cmd_goals))
-    app.add_handler(CommandHandler("weakpoints", cmd_weakpoints))
     app.add_handler(CommandHandler("report", cmd_report))
-    app.add_handler(CommandHandler("billing", cmd_billing))
     app.add_handler(CommandHandler("units", cmd_units))
-    app.add_handler(CommandHandler("link", cmd_link))
-    app.add_handler(CommandHandler("link_status", cmd_link_status))
+    # ── Hidden / privacy commands (no menu entry, still functional) ───────────
     app.add_handler(CommandHandler("privacy", cmd_privacy))
     app.add_handler(CommandHandler("delete_my_data", cmd_delete_my_data))
     app.add_handler(CommandHandler("export", cmd_export))
-    app.add_handler(CommandHandler("freeze", cmd_freeze))
-    app.add_handler(CommandHandler("peakweek", cmd_peakweek))
-    app.add_handler(CommandHandler("sync", cmd_sync))
+    app.add_handler(CommandHandler("link", cmd_link))
+    app.add_handler(CommandHandler("link_status", cmd_link_status))
     app.add_handler(CallbackQueryHandler(handle_progress_callback, pattern=r"^progress:"))
     app.add_handler(CallbackQueryHandler(handle_onboard_callback, pattern=r"^onboard:"))
     app.add_handler(CallbackQueryHandler(handle_workout_callback, pattern=r"^wk:"))
@@ -6291,45 +6282,22 @@ def main() -> None:
             BotCommand("help",         "List all commands"),
             BotCommand("profile",      "Set your stats (age, weight, goal…)"),
             BotCommand("plan",         "Generate or view your workout & diet plan"),
-            BotCommand("log",          "Start logging a workout (tap-based)"),
-            BotCommand("workout",      "Start / end a workout session"),
-            BotCommand("logset",       "Log a set: /logset bench 100kg 8"),
             BotCommand("checkin",      "Daily check-in (sleep, energy, soreness)"),
+            BotCommand("workout",      "Start / end a workout session"),
+            BotCommand("log",          "Start logging a workout (tap-based)"),
+            BotCommand("logset",       "Log a set: /logset bench 100kg 8"),
+            BotCommand("weight",       "Quick body-weight log: /weight 84.5"),
+            BotCommand("meal",         "Log a meal and get macros"),
+            BotCommand("macros",       "Today's macro totals"),
             BotCommand("progress",     "View weight trend, PRs, recovery"),
             BotCommand("stats",        "Personal records by exercise"),
             BotCommand("measurements", "Log body measurements"),
-            BotCommand("weight",       "Quick body-weight log: /weight 84.5"),
-            BotCommand("meal",         "Log a meal and get macros"),
-            BotCommand("fridge",       "Scan fridge photo → macro-matched recipes"),
-            BotCommand("macros",       "Today's macro totals"),
-            BotCommand("goals",        "Set or view a target (weight, date…)"),
+            BotCommand("report",       "Weekly AI coaching report"),
             BotCommand("streak",       "Check-in & workout streak"),
-            BotCommand("weakpoints",   "AI weak-point analysis from your data"),
-            BotCommand("report",       "Generate weekly AI coaching report"),
-            BotCommand("research",     "Search fitness research papers"),
+            BotCommand("goals",        "Set or view a target (weight, date…)"),
             BotCommand("reminders",    "Set daily reminders"),
             BotCommand("units",        "Switch between kg and lbs"),
-            BotCommand("connect",      "Connect Garmin account"),
-            BotCommand("mfp",          "Connect MyFitnessPal account"),
-            BotCommand("billing",         "Billing & partnership info"),
-            BotCommand("link",            "Link Telegram to the web app"),
-            BotCommand("link_status",     "Check web-app link status"),
-            BotCommand("privacy",         "View privacy & data storage info"),
-            BotCommand("delete_my_data",  "Permanently delete all your data"),
-            BotCommand("export",          "Download your full data as JSON"),
-            BotCommand("freeze",          "Protect today's streak (1 per 30 days)"),
-            BotCommand("peakweek",        "Contest peak week protocol (prep/cut only)"),
-            BotCommand("sync",            "Push all bot history to the web dashboard"),
         ])
-
-        _scheduler.add_job(
-            _daily_garmin_sync,
-            trigger="cron",
-            hour=6,
-            minute=0,
-            id="daily_garmin_sync",
-            replace_existing=True,
-        )
 
         _scheduler.add_job(
             _weekly_stall_check,

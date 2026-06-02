@@ -329,6 +329,71 @@ def get_me(
     }
 
 
+# ── Telegram Mini App auth ────────────────────────────────────────────────────
+
+_TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+
+def _validate_telegram_init_data(init_data: str) -> dict | None:
+    """Validate Telegram WebApp initData HMAC and return parsed user dict or None."""
+    from urllib.parse import parse_qsl, unquote
+    try:
+        pairs = dict(parse_qsl(init_data, keep_blank_values=True))
+        received_hash = pairs.pop("hash", None)
+        if not received_hash or not _TELEGRAM_BOT_TOKEN:
+            return None
+        check_string = "\n".join(f"{k}={v}" for k, v in sorted(pairs.items()))
+        secret_key = hmac.new(b"WebAppData", _TELEGRAM_BOT_TOKEN.encode(), hashlib.sha256).digest()
+        expected = hmac.new(secret_key, check_string.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, received_hash):
+            return None
+        import json as _json
+        return _json.loads(unquote(pairs.get("user", "{}")))
+    except Exception:
+        return None
+
+
+@app.post("/api/auth/telegram-webapp")
+async def telegram_webapp_auth(request: Request, db: Session = Depends(get_db)):
+    """Validate Telegram Mini App initData and return a JWT. Creates account if needed."""
+    data = await request.json()
+    init_data = (data.get("init_data") or "").strip()
+    tg_user = _validate_telegram_init_data(init_data)
+    if not tg_user:
+        raise HTTPException(status_code=401, detail="Invalid Telegram initData.")
+
+    tg_chat_id = tg_user.get("id")
+    if not tg_chat_id:
+        raise HTTPException(status_code=400, detail="No user ID in initData.")
+
+    user = db.query(models.User).filter(models.User.telegram_chat_id == tg_chat_id).first()
+    if not user:
+        # Auto-create a stub account for this Telegram user
+        first = tg_user.get("first_name", "")
+        last = tg_user.get("last_name", "")
+        username = tg_user.get("username", "")
+        email = f"tg_{tg_chat_id}@telegram.local"
+        user = models.User(
+            email=email,
+            hashed_password="",
+            telegram_chat_id=tg_chat_id,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+    display = tg_user.get("first_name") or tg_user.get("username") or f"User {tg_chat_id}"
+    return {
+        "token": _create_token(user.id),
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "display_name": display,
+            "subscription_tier": user.subscription_tier,
+        },
+    }
+
+
 # ── Telegram account linking ──────────────────────────────────────────────────
 
 @app.post("/api/internal/link-code/generate")

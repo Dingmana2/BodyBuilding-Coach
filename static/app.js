@@ -1,11 +1,30 @@
-// Telegram Mini App initialization
-if (window.Telegram?.WebApp) {
-    const tg = window.Telegram.WebApp;
-    tg.expand();
-    tg.ready();
-    // Apply Telegram theme colors as CSS variables if available
-    if (tg.colorScheme === 'dark') {
+// Telegram Mini App — expand and theme on load
+const _tgApp = window.Telegram?.WebApp ?? null;
+if (_tgApp) {
+    _tgApp.expand();
+    _tgApp.ready();
+    if (_tgApp.colorScheme === 'dark') {
         document.documentElement.setAttribute('data-theme', 'tg-dark');
+    }
+}
+
+// Auto-authenticate when running inside Telegram Mini App.
+// Returns true if Telegram auth succeeded (caller should skip the login screen).
+async function _tryTelegramAuth() {
+    if (!_tgApp || !_tgApp.initData) return false;
+    try {
+        const res = await fetch('/api/auth/telegram-webapp', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ init_data: _tgApp.initData }),
+        });
+        if (!res.ok) return false;
+        const data = await res.json();
+        if (!data.token) return false;
+        setAuth(data.token, data.user);
+        return true;
+    } catch {
+        return false;
     }
 }
 
@@ -419,6 +438,14 @@ function signOut() {
 }
 
 async function initAuth() {
+    // When running as a Telegram Mini App, auto-authenticate silently.
+    if (_tgApp && _tgApp.initData) {
+        const ok = await _tryTelegramAuth();
+        if (ok) return;
+        // initData present but validation failed — show error, not login screen
+        showToast('Telegram sign-in failed. Please close and reopen the app.');
+        return;
+    }
     const token = getToken();
     if (!token) { showOnboardingOverlay(); return; }
     const user = getStoredUser();
