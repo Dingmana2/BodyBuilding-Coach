@@ -3,22 +3,23 @@
 html, body { overscroll-behavior: none; }
 
 :root {
-    --bg: #f2f2f2;
+    --bg: #0f1419;
     --surface: #ffffff;
-    --surface-2: #f5f5f5;
-    --border: #e8e8e4;
-    --accent: #a1ea93;
-    --accent-dark: #7cc973;
+    --surface-2: #f5f5f7;
+    --border: #5B5FFF;
+    --accent: #5B5FFF;
+    --accent-dark: #4a4ddd;
     --text: #1c1c1c;
-    --text-muted: #888888;
-    --green: #22c55e;      /* keep for success/streak states */
+    --text-muted: #666666;
+    --green: #22c55e;
     --red: #ef4444;
-    --blue: #3b82f6;
+    --blue: #5B5FFF;
+    --yellow-green: #BFFF00;
     --radius: 20px;
     --font: 'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    /* legacy aliases used by JS-generated HTML */
-    --gold: #a1ea93;
-    --gold-dim: #7cc973;
+    /* legacy aliases */
+    --gold: #BFFF00;
+    --gold-dim: #9FDB00;
 }
 
 body {
@@ -33,11 +34,11 @@ body {
 /* ── Header ── */
 header {
     background: var(--surface);
-    border-bottom: 1px solid var(--border);
+    border-bottom: 2px solid var(--accent);
     position: sticky;
     top: 0;
     z-index: 100;
-    box-shadow: 0 1px 8px rgba(0,0,0,0.06);
+    box-shadow: 0 4px 16px rgba(91,95,255,0.15);
 }
 
 .header-inner {
@@ -159,7 +160,7 @@ header {
     font-family: var(--font);
 }
 .drawer-nav-item:hover { background: var(--surface-2); }
-.drawer-nav-item.active { border-left-color: var(--accent); background: var(--surface-2); font-weight: 700; }
+.drawer-nav-item.active { border-left-color: var(--accent); background: rgba(91,95,255,0.08); font-weight: 700; }
 .drawer-nav-icon { font-size: 18px; width: 24px; text-align: center; }
 
 .drawer-divider { height: 1px; background: var(--border); margin: 8px 0; }
@@ -180,9 +181,9 @@ main {
 }
 
 .page-header h1 {
-    font-size: clamp(1.8rem, 4vw, 2.4rem);
-    font-weight: 800;
-    letter-spacing: 0.5px;
+    font-size: clamp(2rem, 5vw, 2.8rem);
+    font-weight: 900;
+    letter-spacing: -0.5px;
     text-transform: uppercase;
     color: var(--text);
 }
@@ -196,11 +197,11 @@ main {
 /* ── Cards ── */
 .card {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 2px solid var(--accent);
     border-radius: var(--radius);
     padding: 24px;
     margin-bottom: 20px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+    box-shadow: 0 8px 24px rgba(91,95,255,0.12);
 }
 
 .card h3 {
@@ -228,20 +229,20 @@ main {
 
 .btn-primary {
     background: var(--accent);
-    color: var(--text);
+    color: #ffffff;
     border-radius: 50px;
     padding: 14px 28px;
     font-size: 15px;
-    font-weight: 600;
+    font-weight: 700;
     border: none;
     cursor: pointer;
     font-family: var(--font);
-    transition: all 0.15s;
+    transition: all 0.2s;
     display: inline-flex;
     align-items: center;
     gap: 6px;
 }
-.btn-primary:hover { background: var(--accent-dark); transform: translateY(-1px); box-shadow: 0 4px 12px rgba(161,234,147,0.35); }
+.btn-primary:hover { background: var(--accent-dark); transform: translateY(-2px); box-shadow: 0 8px 20px rgba(91,95,255,0.4); }
 
 .btn-secondary {
     background: transparent;
@@ -281,26 +282,26 @@ main {
 
 .stat-card {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 2px solid var(--accent);
     border-radius: var(--radius);
     padding: 20px;
     text-align: center;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    box-shadow: 0 8px 20px rgba(91,95,255,0.12);
 }
 
 .stat-label {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-bottom: 8px;
-    font-weight: 500;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+    font-weight: 700;
 }
 
 .stat-value {
-    font-size: 28px;
-    font-weight: 800;
-    color: var(--text);
+    font-size: 36px;
+    font-weight: 900;
+    color: var(--accent);
 }
 
 /* ── Action grid ── */
@@ -313,18 +314,18 @@ main {
 
 .action-card {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 2px solid var(--accent);
     border-radius: var(--radius);
     padding: 24px;
     cursor: pointer;
-    transition: all 0.15s;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    transition: all 0.2s;
+    box-shadow: 0 8px 20px rgba(91,95,255,0.12);
 }
 
 .action-card:hover {
     border-color: var(--accent);
-    transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(161,234,147,0.2);
+    transform: translateY(-4px);
+    box-shadow: 0 12px 32px rgba(91,95,255,0.2);
 }
 
 .action-icon { font-size: 28px; margin-bottom: 12px; }
@@ -333,19 +334,20 @@ main {
 
 /* ── Drop zone ── */
 .drop-zone {
-    border: 2px dashed var(--border);
+    border: 2px dashed var(--accent);
     border-radius: var(--radius);
     padding: 48px;
     text-align: center;
     cursor: pointer;
-    transition: all 0.15s;
+    transition: all 0.2s;
     margin-bottom: 16px;
-    background: var(--surface-2);
+    background: var(--surface);
 }
 
 .drop-zone:hover, .drop-zone.drag-over {
     border-color: var(--accent);
-    background: rgba(161,234,147,0.05);
+    background: rgba(91,95,255,0.05);
+    box-shadow: 0 8px 20px rgba(91,95,255,0.1);
 }
 
 .drop-icon { font-size: 40px; margin-bottom: 12px; }
@@ -415,19 +417,19 @@ main {
 
 .plan-tab {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 2px solid #e0e0e0;
     color: var(--text-muted);
     padding: 8px 18px;
     border-radius: 50px;
     cursor: pointer;
     font-size: 14px;
-    font-weight: 500;
-    transition: all 0.15s;
+    font-weight: 600;
+    transition: all 0.2s;
     font-family: var(--font);
 }
 
-.plan-tab:hover { color: var(--text); border-color: #999; }
-.plan-tab.active { background: var(--accent); border-color: var(--accent); color: var(--text); font-weight: 600; }
+.plan-tab:hover { color: var(--text); border-color: var(--accent); }
+.plan-tab.active { background: var(--accent); border-color: var(--accent); color: #ffffff; font-weight: 700; }
 
 .plan-section { display: none; }
 .plan-section.active { display: block; }
@@ -473,15 +475,16 @@ tr:hover td { background: rgba(0,0,0,0.02); }
 @media (max-width: 600px) { .macro-row { grid-template-columns: repeat(2, 1fr); } }
 
 .macro-card {
-    background: var(--surface-2);
+    background: var(--surface);
     border-radius: 16px;
     padding: 16px;
     text-align: center;
-    border: 1px solid var(--border);
+    border: 2px solid var(--accent);
+    box-shadow: 0 6px 16px rgba(91,95,255,0.1);
 }
 
-.macro-value { font-size: 26px; font-weight: 800; color: var(--text); }
-.macro-label { font-size: 12px; color: var(--text-muted); margin-top: 4px; font-weight: 500; }
+.macro-value { font-size: 32px; font-weight: 900; color: var(--yellow-green); }
+.macro-label { font-size: 11px; color: var(--text-muted); margin-top: 6px; font-weight: 700; letter-spacing: 0.5px; }
 
 /* ── Supplements ── */
 .supp-table { width: 100%; font-size: 14px; }
@@ -502,11 +505,11 @@ tr:hover td { background: rgba(0,0,0,0.02); }
 /* ── Research ── */
 .research-topic {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 2px solid var(--accent);
     border-radius: var(--radius);
     padding: 20px;
     margin-bottom: 16px;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    box-shadow: 0 8px 20px rgba(91,95,255,0.12);
 }
 
 .research-topic-header {
@@ -552,10 +555,10 @@ tr:hover td { background: rgba(0,0,0,0.02); }
 
 .progress-card {
     background: var(--surface);
-    border: 1px solid var(--border);
+    border: 2px solid var(--accent);
     border-radius: 16px;
     overflow: hidden;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    box-shadow: 0 8px 20px rgba(91,95,255,0.12);
 }
 
 .progress-card img {
@@ -646,10 +649,11 @@ button:focus-visible { outline-offset: 3px; }
 /* ── Getting-started card ── */
 .getting-started-card {
     background: var(--surface);
-    border: 1.5px solid var(--border);
+    border: 2px solid var(--accent);
     border-radius: var(--radius);
     padding: 28px;
     margin-bottom: 20px;
+    box-shadow: 0 8px 20px rgba(91,95,255,0.12);
 }
 .getting-started-steps {
     display: grid;
@@ -1271,11 +1275,54 @@ body.dark #onboarding-inner .btn-ghost { color: var(--text); }
 .pr-celebration { animation: prCelebrate 0.6s ease; }
 .pr-badge { background: var(--accent); color: var(--text); border-radius: 20px; padding: 2px 8px; font-size: 11px; font-weight: 700; }
 
+/* ── Morning Briefing Card ── */
+#briefing-card {
+    background: linear-gradient(135deg, var(--surface) 0%, #f9f9fb 100%);
+    border: 2px solid var(--accent);
+    border-radius: var(--radius);
+    padding: 28px;
+    margin-bottom: 28px;
+    box-shadow: 0 12px 32px rgba(91,95,255,0.15);
+}
+
+#briefing-card h2 {
+    font-size: 1.4rem;
+    font-weight: 900;
+    color: var(--accent);
+    margin-bottom: 12px;
+    letter-spacing: -0.5px;
+}
+
+#briefing-card p {
+    color: var(--text);
+    font-size: 15px;
+    line-height: 1.7;
+    margin-bottom: 16px;
+}
+
+.briefing-sources {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.briefing-source-badge {
+    background: rgba(91,95,255,0.08);
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    border-radius: 50px;
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
 /* Telegram Mini App */
 @media (max-width: 500px) {
     main { padding: 16px 12px 100px; }
     .card { padding: 18px 16px; }
     header { padding: 0 12px; }
+    #briefing-card { padding: 18px; }
 }
 
 /* ── Loading Skeletons ── */
