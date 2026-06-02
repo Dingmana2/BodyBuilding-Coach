@@ -16,6 +16,7 @@ from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -1133,6 +1134,8 @@ async def log_set(
     db: Session = Depends(get_db),
 ):
     data = await request.json()
+    if not all(k in data for k in ("exercise_name", "weight_kg", "reps")):
+        raise HTTPException(status_code=400, detail="exercise_name, weight_kg, and reps are required.")
     exercise = data["exercise_name"].strip()
     weight_kg = float(data["weight_kg"])
     reps = int(data["reps"])
@@ -1322,6 +1325,47 @@ def get_prs(
         }
         for r in rows
     ]
+
+
+@app.get("/api/sessions/last-sets")
+def get_last_sets(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Return most recent weight+reps per exercise for the current user.
+
+    Used by the workout UI to pre-fill the weight input and show the
+    progressive overload suggestion before each set.
+    """
+    # Subquery: latest logged_at per exercise for this user.
+    # GROUP BY + MAX works on both SQLite (local) and PostgreSQL (Railway).
+    subq = (
+        db.query(
+            models.SetLog.exercise_name,
+            func.max(models.SetLog.logged_at).label("latest"),
+        )
+        .join(models.WorkoutSession, models.SetLog.session_id == models.WorkoutSession.id)
+        .filter(models.WorkoutSession.chat_id == current_user_id)
+        .group_by(models.SetLog.exercise_name)
+        .subquery()
+    )
+    rows = (
+        db.query(models.SetLog)
+        .join(
+            subq,
+            (models.SetLog.exercise_name == subq.c.exercise_name)
+            & (models.SetLog.logged_at == subq.c.latest),
+        )
+        .all()
+    )
+    return {
+        r.exercise_name: {
+            "weight_kg": r.weight_kg,
+            "reps": r.reps,
+            "logged_at": r.logged_at.isoformat(),
+        }
+        for r in rows
+    }
 
 
 @app.get("/api/memory")

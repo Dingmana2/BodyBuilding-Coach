@@ -339,3 +339,56 @@ def test_checkin_streak():
     r = client.get("/api/checkins/streak", headers=_auth())
     assert r.status_code == 200
     assert "current_streak" in r.json()
+
+
+# ── Progressive overload — last-sets endpoint ─────────────────────────────────
+
+def test_last_sets_empty():
+    """New user with no sessions returns an empty dict."""
+    r = client.post("/api/auth/register", json={"email": "fresh@example.com", "password": "password123"})
+    token = r.json()["token"]
+    r2 = client.get("/api/sessions/last-sets", headers={"Authorization": f"Bearer {token}"})
+    assert r2.status_code == 200
+    assert r2.json() == {}
+
+
+def test_last_sets_populated():
+    """After logging a set, last-sets returns that exercise with correct weight/reps."""
+    # Start a session
+    r = client.post("/api/sessions/start", json={}, headers=_auth())
+    assert r.status_code == 200
+    session_id = r.json()["id"]
+
+    # Log a set
+    r2 = client.post(
+        f"/api/sessions/{session_id}/sets",
+        json={"exercise_name": "Bench Press", "weight_kg": 100.0, "reps": 8},
+        headers=_auth(),
+    )
+    assert r2.status_code == 200
+
+    # End session so it's visible in history
+    client.post(f"/api/sessions/{session_id}/end", json={}, headers=_auth())
+
+    # last-sets should now return the logged set
+    r3 = client.get("/api/sessions/last-sets", headers=_auth())
+    assert r3.status_code == 200
+    data = r3.json()
+    assert "Bench Press" in data
+    assert data["Bench Press"]["weight_kg"] == 100.0
+    assert data["Bench Press"]["reps"] == 8
+
+
+def test_log_set_missing_fields():
+    """log_set returns 400 when required fields are absent."""
+    r = client.post("/api/sessions/start", json={}, headers=_auth())
+    session_id = r.json()["id"]
+
+    # Missing reps
+    r2 = client.post(
+        f"/api/sessions/{session_id}/sets",
+        json={"exercise_name": "Squat", "weight_kg": 80.0},
+        headers=_auth(),
+    )
+    assert r2.status_code == 400
+    assert "reps" in r2.json()["detail"]

@@ -95,6 +95,9 @@ const state = {
 };
 
 const _exercisePRWeights = {};
+// Maps exercise_name → {weight_kg, reps, logged_at} from the most recent set logged.
+// Used for progressive overload pre-fill and suggestion. Populated by loadWorkout().
+const _exerciseLastSessionData = {};
 
 let _restTimerInterval = null;
 let _restTimerSeconds = 0;
@@ -2239,12 +2242,14 @@ function renderStreakDetail(streaks) {
 
 /* ── Workout Logger ── */
 async function loadWorkout() {
-    const [active, history, prs, planData] = await Promise.all([
+    const [active, history, prs, planData, lastSets] = await Promise.all([
         api('GET', '/sessions/active').catch(() => ({ session: null, sets: [] })),
         api('GET', '/sessions/history').catch(() => []),
         api('GET', '/prs').catch(() => []),
         cachedApi('GET', '/plan/current').catch(() => null),
+        api('GET', '/sessions/last-sets').catch(() => ({})),
     ]);
+    Object.assign(_exerciseLastSessionData, lastSets);
 
     const exercises = [];
     if (planData?.workout_plan?.days) {
@@ -2289,18 +2294,22 @@ function selectExercise(name) {
     state.selectedExercise = name;
     document.getElementById('selected-exercise-name').textContent = name;
     document.getElementById('log-set-card').style.display = 'block';
-    const lastKg = _exercisePRWeights[name];
-    if (lastKg != null) {
+    // Pre-fill from last session weight (not all-time PR) for accurate overload tracking.
+    // Falls back to PR weight if no session history, then 0 for brand-new exercises.
+    const lastData = _exerciseLastSessionData[name];
+    const fillKg = lastData?.weight_kg ?? _exercisePRWeights[name] ?? null;
+    if (fillKg != null) {
         if (isImperial()) {
-            document.getElementById('weight-input').value = Math.round(kgToLbs(lastKg) / 5) * 5;
+            document.getElementById('weight-input').value = Math.round(kgToLbs(fillKg) / 5) * 5;
         } else {
-            document.getElementById('weight-input').value = Math.round(lastKg / 2.5) * 2.5;
+            document.getElementById('weight-input').value = Math.round(fillKg / 2.5) * 2.5;
         }
     }
     document.getElementById('log-set-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     document.querySelectorAll('.chip').forEach(c => {
         c.classList.toggle('active', c.textContent === name);
     });
+    updateOverloadHint(name);
     updatePRHint(name);
     updateWarmupSuggestions();
     const rpeInput = document.getElementById('rpe-input');
@@ -2414,10 +2423,41 @@ function updatePRHint(name) {
     const hint = document.getElementById('last-1rm-hint');
     const prRow = document.querySelector(`.pr-row[data-exercise="${CSS.escape(name)}"]`);
     if (prRow) {
-        hint.textContent = `Current PR: ${fmtWeight(prRow.dataset.estimated1rm)} est. 1RM`;
+        hint.textContent = `All-time PR: ${fmtWeight(prRow.dataset.estimated1rm)} est. 1RM`;
     } else {
         hint.textContent = '';
     }
+}
+
+// Epley-based progressive overload suggestion.
+// Targets a 2.5% increase in estimated 1RM relative to last session,
+// expressed as a new working weight at the same rep count.
+// Rounds to nearest 2.5 kg (or 5 lbs in imperial).
+function _epleyOverloadSuggestion(lastWeightKg, lastReps) {
+    const lastEpley = lastWeightKg * (1 + lastReps / 30);
+    const targetEpley = lastEpley * 1.025;
+    const newWeightKg = targetEpley / (1 + lastReps / 30);
+    return Math.round(newWeightKg / 2.5) * 2.5;
+}
+
+function updateOverloadHint(name) {
+    const el = document.getElementById('overload-hint');
+    if (!el) return;
+    const last = _exerciseLastSessionData[name];
+    if (!last || last.weight_kg == null || last.reps == null) {
+        el.textContent = '';
+        el.style.display = 'none';
+        return;
+    }
+    const suggestedKg = _epleyOverloadSuggestion(+last.weight_kg, +last.reps);
+    const lastStr = isImperial()
+        ? `${Math.round(kgToLbs(last.weight_kg))} lbs × ${last.reps}`
+        : `${last.weight_kg} kg × ${last.reps}`;
+    const suggestedStr = isImperial()
+        ? `${Math.round(kgToLbs(suggestedKg) / 5) * 5} lbs`
+        : `${suggestedKg} kg`;
+    el.textContent = `Last: ${lastStr} · Suggested: ${suggestedStr}`;
+    el.style.display = 'block';
 }
 
 async function startSession() {
