@@ -7,6 +7,12 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script>
+      // Telegram's native mobile/desktop clients inject window.Telegram.WebApp
+      // before any page script runs. Call ready()+expand() immediately so the
+      // loading overlay is dismissed even if the external SDK script below is slow.
+      try { if (window.Telegram?.WebApp) { window.Telegram.WebApp.expand(); window.Telegram.WebApp.ready(); } } catch(e) {}
+    </script>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <link rel="manifest" href="/static/manifest.json" />
     <link rel="stylesheet" href="/static/style.css?v=30" />
