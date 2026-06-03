@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -511,6 +512,16 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="BodyBuilding Coach AI", version="1.0.0", lifespan=_lifespan)
+
+# Auth uses JWT Bearer tokens (not cookies), so allow_credentials is not needed.
+# allow_origins=["*"] is valid without credentials and covers both Railway services.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 class _StaticCacheMiddleware(BaseHTTPMiddleware):
     """Set Cache-Control on versioned static assets."""
