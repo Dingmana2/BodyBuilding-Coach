@@ -905,9 +905,16 @@ async def analyze_photo(
     try:
         result = await asyncio.to_thread(analyze_body_photo, saved_paths, profile, prev)
     except ValueError as e:
+        print(f"[ANALYZE] ValueError (often missing/invalid ANTHROPIC_API_KEY or unparseable response): {e}")
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Analysis failed: {e}")
+        import traceback
+        print(f"[ANALYZE] {type(e).__name__}: {e}")
+        traceback.print_exc()
+        # Include the exception type in the detail so the client can show what
+        # actually broke (e.g. NotFoundError = bad model id, AuthenticationError
+        # = bad key, BadRequestError = image rejected).
+        raise HTTPException(status_code=500, detail=f"Analysis failed ({type(e).__name__}): {e}")
 
     analysis = models.BodyAnalysis(
         user_id=current_user_id or None,

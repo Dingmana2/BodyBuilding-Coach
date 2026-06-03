@@ -1119,7 +1119,21 @@ async function submitAnalysis() {
         showToast('Analysis complete!');
     }).catch(err => {
         hideBgTask();
-        showToast(`Analysis failed: ${err.message}`, 'error');
+        const msg = (err && err.message) ? err.message : 'Unknown error';
+        showToast(`Analysis failed: ${msg}`, 'error');
+        // Toasts auto-hide and truncate in the Telegram webview — render the full
+        // error persistently so it can actually be read and screenshotted.
+        const content = document.getElementById('analysis-content');
+        const result = document.getElementById('analysis-result');
+        if (content) {
+            content.innerHTML = `
+                <div style="padding:16px;border:1px solid #c0392b;border-radius:8px;background:rgba(192,57,43,0.08)">
+                    <div style="font-weight:700;color:#c0392b;margin-bottom:6px">Analysis failed</div>
+                    <div style="font-size:13px;white-space:pre-wrap;word-break:break-word">${esc(msg)}</div>
+                    <div style="font-size:12px;color:var(--text-muted);margin-top:8px">If this mentions a model, API key, or "BadRequest", it's a server config issue — screenshot this and send it.</div>
+                </div>`;
+            if (result) result.style.display = 'block';
+        }
     }).finally(() => {
         if (btn) { btn.disabled = false; btn.textContent = 'Analyze Photo'; }
     });
