@@ -11,21 +11,38 @@ if (_tgApp) {
 // Auto-authenticate when running inside Telegram Mini App.
 // Returns true if Telegram auth succeeded (caller should skip the login screen).
 async function _tryTelegramAuth() {
-    if (!_tgApp || !_tgApp.initData) return false;
+    if (!_tgApp || !_tgApp.initData) return { ok: false, reason: 'not_in_telegram' };
     try {
         const res = await fetch('/api/auth/telegram-webapp', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ init_data: _tgApp.initData }),
         });
-        if (!res.ok) return false;
+        if (!res.ok) {
+            let detail = `HTTP ${res.status}`;
+            try { const e = await res.json(); if (e.detail) detail = e.detail; } catch {}
+            return { ok: false, reason: detail };
+        }
         const data = await res.json();
-        if (!data.token) return false;
+        if (!data.token) return { ok: false, reason: 'Server returned no token' };
         setAuth(data.token, data.user);
-        return true;
-    } catch {
-        return false;
+        return { ok: true };
+    } catch (e) {
+        return { ok: false, reason: (e && e.message) || 'network error' };
     }
+}
+
+// A blank dashboard from a failed Mini App sign-in is unreadable. Show a
+// persistent banner naming the actual reason instead of silently doing nothing.
+function _showFatalAuthError(reason) {
+    if (document.getElementById('auth-fatal-banner')) return;
+    const el = document.createElement('div');
+    el.id = 'auth-fatal-banner';
+    el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:99999;background:#c0392b;color:#fff;padding:14px 16px;font-size:13px;line-height:1.5;box-shadow:0 2px 8px rgba(0,0,0,.3)';
+    el.innerHTML = `<strong>Couldn't sign in to the app via Telegram.</strong><br>`
+        + `Reason: ${esc(reason)}<br>`
+        + `<span style="font-size:12px;opacity:.9">If this mentions TELEGRAM_BOT_TOKEN or "not configured", the web service is missing that variable — set it on Railway (same value as the bot) and redeploy.</span>`;
+    document.body.appendChild(el);
 }
 
 /* ── XSS guard ── */
@@ -498,10 +515,10 @@ function signOut() {
 async function initAuth() {
     // When running as a Telegram Mini App, auto-authenticate silently.
     if (_tgApp && _tgApp.initData) {
-        const ok = await _tryTelegramAuth();
-        if (ok) return;
-        // initData present but validation failed — show error, not login screen
-        showToast('Telegram sign-in failed. Please close and reopen the app.');
+        const r = await _tryTelegramAuth();
+        if (r.ok) return;
+        // initData present but sign-in failed — show the real reason, not a blank app
+        _showFatalAuthError(r.reason);
         return;
     }
     const token = getToken();

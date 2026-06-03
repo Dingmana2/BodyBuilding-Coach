@@ -638,9 +638,16 @@ async def telegram_webapp_auth(request: Request, db: Session = Depends(get_db)):
     """Validate Telegram Mini App initData and return a JWT. Creates account if needed."""
     data = await request.json()
     init_data = (data.get("init_data") or "").strip()
+    if not _TELEGRAM_BOT_TOKEN:
+        # Distinguish "server misconfigured" from "bad signature" — without this the
+        # Mini App can't tell why sign-in failed and the dashboard just goes blank.
+        raise HTTPException(
+            status_code=503,
+            detail="Telegram login is not configured on the server (TELEGRAM_BOT_TOKEN missing). Set it on the web service and redeploy.",
+        )
     tg_user = _validate_telegram_init_data(init_data)
     if not tg_user:
-        raise HTTPException(status_code=401, detail="Invalid Telegram initData.")
+        raise HTTPException(status_code=401, detail="Invalid Telegram initData (signature mismatch).")
 
     tg_chat_id = tg_user.get("id")
     if not tg_chat_id:
