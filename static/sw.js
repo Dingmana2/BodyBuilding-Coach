@@ -1,4 +1,4 @@
-const CACHE_NAME = 'coach-v1';
+const CACHE_NAME = 'coach-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -36,19 +36,9 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // API calls: network-first
+  // API calls: network-only, never cache
   if (url.pathname.startsWith('/api/')) {
-    event.respondWith(
-      fetch(event.request)
-        .then((response) => {
-          if (response.status === 200) {
-            const cache = caches.open(CACHE_NAME);
-            cache.then((c) => c.put(event.request, response.clone()));
-          }
-          return response;
-        })
-        .catch(() => caches.match(event.request))
-    );
+    event.respondWith(fetch(event.request));
     return;
   }
 

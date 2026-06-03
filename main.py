@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -511,6 +512,15 @@ async def _lifespan(app: FastAPI):
 
 
 app = FastAPI(title="BodyBuilding Coach AI", version="1.0.0", lifespan=_lifespan)
+
+_MINI_APP_ORIGIN = os.getenv("MINI_APP_ORIGIN", "")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[o.strip() for o in _MINI_APP_ORIGIN.split(",") if o.strip()] or ["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class _StaticCacheMiddleware(BaseHTTPMiddleware):
