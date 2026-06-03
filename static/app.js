@@ -528,8 +528,14 @@ async function initAuth() {
     try {
         const me = await api('GET', '/auth/me');
         updateUserBadge(me);
-    } catch {
-        clearAuth();
+    } catch (err) {
+        // api() throws 'Session expired...' specifically for 401 — only that
+        // means the token is genuinely invalid. 404/5xx/network errors are
+        // transient; keep the stored token so a server restart or DB blip
+        // doesn't silently log the user out.
+        if (err && err.message && err.message.startsWith('Session expired')) {
+            clearAuth();
+        }
     }
 }
 
