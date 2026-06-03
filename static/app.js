@@ -490,6 +490,13 @@ function clearAuth() {
     localStorage.removeItem(USER_KEY);
     const drawerUser = document.getElementById('drawer-user');
     if (drawerUser) drawerUser.classList.remove('visible');
+}
+
+let _sessionExpiredPending = false;
+function _onSessionExpired() {
+    if (_sessionExpiredPending) return;
+    _sessionExpiredPending = true;
+    clearAuth();
     showOnboardingOverlay();
 }
 
@@ -503,6 +510,7 @@ function updateUserBadge(user) {
 }
 
 function showOnboardingOverlay() {
+    _sessionExpiredPending = false;
     document.getElementById('onboarding-overlay').style.display = 'flex';
     obShowRegister();
 }
@@ -510,6 +518,7 @@ function showOnboardingOverlay() {
 function signOut() {
     if (!confirm('Sign out?')) return;
     clearAuth();
+    showOnboardingOverlay();
 }
 
 async function initAuth() {
@@ -555,7 +564,7 @@ async function api(method, path, body = null, isFormData = false) {
     }
     const res = await fetch(`/api${path}`, opts);
     if (res.status === 401 && path !== '/auth/login' && path !== '/auth/register') {
-        clearAuth();
+        _onSessionExpired();
         throw new Error('Session expired — please sign in again.');
     }
     if (!res.ok) {
