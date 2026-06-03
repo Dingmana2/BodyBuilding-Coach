@@ -101,19 +101,45 @@ def get_anthropic_client() -> anthropic.Anthropic:
 _client = get_anthropic_client
 
 
+# Anthropic vision limits: ~5MB per image after base64, and the long edge is
+# downscaled above ~1568px anyway. Raw phone photos (often 3-8MB) blow past this,
+# which made multi-photo analysis fail with an API error. Resize + recompress so
+# every image is well within limits before it reaches the model.
+_VISION_MAX_EDGE = 1568
+_VISION_MAX_BYTES = 4_500_000
+
+
 def _encode_image(image_path: str) -> tuple[str, str]:
     path = Path(image_path)
-    media_types = {
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".png": "image/png",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
-    }
-    media_type = media_types.get(path.suffix.lower(), "image/jpeg")
-    with open(image_path, "rb") as f:
-        data = base64.standard_b64encode(f.read()).decode("utf-8")
-    return data, media_type
+    raw = path.read_bytes()
+    try:
+        import io
+
+        from PIL import Image
+
+        with Image.open(io.BytesIO(raw)) as im:
+            im = im.convert("RGB")
+            im.thumbnail((_VISION_MAX_EDGE, _VISION_MAX_EDGE))
+            quality = 85
+            while True:
+                buf = io.BytesIO()
+                im.save(buf, format="JPEG", quality=quality, optimize=True)
+                data = buf.getvalue()
+                if len(data) <= _VISION_MAX_BYTES or quality <= 40:
+                    break
+                quality -= 10
+        return base64.standard_b64encode(data).decode("utf-8"), "image/jpeg"
+    except Exception:
+        # Pillow missing or image undecodable — fall back to raw bytes by extension.
+        media_types = {
+            ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg",
+            ".png": "image/png",
+            ".webp": "image/webp",
+            ".gif": "image/gif",
+        }
+        media_type = media_types.get(path.suffix.lower(), "image/jpeg")
+        return base64.standard_b64encode(raw).decode("utf-8"), media_type
 
 
 def _extract_json(text: str) -> dict:
@@ -213,7 +239,7 @@ Be specific, honest, and actionable. Each muscle_development entry MUST include 
 
     message = client.messages.create(
         model=ANALYSIS_MODEL,
-        max_tokens=2000,
+        max_tokens=4000,  # large JSON schema + multi-image: 2000 truncated and broke JSON parse
         messages=[{
             "role": "user",
             "content": [*image_blocks, {"type": "text", "text": prompt}],

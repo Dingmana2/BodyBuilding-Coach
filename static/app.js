@@ -1063,6 +1063,28 @@ function clearUpload() {
     document.getElementById('upload-preview').style.display = 'none';
 }
 
+// Downscale large phone photos in the browser before upload. The vision API
+// rejects images over ~5MB, and 3 raw phone photos also make the upload itself
+// slow/flaky on mobile. Server resizes too (defense in depth); this fixes the
+// Mini App path and cuts upload size. Falls back to the original file on error.
+async function _resizeForUpload(file, maxEdge = 1568, quality = 0.85) {
+    try {
+        const bitmap = await createImageBitmap(file);
+        const longest = Math.max(bitmap.width, bitmap.height);
+        const scale = Math.min(1, maxEdge / longest);
+        if (scale === 1 && file.size < 4_000_000) { bitmap.close?.(); return file; }
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close?.();
+        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+        return blob || file;
+    } catch (e) {
+        return file; // server-side resize is the backstop
+    }
+}
+
 async function submitAnalysis() {
     const files = state.pendingFiles;
     if (!files?.length) return;
@@ -1073,7 +1095,13 @@ async function submitAnalysis() {
             showToast('One or more photos exceed the 20MB limit.', 'error');
             return;
         }
-        formData.append('files', f);
+        const resized = await _resizeForUpload(f);
+        if (resized instanceof File) {
+            formData.append('files', resized);
+        } else {
+            const baseName = (f.name || 'photo').replace(/\.[^.]+$/, '');
+            formData.append('files', resized, `${baseName}.jpg`);
+        }
     }
 
     const btn = document.getElementById('analyze-btn');
