@@ -535,7 +535,13 @@ ALLOWED_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 @app.get("/")
 def root():
-    return FileResponse("static/index.html")
+    # Never let the Telegram webview / browser cache the HTML shell, or it keeps
+    # loading a stale app.js?v= reference and never picks up new deploys. The
+    # versioned JS/CSS stay immutable; only this shell must always revalidate.
+    return FileResponse(
+        "static/index.html",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 # ── Auth ─────────────────────────────────────────────────────────────────────
