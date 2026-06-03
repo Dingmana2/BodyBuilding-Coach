@@ -39,6 +39,10 @@ _raw_api_url = os.getenv("API_BASE_URL", "http://localhost:8000").strip().rstrip
 if _raw_api_url and not _raw_api_url.startswith(("http://", "https://")):
     _raw_api_url = f"https://{_raw_api_url}"
 API_BASE_URL = _raw_api_url
+# Telegram web_app buttons require a public HTTPS URL — http/localhost opens blank
+# in the Telegram client. Only expose the Mini App button when API_BASE_URL is a
+# real https URL (set API_BASE_URL on the worker service to your public app URL).
+MINI_APP_URL = API_BASE_URL if (API_BASE_URL.startswith("https://") and "localhost" not in API_BASE_URL) else None
 BOT_SECRET = os.getenv("BOT_SECRET", "")
 CHAT_MODEL = "claude-sonnet-4-6"
 MAX_HISTORY = 20
@@ -997,7 +1001,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         goal = user["profile"].get("goal", "?")
         sessions = user.get("session_counter", 0)
         checkins = len(user.get("checkins", []))
-        mini_app_url = API_BASE_URL if API_BASE_URL else None
+        mini_app_url = MINI_APP_URL
         buttons = [[InlineKeyboardButton("✏️ Update profile", callback_data="prof:menu")]]
         if mini_app_url:
             buttons.insert(0, [InlineKeyboardButton("📊 Open Dashboard", web_app=WebAppInfo(url=mini_app_url))])
@@ -1151,7 +1155,7 @@ async def handle_onboard_callback(update: Update, context: ContextTypes.DEFAULT_
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    mini_app_url = API_BASE_URL if API_BASE_URL else None
+    mini_app_url = MINI_APP_URL
     markup = None
     if mini_app_url:
         markup = InlineKeyboardMarkup([[
