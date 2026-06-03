@@ -12,7 +12,7 @@ from pathlib import Path
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from fastapi.staticfiles import StaticFiles
@@ -189,6 +189,134 @@ def _send_web_push(subscription_dict: dict, title: str, body: str) -> None:
         )
     except Exception as e:
         print(f"Web Push send failed: {e}")
+
+
+async def _build_weakpoint_research(user_id: int) -> None:
+    """Fetch → grade → synthesize → judge → verify → cache cited research for one user's
+    weak points (research-integration T9).
+
+    Runs on a new BodyAnalysis (FastAPI BackgroundTask) and on the weekly safety-net
+    cron. Never fabricates: the integrity gate degrades to an honest note on empty.
+    Pipeline matches the eng-review architecture (D2 membership+claim-match, A4 batched).
+    """
+    if not user_id:
+        return
+    from database import SessionLocal
+    import research_service
+    from claude_service import synthesize_weakpoint_report, judge_citation_claims
+
+    db = SessionLocal()
+    try:
+        analysis = (
+            db.query(models.BodyAnalysis)
+            .filter(models.BodyAnalysis.user_id == user_id)
+            .order_by(models.BodyAnalysis.created_at.desc())
+            .first()
+        )
+        if not analysis:
+            return
+        try:
+            areas = json.loads(analysis.areas_to_improve) if analysis.areas_to_improve else []
+        except Exception:
+            areas = []
+        weak_points = [a for a in areas if isinstance(a, str) and a.strip()][:4]  # cap fan-out
+        if not weak_points:
+            return
+        profile = db.query(models.UserProfile).filter(
+            models.UserProfile.user_id == user_id
+        ).first()
+        goal = (profile.goal if profile else "") or ""
+
+        # 1. Fetch + grade per weak point (throttled inside research_service).
+        fetched = []
+        for wp in weak_points:
+            fetched.append(await research_service.fetch_weakpoint_research(wp, goal))
+
+        # 2. Synthesize ONE batched cited report (sync Claude → executor, async contract).
+        blocks = [
+            {
+                "weak_point": f["topic"],
+                "goal": goal,
+                "papers": [
+                    {
+                        "pmid": p.get("pmid"),
+                        "title": p.get("title"),
+                        "year": p.get("year"),
+                        "evidence_label": p.get("evidence_label"),
+                        "abstract": (p.get("abstract") or "")[:600],
+                    }
+                    for p in (f["papers"] or [])[:5]
+                    if p.get("pmid")
+                ],
+            }
+            for f in fetched
+        ]
+        loop = asyncio.get_running_loop()
+        synth = await loop.run_in_executor(None, synthesize_weakpoint_report, blocks)
+        reports = synth.get("reports", []) if isinstance(synth, dict) else []
+        reports_by_topic = {r.get("weak_point"): r for r in reports if isinstance(r, dict)}
+
+        # 3. Judge claims (batched) + 4. verify membership, then persist per weak point.
+        for f in fetched:
+            topic = f["topic"]
+            abstracts = {
+                str(p.get("pmid")): (p.get("abstract") or "")
+                for p in f["papers"] if p.get("pmid")
+            }
+            fetched_pmids = set(abstracts.keys())
+            report = reports_by_topic.get(topic) or {
+                "weak_point": topic, "summary": "", "citations": []
+            }
+            pairs = [
+                {
+                    "pmid": str(c.get("pmid")),
+                    "claim": c.get("claim", ""),
+                    "abstract": abstracts.get(str(c.get("pmid")), ""),
+                }
+                for c in (report.get("citations") or [])
+                if isinstance(c, dict) and str(c.get("pmid")) in fetched_pmids
+            ]
+            supported = (
+                await loop.run_in_executor(None, judge_citation_claims, pairs)
+                if pairs else {}
+            )
+            allowed = {pmid for pmid in fetched_pmids if supported.get(pmid, False)}
+            verified = research_service.verify_report_citations(report, allowed)
+
+            existing = db.query(models.ResearchCache).filter(
+                models.ResearchCache.topic == topic
+            ).first()
+            payload = json.dumps(f["papers"])
+            summary = verified.get("summary", "")
+            if existing:
+                existing.papers = payload
+                existing.summary = summary
+                existing.last_updated = datetime.now(timezone.utc)
+            else:
+                db.add(models.ResearchCache(topic=topic, papers=payload, summary=summary))
+        db.commit()
+    except Exception as e:
+        print(f"Warning: weak-point research build failed for user {user_id}: {e}")
+        try:
+            db.rollback()
+        except Exception:
+            pass
+    finally:
+        db.close()
+
+
+async def _refresh_weakpoint_research() -> None:
+    """Weekly safety-net (Sun 07:00 UTC): rebuild weak-point research for active users."""
+    from database import SessionLocal
+    db = SessionLocal()
+    try:
+        user_ids = [
+            u.id for u in db.query(models.User).filter(models.User.is_active == True).all()
+        ]
+    finally:
+        db.close()
+    for uid in user_ids:
+        await _build_weakpoint_research(uid)
 
 
 async def _generate_morning_briefings() -> None:
@@ -376,6 +504,7 @@ async def _lifespan(app: FastAPI):
     scheduler = AsyncIOScheduler()
     scheduler.add_job(_generate_morning_briefings, "cron", hour=6, minute=0)
     scheduler.add_job(_auto_weekly_reports, "cron", day_of_week="sun", hour=8, minute=0)
+    scheduler.add_job(_refresh_weakpoint_research, "cron", day_of_week="sun", hour=7, minute=0)
     scheduler.start()
     yield
     scheduler.shutdown()
@@ -725,6 +854,7 @@ async def save_profile(
 @app.post("/api/analyze")
 async def analyze_photo(
     request: Request,
+    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     current_user_id: int = Depends(get_current_user_id),
     db: Session = Depends(get_db),
@@ -780,6 +910,11 @@ async def analyze_photo(
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
+
+    # New analysis ⇒ weak points changed ⇒ rebuild cited research in the background
+    # (research-integration D3: on-analysis trigger; keeps the response fast).
+    if current_user_id:
+        background_tasks.add_task(_build_weakpoint_research, current_user_id)
 
     return {
         "analysis_id": analysis.id,
@@ -1086,6 +1221,17 @@ def get_research(db: Session = Depends(get_db)):
         }
         for r in rows
     ]
+
+
+@app.get("/api/research/weak-points")
+def get_weakpoint_research_reports(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Cited per-weak-point research reports (research-integration). Reads cache only."""
+    import coach_brain
+
+    return coach_brain.get_weakpoint_reports(db)
 
 
 @app.post("/api/research/refresh")

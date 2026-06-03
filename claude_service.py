@@ -690,6 +690,55 @@ Actionable summary:""",
     return message.content[0].text.strip()
 
 
+def synthesize_weakpoint_report(blocks: list) -> dict:
+    """Generate cited per-weak-point research reports (research-integration T4).
+
+    blocks: [{"weak_point", "goal", "papers": [{pmid, title, year, evidence_label,
+    abstract}]}]. Cites ONLY the supplied papers. Returns {"reports": [...]} with
+    each report carrying citations as [{pmid, claim}] for downstream verification.
+    """
+    from prompt_builder import weakpoint_report_prompt
+
+    if not blocks:
+        return {"reports": []}
+    client = _client()
+    message = client.messages.create(
+        model=REPORT_MODEL,
+        max_tokens=1600,
+        messages=[{"role": "user", "content": weakpoint_report_prompt(blocks)}],
+    )
+    data = _extract_json(message.content[0].text)
+    if isinstance(data, dict) and isinstance(data.get("reports"), list):
+        return data
+    return {"reports": []}
+
+
+def judge_citation_claims(pairs: list) -> dict:
+    """Batched claim-match judge (research-integration T6, verifier-of-the-verifier).
+
+    pairs: [{"pmid", "claim", "abstract"}]. Returns {pmid: supported_bool}. A single
+    batched call keeps cost/latency flat as citation count grows. Conservative: any
+    PMID the judge does not explicitly mark supported defaults to False at the caller.
+    """
+    from prompt_builder import claim_match_prompt
+
+    if not pairs:
+        return {}
+    client = _client()
+    message = client.messages.create(
+        model=WEAK_POINT_MODEL,
+        max_tokens=700,
+        messages=[{"role": "user", "content": claim_match_prompt(pairs)}],
+    )
+    data = _extract_json(message.content[0].text)
+    out: dict[str, bool] = {}
+    results = data.get("results", []) if isinstance(data, dict) else []
+    for r in results:
+        if isinstance(r, dict) and r.get("pmid") is not None:
+            out[str(r["pmid"])] = bool(r.get("supported", False))
+    return out
+
+
 def generate_morning_briefing(
     checkin: dict | None,
     sessions: list,

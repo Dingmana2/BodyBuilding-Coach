@@ -1,6 +1,8 @@
 import asyncio
 import httpx
 import json
+import os
+import re
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta
 
@@ -55,6 +57,46 @@ GOAL_TOPICS = {
 }
 
 
+# ── Evidence grading (office-hours D4: grade-first, recency as tiebreaker) ──────
+# PubMed PublicationType → evidence-grade score. Higher = stronger evidence.
+# Meta-analyses / systematic reviews outrank single mechanistic/EMG studies, which
+# is why grade is the PRIMARY sort key and recency only breaks ties within a grade.
+EVIDENCE_GRADE = {
+    "meta-analysis": 5,
+    "systematic review": 5,
+    "randomized controlled trial": 4,
+    "controlled clinical trial": 3,
+    "clinical trial": 3,
+    "comparative study": 2,
+    "observational study": 2,
+    "review": 2,            # narrative review — weaker than a systematic review
+    "journal article": 1,   # default bucket: mechanistic / EMG / cross-sectional
+    "case reports": 0,
+    "editorial": 0,
+    "comment": 0,
+    "letter": 0,
+}
+DEFAULT_GRADE = 1
+GRADE_LABELS = {
+    5: "meta-analysis/review",
+    4: "RCT",
+    3: "clinical trial",
+    2: "comparative/review",
+    1: "study",
+    0: "low-grade",
+}
+
+
+def classify_evidence_grade(pub_types: list) -> int:
+    """Map a paper's PubMed PublicationType list to an evidence-grade score (higher = stronger)."""
+    if not pub_types:
+        return DEFAULT_GRADE
+    return max(
+        (EVIDENCE_GRADE.get(t.strip().lower(), DEFAULT_GRADE) for t in pub_types),
+        default=DEFAULT_GRADE,
+    )
+
+
 async def search_pubmed(query: str, max_results: int = 5, years_back: int = 3) -> list:
     client = _get_http_client()
     min_date = (datetime.now() - timedelta(days=365 * years_back)).strftime("%Y/%m/%d")
@@ -68,6 +110,11 @@ async def search_pubmed(query: str, max_results: int = 5, years_back: int = 3) -
         "mindate": min_date,
         "retmode": "json",
     }
+    # NCBI API key (optional) lifts the rate limit from 3 to 10 req/sec — matters
+    # once per-weak-point queries fan out (research-integration T12).
+    _api_key = os.getenv("NCBI_API_KEY")
+    if _api_key:
+        search_params["api_key"] = _api_key
 
     try:
         resp = await client.get(f"{PUBMED_BASE}/esearch.fcgi", params=search_params)
@@ -87,6 +134,8 @@ async def search_pubmed(query: str, max_results: int = 5, years_back: int = 3) -
         "rettype": "abstract",
         "retmode": "xml",
     }
+    if _api_key:
+        fetch_params["api_key"] = _api_key
 
     try:
         resp = await client.get(f"{PUBMED_BASE}/efetch.fcgi", params=fetch_params)
@@ -115,6 +164,12 @@ def _parse_pubmed_xml(xml_text: str) -> list:
                         authors.append(f"{last} {first}".strip())
                 journal = article.findtext(".//Journal/Title", "")
                 year = article.findtext(".//PubDate/Year", "")
+                pub_types = [
+                    (pt.text or "").strip()
+                    for pt in article.findall(".//PublicationType")
+                    if (pt.text or "").strip()
+                ]
+                grade = classify_evidence_grade(pub_types)
 
                 if title and abstract:
                     papers.append({
@@ -124,6 +179,9 @@ def _parse_pubmed_xml(xml_text: str) -> list:
                         "authors": authors,
                         "journal": journal,
                         "year": year,
+                        "publication_types": pub_types,
+                        "evidence_grade": grade,
+                        "evidence_label": GRADE_LABELS.get(grade, "study"),
                         "url": f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/",
                         "source": "PubMed",
                     })
@@ -220,3 +278,159 @@ async def refresh_all_research(profile=None) -> dict:
             await asyncio.sleep(1.0)  # pause between batches for NCBI rate limit
 
     return results
+
+
+# ── Per-weak-point research (research-integration feature) ──────────────────────
+# Maps a normalized physique weak point to PubMed-friendly query terms. A substring
+# match lets free-text analysis output ("slightly underdeveloped upper chest") still
+# resolve to a targeted query. Longer/more-specific keys are listed before their
+# generic parent so the substring loop prefers the specific match.
+WEAKPOINT_QUERY_MAP = {
+    "upper chest": "incline press upper pectoralis activation hypertrophy",
+    "lower chest": "decline press lower pectoralis hypertrophy",
+    "chest": "pectoralis chest hypertrophy training",
+    "back width": "lat pulldown latissimus width hypertrophy",
+    "back thickness": "row back thickness hypertrophy",
+    "back": "latissimus back hypertrophy training",
+    "side delt": "lateral deltoid lateral raise hypertrophy",
+    "rear delt": "posterior deltoid rear delt hypertrophy",
+    "shoulder": "deltoid shoulder hypertrophy training",
+    "bicep": "biceps brachii hypertrophy training",
+    "tricep": "triceps brachii hypertrophy training",
+    "arm": "biceps triceps arm hypertrophy",
+    "quad": "quadriceps hypertrophy squat training",
+    "hamstring": "hamstring hypertrophy training",
+    "glute": "gluteus maximus hypertrophy training",
+    "calves": "calf gastrocnemius soleus hypertrophy",
+    "calf": "calf gastrocnemius soleus hypertrophy",
+    "core": "abdominal core hypertrophy training",
+}
+
+GOAL_QUERY_HINT = {
+    "bulk": "muscle hypertrophy",
+    "cut": "muscle preservation caloric deficit",
+    "recomp": "body recomposition",
+    "strength": "strength training",
+    "maintain": "training volume maintenance",
+    "prep": "contest preparation muscle retention",
+}
+
+
+def weakpoint_topic_key(weak_point: str, goal: str = "") -> str:
+    """Stable ResearchCache topic key for a weak-point + goal pair.
+
+    Reuses the existing ResearchCache.topic column (no schema migration). Research
+    for a weak point is identical across users, so the key is intentionally global.
+    """
+    wp = "_".join((weak_point or "").strip().lower().split())
+    g = (goal or "").strip().lower()
+    return f"weakpoint:{wp}:{g}" if g else f"weakpoint:{wp}"
+
+
+def weakpoint_query(weak_point: str, goal: str = "") -> str:
+    """Build a PubMed query string for a physique weak point + training goal.
+
+    Falls back to the raw weak-point text so unknown weak points still produce a
+    real (if less targeted) query rather than nothing.
+    """
+    wp = (weak_point or "").strip().lower()
+    base = WEAKPOINT_QUERY_MAP.get(wp)
+    if base is None:
+        for key, terms in WEAKPOINT_QUERY_MAP.items():
+            if key in wp:
+                base = terms
+                break
+    if base is None:
+        base = f"{wp} hypertrophy training" if wp else "muscle hypertrophy training"
+    hint = GOAL_QUERY_HINT.get((goal or "").strip().lower(), "")
+    return f"{base} {hint}".strip()
+
+
+def grade_rank(papers: list) -> list:
+    """Sort papers by evidence grade (desc), then publication year (desc).
+
+    Implements the office-hours D4 rule: evidence grade is the master key, recency
+    is only the tiebreaker WITHIN a grade. A 2019 meta-analysis outranks a 2024
+    single mechanistic study.
+    """
+    def _key(p):
+        grade = p.get("evidence_grade", DEFAULT_GRADE)
+        try:
+            year = int(p.get("year") or 0)
+        except (ValueError, TypeError):
+            year = 0
+        return (grade, year)
+    return sorted(papers, key=_key, reverse=True)
+
+
+async def fetch_weakpoint_research(weak_point: str, goal: str = "", max_results: int = 6) -> dict:
+    """Fetch + grade + rank research for a single physique weak point.
+
+    Returns a dict shaped for ResearchCache persistence (the caller writes the row):
+        {"topic": <weakpoint key>, "query": <pubmed query>, "papers": [graded, ranked]}
+
+    Degrades to an empty paper list (never fabricates) when no research is found —
+    callers must render a "no strong evidence found" state rather than inventing one.
+    """
+    query = weakpoint_query(weak_point, goal)
+    pubmed, semantic = await asyncio.gather(
+        search_pubmed(query, max_results=max_results),
+        search_semantic_scholar(query, max_results=3),
+    )
+    # Semantic Scholar papers carry no PublicationType — default-grade them so the
+    # cross-source ranking is well-defined.
+    for p in semantic:
+        p.setdefault("evidence_grade", DEFAULT_GRADE)
+        p.setdefault("evidence_label", GRADE_LABELS[DEFAULT_GRADE])
+
+    seen = set()
+    unique = []
+    for p in pubmed + semantic:
+        key = (p.get("title") or "").lower()[:60]
+        if key and key not in seen:
+            seen.add(key)
+            unique.append(p)
+
+    return {
+        "topic": weakpoint_topic_key(weak_point, goal),
+        "query": query,
+        "papers": grade_rank(unique),
+    }
+
+
+# ── Citation integrity (T5 membership + T7 degrade-on-empty) ────────────────────
+_PMID_RE = re.compile(r"PMID:?\s*(\d+)", re.IGNORECASE)
+
+
+def extract_cited_pmids(text: str) -> list:
+    """Pull PMID references (e.g. '[PMID:12345]') from synthesized report prose."""
+    return _PMID_RE.findall(text or "")
+
+
+def verify_report_citations(report: dict, allowed_pmids) -> dict:
+    """Citation-integrity gate: deterministic membership (T5) + degrade-on-empty (T7).
+
+    Keeps only citations whose PMID is in ``allowed_pmids`` (the fetched set already
+    intersected with the claim-match judge's verdicts). Strips orphan inline
+    ``[PMID:x]`` references from the summary. If nothing verifiable remains, marks the
+    report degraded with an honest note rather than fabricating a citation.
+    """
+    allowed = {str(p) for p in allowed_pmids}
+    kept = [
+        c for c in (report.get("citations") or [])
+        if isinstance(c, dict) and str(c.get("pmid")) in allowed
+    ]
+    summary = report.get("summary", "") or ""
+    summary = _PMID_RE.sub(lambda m: m.group(0) if m.group(1) in allowed else "", summary)
+    verified = dict(report)
+    verified["citations"] = kept
+    if not kept:
+        verified["degraded"] = True
+        verified["summary"] = (
+            "No strong, verifiable evidence was found for this weak point yet — "
+            "showing no citation rather than an unverified source."
+        )
+    else:
+        verified["degraded"] = False
+        verified["summary"] = summary.strip()
+    return verified

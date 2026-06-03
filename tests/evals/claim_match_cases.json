@@ -1,0 +1,33 @@
+{
+  "_doc": "Adversarial eval set for the claim-match judge (research-integration T6/T11). Each case pairs a PMID claim with an abstract and the expected verdict. Run live via test_research_evals.py when a real ANTHROPIC_API_KEY is set; offline it validates shape only.",
+  "cases": [
+    {
+      "id": "correct-supported",
+      "pmid": "33555",
+      "claim": "Incline pressing produces greater upper pectoralis activation than flat pressing.",
+      "abstract": "EMG analysis showed the incline barbell press elicited significantly higher clavicular (upper) pectoralis major activation than the flat press across all loads tested.",
+      "expected_supported": true
+    },
+    {
+      "id": "overstated-claim",
+      "pmid": "33556",
+      "claim": "Incline pressing is the single best exercise for overall chest hypertrophy.",
+      "abstract": "A small acute EMG study (n=14) found higher upper-pec activation during incline press. The study did not measure hypertrophy and made no claims about overall chest growth.",
+      "expected_supported": false
+    },
+    {
+      "id": "mismatched-topic",
+      "pmid": "33557",
+      "claim": "Higher training volume increases lateral deltoid hypertrophy.",
+      "abstract": "This randomized trial examined the effect of creatine monohydrate supplementation on bench press one-rep max in trained men. Deltoid hypertrophy was not assessed.",
+      "expected_supported": false
+    },
+    {
+      "id": "meta-supported",
+      "pmid": "33558",
+      "claim": "Training a muscle group twice per week produces more hypertrophy than once per week when volume is equated.",
+      "abstract": "This systematic review and meta-analysis of 10 studies found that, with weekly volume equated, a training frequency of twice per week produced superior hypertrophy outcomes versus once per week.",
+      "expected_supported": true
+    }
+  ]
+}

@@ -606,3 +606,38 @@ async def chat(
         Assistant reply string.
     """
     raise NotImplementedError("Phase 5")
+
+
+# ── Weak-point research reports (research-integration T8) ───────────────────────
+
+def get_weakpoint_reports(db) -> list:
+    """Load cached cited per-weak-point research reports (topic prefix 'weakpoint:').
+
+    Read-only and intentionally NOT part of build_context (which runs on every coach
+    interaction) so the hot path never loads heavy papers JSON. Decodes the structured
+    topic key ('weakpoint:<wp>:<goal>') back into displayable fields.
+    """
+    from models import ResearchCache
+
+    rows = (
+        db.query(ResearchCache)
+        .filter(ResearchCache.topic.like("weakpoint:%"))
+        .order_by(ResearchCache.last_updated.desc())
+        .all()
+    )
+    out: list[dict] = []
+    for r in rows:
+        try:
+            papers = json.loads(r.papers) if r.papers else []
+        except Exception:
+            papers = []
+        parts = r.topic.split(":")
+        out.append({
+            "topic": r.topic,
+            "weak_point": parts[1].replace("_", " ") if len(parts) > 1 else r.topic,
+            "goal": parts[2] if len(parts) > 2 else "",
+            "summary": r.summary or "",
+            "papers": papers,
+            "last_updated": r.last_updated.isoformat() if r.last_updated else None,
+        })
+    return out

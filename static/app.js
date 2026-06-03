@@ -1633,6 +1633,7 @@ async function loadResearch() {
             <li class="paper-item">
                 <div class="paper-title">${esc(p.title)}</div>
                 <div class="paper-meta">
+                    ${p.evidence_label ? `<strong class="evidence-badge">${esc(p.evidence_label)}</strong> ` : ''}
                     ${p.authors?.length ? esc(p.authors.slice(0, 2).join(', ')) : ''}
                     ${p.year ? `• ${esc(p.year)}` : ''}
                     ${p.journal ? `• <em>${esc(p.journal)}</em>` : ''}

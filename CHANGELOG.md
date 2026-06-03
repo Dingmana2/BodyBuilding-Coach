@@ -1,5 +1,30 @@
 # CHANGELOG
 
+## 2026-06-02 — Sprint 32: Science-grounded coaching — cited, grade-ranked weak-point research
+
+### Added
+- `research_service.py` — evidence grading: `classify_evidence_grade()` + `EVIDENCE_GRADE`/`GRADE_LABELS`; `_parse_pubmed_xml` now extracts `PublicationType` and tags each paper with `evidence_grade`/`evidence_label` (meta-analysis/review > RCT > single study)
+- `research_service.py` — `weakpoint_query()` (weak-point + goal → PubMed query, substring fallback), `weakpoint_topic_key()`, and `grade_rank()` (grade-first, recency as tiebreaker — the office-hours D4 rule)
+- `research_service.py` — `fetch_weakpoint_research()`: per-weak-point fetch + grade + rank; degrades to an empty paper list, never fabricates
+- `research_service.py` — citation integrity: `extract_cited_pmids()` + `verify_report_citations()` (deterministic PMID-membership gate + degrade-on-empty)
+- `research_service.py` — optional `NCBI_API_KEY` env support (lifts NCBI rate limit 3→10 req/sec)
+- `prompt_builder.py` — `weakpoint_report_prompt()` (cite-only-from-set synthesis) and `claim_match_prompt()` (batched judge); both produce strict-JSON
+- `claude_service.py` — `synthesize_weakpoint_report()` (cited per-weak-point reports) and `judge_citation_claims()` (batched claim-match judge, verifier-of-the-verifier)
+- `coach_brain.py` — `get_weakpoint_reports()`: read-only loader for cached reports (kept out of `build_context` hot path)
+- `main.py` — `_build_weakpoint_research()` pipeline (fetch→grade→synthesize→judge→verify→cache); fires as a `BackgroundTask` on new `BodyAnalysis` and via `_refresh_weakpoint_research()` weekly cron (Sun 07:00 UTC); `GET /api/research/weak-points` reads the cache
+- `static/app.js` — evidence-grade badge in the research render (all values via `esc()`)
+- `tests/test_research_service.py`, `tests/test_research_integrity.py`, `tests/test_research_evals.py` + `tests/evals/claim_match_cases.json` — grading/query/ranking units, citation-integrity units, LLM-wrapper parse tests, and a live claim-match eval (skipped without a real API key)
+
+### Architecture
+- **Reuses the existing PubMed pipeline** — no new NCBI client; extends `research_service.py`
+- **No DB migration** — grade stored inside the existing `ResearchCache.papers` JSON; rows keyed `weakpoint:<wp>:<goal>`
+- **Trust is code, not vibes** — model cites only fetched PMIDs; deterministic membership + LLM claim-match gate every citation; empty/unverifiable → honest "no evidence" note, never a fabricated cite
+- **Cost-matched cadence** — expensive fetch/synthesis runs on new analysis + weekly; the daily briefing reads cache (0 NCBI calls)
+- Every report summary ends with the mandated `AI estimate — not medical advice.` disclaimer
+
+### Rollback
+- `git revert <hash>` — additive; no schema changes (reuses `ResearchCache`)
+
 ## 2026-06-02 — Sprint 29: Morning briefing — hero feature, daily synthesis decision
 
 ### Added

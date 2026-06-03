@@ -26,6 +26,8 @@ __all__ = [
     "report_prompt",
     "weak_points_prompt",
     "research_filter",
+    "weakpoint_report_prompt",
+    "claim_match_prompt",
 ]
 
 # ── Goal-specific coaching persona prompts ────────────────────────────────────
@@ -411,3 +413,72 @@ def research_filter(research: dict[str, str], goal: str) -> dict[str, str]:
         Filtered subset of the input dict (same values, subset of keys).
     """
     raise NotImplementedError("Phase 5")
+
+
+# ── Research-integration: cited weak-point reports + claim-match judge ──────────
+
+def weakpoint_report_prompt(blocks: list) -> str:
+    """Build the cited-synthesis prompt for per-weak-point research reports.
+
+    blocks: list of {"weak_point": str, "goal": str, "papers": [{pmid, title,
+    year, evidence_label, abstract}]}. The model may cite ONLY the supplied PMIDs
+    (papers are real, fetched from PubMed) and must attach the specific claim each
+    citation supports so a downstream judge can verify it.
+    """
+    sections: list[str] = []
+    for b in blocks:
+        lines = [f"### {b.get('weak_point', '')}  (goal: {b.get('goal') or 'general'})"]
+        papers = b.get("papers") or []
+        if not papers:
+            lines.append("(no papers found)")
+        for p in papers:
+            lines.append(
+                f"- PMID {p.get('pmid')} | {p.get('evidence_label', 'study')} | "
+                f"{p.get('year', '?')} | {p.get('title', '')}"
+            )
+            if p.get("abstract"):
+                lines.append(f"  Abstract: {p['abstract']}")
+        sections.append("\n".join(lines))
+    body = "\n\n".join(sections)
+    return (
+        "You are an evidence-based strength and physique coach. For each weak point, "
+        "write a short, actionable note grounded ONLY in the papers listed under it. "
+        "You may cite ONLY the PMIDs provided for that weak point — never invent a "
+        "paper or PMID. Prefer higher-grade evidence (meta-analysis/review > RCT > "
+        "single study). For every claim that rests on a paper, attach a citation with "
+        "the exact finding that paper supports.\n\n"
+        f"<weak_points>\n{body}\n</weak_points>\n\n"
+        "Return ONLY valid JSON, no prose outside it, exactly this schema:\n"
+        '{"reports": [{"weak_point": "<copy the weak-point id verbatim>", '
+        '"summary": "<2-4 sentence actionable note grounded only in the papers above>", '
+        '"citations": [{"pmid": "<a PMID from that weak point\'s list>", '
+        '"claim": "<the specific finding from that paper your summary relies on>"}]}]}\n\n'
+        "Rules:\n"
+        "- Cite ONLY PMIDs listed under that weak point. If it has no papers, set "
+        'summary to "No strong evidence found yet." and citations to [].\n'
+        "- Never state anything the provided abstracts do not support.\n"
+        '- End every summary with: "AI estimate — not medical advice."'
+    )
+
+
+def claim_match_prompt(pairs: list) -> str:
+    """Build the batched claim-match judge prompt (verifier-of-the-verifier).
+
+    pairs: list of {"pmid": str, "claim": str, "abstract": str}. The judge decides,
+    conservatively, whether each claim is directly supported by its abstract.
+    """
+    items = []
+    for p in pairs:
+        items.append(
+            f"[PMID {p.get('pmid')}]\nCLAIM: {p.get('claim', '')}\n"
+            f"ABSTRACT: {p.get('abstract', '')}\n---"
+        )
+    body = "\n".join(items)
+    return (
+        "You are a strict scientific fact-checker. For each item, decide whether the "
+        "CLAIM is DIRECTLY supported by the ABSTRACT. Be conservative: if the abstract "
+        "does not clearly support the claim, mark it false.\n\n"
+        f"<items>\n{body}\n</items>\n\n"
+        "Return ONLY valid JSON, exactly:\n"
+        '{"results": [{"pmid": "<pmid>", "supported": true}]}'
+    )
