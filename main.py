@@ -595,6 +595,20 @@ def get_me(
     }
 
 
+@app.get("/api/subscription")
+def get_subscription(
+    current_user_id: int = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+):
+    """Return the current user's subscription tier (defaults to free)."""
+    tier = "free"
+    if current_user_id:
+        user = db.query(models.User).filter(models.User.id == current_user_id).first()
+        if user and user.subscription_tier:
+            tier = user.subscription_tier
+    return {"tier": tier}
+
+
 # ── Telegram Mini App auth ────────────────────────────────────────────────────
 
 _TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
